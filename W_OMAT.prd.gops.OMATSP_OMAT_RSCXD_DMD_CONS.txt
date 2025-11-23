@@ -1,0 +1,157 @@
+PROCEDURE "W_OMAT"."prd.gops.OMAT::SP_OMAT_RSCXD_DMD_CONS" ( ) 
+	LANGUAGE SQLSCRIPT
+	SQL SECURITY DEFINER 
+	DEFAULT SCHEMA W_OMAT
+	--READS SQL DATA
+AS
+BEGIN
+/*------------------------------------------------------------------------------------------------------------------------*
+*Program Name : SP_OMAT_RSCXD_DMD_CONS
+*Project      : Obsolescence Improvement Project
+*Developer    : Ishan Tiwari
+*Requestor    : David, Hickman
+*Create Date  : 
+*--------------------------------------------------------------------------------------------------------------------------*
+*Description  : This Stored Procedure identifies the demand, consumption of RSCXD parts.				
+*--------------------------------------------------------------------------------------------------------------------------*
+Change Log:
+Change Id 		Developer		Date			Change Description
+---------------------------------------------------------------------------------------------------------------------------*
+114524          TiwarIs       2021-10-06         Initial development.
+119875          TiwarIs       2022-03-09         added calculation for LAMQOH
+120985          TiwarIs       2022-04-27         new columns added for part ecosystem
+121269          Akhiljo       2022-05-12         RSCXD - OB parts are out of scope
+128751          TiwarIs       2023-09-12         added new calculation for LAMQOH and restricted all stock
+*---------------------------------------------------------------------------------------------------------------------------*/	
+
+DECLARE DT1WK DATE;
+DECLARE DT26WK DATE;
+
+DT1WK := ADD_DAYS(TO_DATE(CURRENT_DATE, 'YYYY-MM-DD'),0 - WEEKDAY ( TO_DATE(CURRENT_DATE, 'YYYY-MM-DD')));
+DT26WK := ADD_DAYS(ADD_DAYS(TO_DATE(ADD_DAYS(DT1WK,182), 'YYYY-MM-DD'),0 - WEEKDAY ( TO_DATE(ADD_DAYS(DT1WK,182), 'YYYY-MM-DD'))),6);
+
+NHALIST = SELECT DISTINCT B.CMPPRTNO,B.NHA AS "DASH"
+		,A.R_PART
+		,A.CORE_PART
+		,A.S_PART
+		,A.X_PART
+		,A.D_PART
+		FROM "_SYS_BIC"."prd.csbg/CV_CSBG_RCSM_MATERIAL" A 
+		INNER JOIN  "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_BUY_NHA_DTLS" B ON B.NHA = A.MATERIAL
+		INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" C ON C."OBPRTNO" = B.CMPPRTNO
+		WHERE UPPER(C."OBPR_STATE") IN ('CONFIRMED','IN REVIEW','IN WORK');
+
+LSTDATA = SELECT CMPPRTNO,"DASH",R_PART AS "NHA",'R' AS "TYPE" FROM :NHALIST WHERE R_PART IS NOT NULL
+          UNION
+          SELECT CMPPRTNO,"DASH",CORE_PART AS "NHA",'C' AS "TYPE" FROM :NHALIST WHERE CORE_PART IS NOT NULL
+          UNION 
+          SELECT CMPPRTNO,"DASH",S_PART AS "NHA",'S' AS "TYPE" FROM :NHALIST WHERE S_PART IS NOT NULL
+          UNION
+          SELECT CMPPRTNO,"DASH",X_PART AS "NHA",'X' AS "TYPE" FROM :NHALIST WHERE X_PART IS NOT NULL
+          UNION
+          SELECT CMPPRTNO,"DASH",D_PART AS "NHA",'D' AS "TYPE" FROM :NHALIST WHERE D_PART IS NOT NULL; 
+
+DELETE FROM "W_OMAT"."OMAT_RSCXD_DTLS";
+
+INSERT INTO "W_OMAT"."OMAT_RSCXD_DTLS" ("CMPPRTNO","NHA","TYPE","DASH","DESCRIPTION","CMPQPA", "MATKL","MSTAE","VENCODE","VENNAME","STD_COST","CURR_COST","LEAD_TIME","COMMODITY", "SMG_GROUP",
+ "SMG_HEAD", "SBM","CRITICAL","CE","PO_SUPPLIER_CODE","PO_SUPPLIER")
+SELECT DISTINCT A.CMPPRTNO,
+                             A.NHA,
+                             A."TYPE",
+                             A."DASH",
+                             A1.MAKTX AS DESCRIPTION,
+                             C1.CMPQPA,
+                             C2.MATKL,C2.MSTAE,
+                             B1.OMAT_SELECTED_SUPPLIERCD AS VENCODE,
+                             B1.OMAT_SELECTED_SUPPLIER AS VENNAME,                             
+                             C.STPRS AS STD_COST,
+                             C.ZPLP2 AS CURR_COST,
+                             B.PLIFZ AS LEAD_TIME,
+                             G.ZDESC AS COMMODITY,
+                             H.ZDESC AS "SMG_GROUP",
+                             I.ZDESC AS SMG_HEAD,
+                             J.ZDESC AS SBM,
+                             D.ATWRT AS "CRITICAL",
+                             E.ATWRT AS "CE",                             
+                             B1.SUPPCD_PO1 AS "PO_SUPPLIER_CODE",
+                             B1.SUPPNAME_PO1 AS "PO_SUPPLIER"   
+      FROM :LSTDATA A 
+      LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_MAKT" A1 ON A1.MATNR = A.NHA
+     LEFT JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_BUYNHA_SUPPLIERS_PLANT" B1 ON B1.NHA = A.NHA 
+	  LEFT JOIN "_SYS_BIC"."prd.gops.OMAT/CV_PART_ECOSYSTEM" C1 ON C1.NHA = A."DASH" AND C1.OBPRTNO = A.CMPPRTNO
+     --LEFT JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_NHA_DTLS" C1 ON C1.NHA = A."DASH" AND C1.CMPPRTNO = A.CMPPRTNO
+     left join "_SYS_BIC"."prd.global.ecc/CV_MARA" C2 ON A.NHA = C2.MATNR
+     LEFT JOIN  "_SYS_BIC"."prd.global.ecc/CV_MARC" B ON A.NHA = B.MATNR AND B.WERKS = B1.OMAT_SELECTED_PLANT 
+     LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_MBEW" C ON C.MATNR = A.NHA AND C.BWKEY = B1.OMAT_SELECTED_PLANT 
+     LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_AUSP" D ON D.OBJEK = A.NHA AND D.ATINN = '0000006193'
+     LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_AUSP" E ON E.OBJEK = A.NHA AND E.ATINN = '0000015276' AND E.ATWRT = 'Y'
+     LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZSUPPLIER_XREF" F ON F.LIFNR = B1.OMAT_SELECTED_SUPPLIERCD 
+     LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZSUPP_CODE_MSTR" G ON G.ZCODE = F.ZCOMMCOD
+     LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZSUPP_CODE_MSTR" H ON H.ZCODE = F.ZGRPSMG
+     LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZSUPP_CODE_MSTR" I ON I.ZCODE = F.ZSMGCD
+     LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZSUPP_CODE_MSTR" J ON J.ZCODE = F.ZPRIMMCD
+     WHERE C2.MSTAE <> 'OB' AND C2.MSTAE <> 'OS' AND C2.MSTAE <> 'OP' ; --121269 Changes Start
+
+
+PartCons = SELECT SUM(HISTORYAMOUNT)as "Consumption",a."NHA"
+			FROM  "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_RSCXD_DTLS" a
+			INNER JOIN  "_SYS_BIC"."prd.global.ecc/CV_ZSPM_DMD_DETAIL" b on a."NHA" = b.HOSTPARTID
+			WHERE ORDERTYPE IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP') AND HISTORYBEGDATE >= ADD_DAYS (CURRENT_DATE, -365*5)			
+			GROUP BY a."NHA";
+
+PartDmd = SELECT a."NHA",SUM(b.OPENQTY) as "Demand"
+			FROM  "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_RSCXD_DTLS" a
+			INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_ZSPM_SALES_ORDER" b on a."NHA" = b.HOSTPARTID
+			WHERE b.AUART IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP') AND b."SALESORDERDTDUE" >= DT1WK
+            AND b."SALESORDERDTDUE" <= DT26WK AND a."TYPE" IN ('R','S','D','X')
+            GROUP BY  a."NHA";
+
+
+OpenPoQty = SELECT C.CMPPRTNO,
+ 						A.MATNR, 
+ 						SUM(A.MENGE-A.WEMNG) AS "OPEN_PO_QTY"
+ 				FROM "_SYS_BIC"."prd.global.ecc/CV_ZPO_HSTRY"  A
+				INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EKPO" B ON A.EBELN = B.EBELN AND A.EBELP = B.EBELP
+				INNER JOIN  "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_RSCXD_DTLS" C ON A.MATNR = C."NHA" 
+				WHERE RIGHT(DUE_DT,5) <> '04-01' AND RIGHT(DUE_DT,5) <> '12-31'
+						AND A.STATUS <> 'INACT'	 AND TRIM(A.MATNR) <> '' 
+						AND TRIM(A.LOEKZ) = ''   
+						AND A.AUSSL <> 'U3'      AND A.BSART <> 'UB'
+						AND A.ELIKZ <> 'X'       AND B.PSTYP <> '7' 
+						AND B.PSTYP <> '9'
+				GROUP BY C.CMPPRTNO, A.MATNR
+				ORDER BY A.MATNR ASC ;
+--old logic
+/*LAMQOH =    SELECT B.CMPPRTNO,
+ 					A.MATNR,
+ 					SUM(LBKUM) AS "LAMQOH"
+ 				FROM "_SYS_BIC"."prd.global.ecc/CV_MBEW" A
+ 				INNER JOIN "W_OMAT"."OMAT_RSCXD_DTLS" B ON A.MATNR = B.NHA
+ 				GROUP BY B.CMPPRTNO, A.MATNR;*/
+ 
+ -- 128751 change start				
+ LAMQOH =    SELECT B.CMPPRTNO,
+ 					A.MATNR,
+ 					SUM(LABST +KLABS) AS "LAMQOH",
+ 					SUM(INSME+UMLME+EINME+SPEME) AS "Restricted_All_Stock"
+ 				FROM "_SYS_BIC"."prd.global.ecc/CV_MARD" A
+ 				INNER JOIN "W_OMAT"."OMAT_RSCXD_DTLS" B ON A.MATNR = B.NHA
+ 				GROUP BY B.CMPPRTNO, A.MATNR;
+-- 128751 change end
+
+DELETE FROM "W_OMAT"."OMAT_RSCXD_DMD_CONS";
+
+INSERT INTO  "W_OMAT"."OMAT_RSCXD_DMD_CONS" ("CMPPRTNO","NHA","SPRS_CONS","SPRS_DMD","OPEN_PO_QTY","LAST_MODIFIED_ON","LAMQOH","RESTRICTED_ALL_STOCK")
+SELECT a.CMPPRTNO,a."NHA",
+	   b."Consumption" as "SPRS_CONS",
+	   c."Demand" as "SPRS_DMD",
+	   d."OPEN_PO_QTY",CURRENT_DATE,e."LAMQOH",e."Restricted_All_Stock"
+FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_RSCXD_DTLS" a
+LEFT JOIN :PartCons b on a."NHA" = b."NHA"
+LEFT JOIN :PartDmd c on a."NHA" = c."NHA"
+LEFT JOIN :OpenPoQty d on a."NHA" = d.MATNR AND a."CMPPRTNO" = d."CMPPRTNO"
+LEFT JOIN :LAMQOH e on a."NHA" = e.MATNR AND a."CMPPRTNO" = e."CMPPRTNO";
+
+
+END
+

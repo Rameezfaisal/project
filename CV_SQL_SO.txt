@@ -1,0 +1,522 @@
+/************* Begin Procedure Script **************/ 
+ BEGIN 
+ 	 var_out =   
+ 	 
+ 	 select xyzz.*,
+ 	 CASE WHEN xyzz."GrossSOPriceUSD" > 50000 THEN 'True' ELSE 'False' END AS "HighDollarFlag"
+ 	  from
+ 	 (SELECT
+  CASE WHEN IFNULL(u."WBSTK",'') <> 'C' --Total goods movement status aka not Completed(Open Order)
+     	--AND ((a."AUART" <>'ZSO' AND IFNULL(u."LFGSK",'') <> 'C') OR (a."AUART" = 'ZSO'))
+        AND IFNULL(p."ABGRU",'') = '' --items is not rejected 
+        AND IFNULL(b."LFSTA",'') <> '' --delivery status
+        AND IFNULL(p."KWMENG",0) > IFNULL(f1."delvd_qty",0) --Open qtys
+        AND IFNULL(e."BMENG",0) > 0 
+        AND CASE WHEN IFNULL(t."ExpectedQtyCumulative",0) <= IFNULL(f1."delvd_qty",0)  THEN 0
+                 WHEN IFNULL(t."ExpectedQtyCumulative",0) -  IFNULL(f1."delvd_qty",0) <= IFNULL(e."BMENG",0) THEN IFNULL(t."ExpectedQtyCumulative",0) -  IFNULL(f1."delvd_qty",0)
+                 ELSE IFNULL(e."BMENG",0)
+            END > 0  --Show only scheduled lines that have back orders
+     THEN 'Open'
+     ELSE 'Closed'
+ END AS "OrderStatus"
+,case when a."AUART" in ('ZAS','ZAV','ZFD','ZO11','ZSA','ZSB','ZSR','RK','ZCR1','ZDR1') THEN 'OTH'
+     when a."AUART" in ('AG','ZQ01','ZQ03','ZQ04','ZQFO','ZQIS','ZQUP','ZQUX','ZUQT') THEN 'QT'
+     when a."AUART" in ('ZO03','ZRA1','ZSO1') THEN 'RPO'
+     when a."AUART" in ('ZR11','ZR03','ZR04','ZR05','ZR08','ZR4B','ZUPC','ZUPR','ZFOC') THEN 'RTN'
+     when a."AUART" in ('ZO09','ZO12','ZSD','TA','ZCON','ZFO','ZSO','ZUP','ZUPX','ZO04') THEN 'SO'
+     ELSE 'SO' END AS "OrderGroup"
+,a."VBELN" AS "Order"
+,LTRIM(a."VBELN",'0') AS "OrderWZ"
+,p."POSNR" AS "Line"
+,LTRIM(p."POSNR",'0') AS "LineWZ"
+,e."ETENR" AS "ScheduleLine"
+,LTRIM(e."ETENR",'0') AS "ScheduleLineWZ"
+,a."AUART" AS "OrderType"
+,p."ABGRU" AS "RejectionCodeLine"
+,a."ERDAT" AS "CreationDate"
+,p."ERDAT" AS "LineItemCreationDate"
+,p."ERZET" AS "LineItemCreationTime"
+--,a."VDATU" AS "RequestDate"
+,h."EDATU" AS "RequestDate"
+,e."EDATU" AS "DeliveryDueDate" --Schedule Line
+,Null AS "StatRelvDate"
+,Null AS "ItemDeliveryDate"
+,a."LIFSK" AS "HeaderDlvBlk"  --DeliveryBlockHeader
+,e."LIFSP" AS "ItemDlvBlk"
+,CASE WHEN IFNULL(a."FAKSK",'') <> '' THEN 'BLK(H) ' || a."FAKSK"
+	  WHEN IFNULL(p."FAKSP",'') <> '' THEN 'BLK(L) ' || p."FAKSP"
+	  ELSE '' 
+ END AS "BillingBlk"
+,p."KWMENG" AS "OrderLineQty"
+,e."BMENG" AS "CommittedQty"
+--,IFNULL(f1."delvd_qty",0)  AS "PGIQty" --aka vbap-lfimg
+--,LEAST(l."QtyShippedTtLine" - SUM(e."BMENG") OVER (Partition By a."VBELN", p."POSNR" ORDER BY e."EDATU"),e."BMENG")  AS "PGIQty2"
+--,IFNULL(CASE WHEN l."QtyShippedTtLine" - IFNULL(t."ExpectedQtyCumulative",0) >= 0 THEN e."BMENG"
+--      ELSE GREATEST(l."QtyShippedTtLine" - IFNULL(t."ExpectedQtyCumulative",0) + e."BMENG", 0)
+-- END,0) AS "PGIQty"
+ ,CASE WHEN IFNULL(f1."delvd_qty",0) >=  IFNULL(t."ExpectedQtyCumulative",0) THEN IFNULL(e."BMENG",0)
+      WHEN IFNULL(f1."delvd_qty",0) <   IFNULL(t."ExpectedQtyCumulative",0) THEN GREATEST(IFNULL(e."BMENG",0) - (IFNULL(t."ExpectedQtyCumulative",0) - IFNULL(f1."delvd_qty",0)),0)
+      ELSE 0
+ END AS "PGIQty"
+
+,Null AS "Intransit"
+,Null AS "GRQty"
+
+,CASE WHEN IFNULL(u."WBSTK",'') <> 'C' --Total goods movement status aka not Completed(Open Order)
+     	--AND ((a."AUART" <>'ZSO' AND IFNULL(u."LFGSK",'') <> 'C') OR (a."AUART" = 'ZSO'))
+        AND p."ABGRU" = '' --items is not rejected 
+        AND IFNULL(b."LFSTA",'') <> '' --delivery status
+        AND IFNULL(p."KWMENG",0) > IFNULL(f1."delvd_qty",0) --Open qtys
+        AND IFNULL(e."BMENG",0) > 0 
+        AND CASE WHEN IFNULL(t."ExpectedQtyCumulative",0) <= IFNULL(f1."delvd_qty",0)  THEN 0
+                 WHEN IFNULL(t."ExpectedQtyCumulative",0) -  IFNULL(f1."delvd_qty",0) <= IFNULL(e."BMENG",0) THEN IFNULL(t."ExpectedQtyCumulative",0) -  IFNULL(f1."delvd_qty",0)
+                 ELSE IFNULL(e."BMENG",0)
+            END > 0  --Show only scheduled lines that have back orders
+            THEN CASE WHEN IFNULL(t."ExpectedQtyCumulative",0) <= IFNULL(f1."delvd_qty",0)  THEN 0
+	                  WHEN IFNULL(t."ExpectedQtyCumulative",0) -  IFNULL(f1."delvd_qty",0) <= IFNULL(e."BMENG",0) THEN IFNULL(t."ExpectedQtyCumulative",0) -  IFNULL(f1."delvd_qty",0)
+                      ELSE IFNULL(e."BMENG",0)
+                 END     
+     ELSE 0
+ END AS "OpenQty"  
+
+
+--,CASE WHEN IFNULL(t."ExpectedQtyCumulative",0) <= IFNULL(f1."delvd_qty",0)  THEN 0
+--	   WHEN IFNULL(t."ExpectedQtyCumulative",0) -  IFNULL(f1."delvd_qty",0) <= IFNULL(e."BMENG",0) THEN IFNULL(t."ExpectedQtyCumulative",0) -  IFNULL(f1."delvd_qty",0)
+--         --WHEN e.ETENR = '0002' AND ISNULL(f1.delvd_qty,0) - ISNULL(e.BMENG,0) > 0 THEN ISNULL(p.KWMENG,0) - ISNULL(f1.delvd_qty,0)
+--        ELSE IFNULL(e."BMENG",0)
+--  END AS "OpenQty"
+  
+/* ,IFNULL(t."ExpectedQtyCumulative",0)  AS "ScheduleQtyCumulative"
+,CASE WHEN IFNULL(t."ExpectedQtyCumulative",0) <= IFNULL(f1."delvd_qty",0)  THEN IFNULL(e."BMENG",0)
+	   WHEN IFNULL(e."BMENG",0) + IFNULL(f1."delvd_qty",0) - IFNULL(t."ExpectedQtyCumulative",0) >=0 THEN IFNULL(e."BMENG",0) + IFNULL(f1."delvd_qty",0) - IFNULL(t."ExpectedQtyCumulative",0)
+       ELSE 0
+  END AS "ScheduleDeliveredQty" */ 
+--,IFNULL(r."QOH",0) AS "OnHandQty"
+
+,IFNULL(r."LABST",0) +  IFNULL(r."KINSM",0) AS "OnHandQty"
+,r."KLABS" AS "VendorOwned"
+,CASE WHEN IFNULL(e."BMENG",0) < IFNULL(r."QOH",0) THEN IFNULL(e."BMENG",0)
+      ELSE IFNULL(r."QOH",0) 
+ END  AS "AvailToShip"
+,IFNULL(l."OpenDlvDoc",'')  AS "LastDlvDoc"
+,l."OpenDlvQty" AS "LastDlvQty"
+,l."QtyShippedTtLine" AS "QtyShippedTtLine"
+,NULL AS "QtyNetReceivedLine" 
+,IFNULL(l."DlvStatus",'None') AS "LastDlvStatus"
+,Null AS "PurchaseOrg"
+,a."VKORG" AS "SalesOrg"
+,a."KUNNR" AS "SoldTo"
+,LTRIM(a."KUNNR",'0') AS "SoldToWZ"
+
+,k."NAME1" AS "SoldToName"
+,c."ShipTo"
+,LTRIM(c."ShipTo",'0') AS "ShipToWZ"
+,c."ShipToName"
+,p."WERKS" AS "VendorPlant"
+,CASE WHEN IFNULL(p."LGORT",'') IN ('','0010') AND p."WERKS" = '3000' THEN '0030' 
+      WHEN IFNULL(p."LGORT",'') <> '' THEN p."LGORT"
+    ELSE '0010' END AS "VendorSloc"
+,p."VSTEL" AS "ShippingPoint"
+,Null AS "ReceivingPlant"
+,Null AS "ReceivingSloc"
+,p."MATNR" AS "Part"
+,p."ARKTX" AS "PartDescription"
+,pp."Consumable" AS "ConsumableFlag"
+--,CASE WHEN IFNULL(y."EXIDV2",'') = '' THEN l."BOLNR" ELSE y."EXIDV2" END  AS "Track"
+,y."EXIDV2" AS "Track"
+,e."MBDAT" AS "FirmCommitDate"
+--,d."IHREZ_E" AS "FirmCommitDate"
+,a."AUTLF" AS "CompDlv"
+,m."MATKL" AS "MatGrp"
+,d."IHREZ" AS "CSRep"
+,a."BSTNK" AS "CustomerPO"
+
+,CASE WHEN a."WAERK" IN ('JPY','TWD','KRW') THEN p."NETPR" * 100
+      ELSE p."NETPR"
+ END  AS "UnitPriceLocalCurr" 
+,CASE WHEN a."WAERK" IN ('JPY','TWD','KRW') THEN p."NETPR" * 100
+      ELSE p."NETPR"
+ END * e."BMENG" AS "ExtPriceLocalCurr"
+,a."WAERK" AS "DocCurrency"
+
+,CASE WHEN a."WAERK" IN ('JPY','TWD') THEN p."NETPR" * 100
+      ELSE p."NETPR"  
+ END * CASE WHEN IFNULL(hd."KURSK",0) = 0 OR a."WAERK" = 'USD' THEN 1 ELSE hd."KURSK" END AS "UnitPriceUSD"
+
+,CASE WHEN a."WAERK" IN ('JPY','TWD') THEN p."NETPR" * 100
+      ELSE p."NETPR"  
+ END * CASE WHEN IFNULL(hd."KURSK",0) = 0 OR a."WAERK" = 'USD' THEN 1 ELSE hd."KURSK" END * e."BMENG" AS "ExtPriceUSD"
+,w."STPRS" AS "StdCost"
+,w."STPRS" * e."BMENG" AS "ExtCost"
+,'USD' AS "StdCurrency"
+,CASE WHEN p."LPRIO"= '00' THEN '04'
+ 	  ELSE p."LPRIO"
+ END AS "DPrio"
+,p."CHARG" AS "BatchNo"
+,f2."LastPGIDoc" AS "PGIDoc"
+,l."PGIDate" AS "PGIDate"
+,a."OBJNR" AS  "NCUPhase2"
+,a."VSNMR_V" AS "FCID_SlsDocVersion"
+--,m."LABOR" AS "LabOffice"  --Need T024x for lab office description
+,i."LBTXT" AS "LabOffice"   -- LabDescription
+,z."DISPO" AS "MRPV"
+,Null AS "MRPC"
+,p."GRKOR" AS "DlvGrp" --DeliveryGroup
+,Null AS "DlvCreationDate"
+,q."QMNUM" AS "SrvcNotif"
+,j."FrontLoad" AS "FrontLoad"
+,j."POReceived" AS "POReceived"
+,j."Booking" AS "Booking"
+,p."PRODH" AS "ProdHier"
+,Null AS "STOItemText"
+,Null AS "MaterialMemo"
+,z."EKGRP" AS "PurchaseGrp"
+,m."MSTAE" AS "XPlantStatus"
+,p."KDMAT" AS "CustomerMaterial"
+,p."ERNAM" AS "LineChangedBy"
+,CASE WHEN d."INCO1" IS NULL THEN hd."INCO1" 
+      ELSE d."INCO1" 
+ END AS "Incoterms"
+,a."IHREZ" AS "CsOwner"
+,a."ERNAM" AS "CreatedBy"
+,a."AUFNR" AS "AssocServOrd"
+,p."AEDAT" AS "LinePrevChangeDate"
+,CASE WHEN a."WAERK" = 'KRW' THEN 1 / hd."KURSK" * 100
+      ELSE 1 / hd."KURSK"
+ END AS "ExchangeRate"
+,CAST(hd."PRSDT" AS VARCHAR) AS "PricingDate"
+--,s."Region2" AS "Region"
+
+,CASE WHEN a."VKORG" = '9000' THEN 'NA'
+	  WHEN a."VKORG" BETWEEN '2000' AND '2900' THEN 'EU'
+	  WHEN a."VKORG" BETWEEN '3000' AND '3001' THEN 'JP'
+	  WHEN a."VKORG" = '3100' THEN 'TW'
+	  WHEN a."VKORG" = '3200' THEN 'KR'
+	  WHEN a."VKORG" = '3300' OR a."VKORG" = '3600'  THEN 'SEA'
+	  WHEN a."VKORG" = '3400' OR a."VKORG" = '3410' OR a."VKORG" = '1000' THEN 'CN'
+	  ELSE 'NEW'
+ END AS "Region"
+
+
+,CASE WHEN m."LABOR" = '023' THEN 'SPIN' 
+      WHEN m."LABOR" = '024' THEN 'DEP'
+      ELSE 'ETCH+'
+END AS "ToolType"
+,CASE WHEN CURRENT_DATE >= e."EDATU"
+AND j."POReceived" = 'X'
+ THEN 'True'ELSE 'False' END AS "ShipmentDueFlag"
+ ,a."NETWR" *
+  CASE WHEN a."WAERK" IN ('JPY','TWD') THEN CASE WHEN IFNULL(hd."KURSK",0) = 0 THEN 1 ELSE hd."KURSK" END * 100
+      ELSE CASE WHEN IFNULL(hd."KURSK",0) = 0 THEN 1 ELSE hd."KURSK" END 
+  END AS "GrossSOPriceUSD"
+ ,CASE WHEN CURRENT_DATE >= e."EDATU"
+ THEN 'True'ELSE 'False' END AS "DeliveryDueFlag"
+ ,p."POSEX" AS "CustomerPoLine"
+ ,NULL AS "Cancellation"
+ ,NULL AS "CancellationIndicatorFlag"
+ ,xy."CARRIER" AS "Carrier"
+,xy."CARRIER_NAME" AS "CarrierName"
+,d."ZTERM" AS "CreditCheckBlock"
+,CASE WHEN IFNULL(p."ABGRU",'') <> '' THEN 'True' ELSE 'False' END AS "SOLineRejectionFlag"
+
+
+--Added on 12Apr2018
+,ACT."LARNT" AS "ActivityType"
+--End of Added on 12Apr2018
+
+
+
+--,CAST(n."Record_ID_" AS NVARCHAR) AS "QBETRecordID"
+--,CAST(f."Record_ID_" AS NVARCHAR) AS "HORecordID"
+
+
+
+
+
+FROM "_SYS_BIC"."prd.global.ecc/CV_VBUK" u
+JOIN "_SYS_BIC"."prd.global.ecc/CVNS_VBAK" a
+ON u."VBELN" = a."VBELN"
+JOIN "_SYS_BIC"."prd.global.ecc/CV_KNA1" k
+ON a."KUNNR" = k."KUNNR"
+JOIN "_SYS_BIC"."prd.global.ecc/CVNS_VBAP" p
+ON a."VBELN" = p."VBELN"
+JOIN "_SYS_BIC"."prd.gops.GLIS/CV_PART" pp
+ON p."MATNR" = pp."Part"
+JOIN "_SYS_BIC"."prd.global.ecc/CVNS_VBEP" e
+ON p."VBELN" = e."VBELN" AND p."POSNR" = e."POSNR" 
+JOIN (
+	   SELECT "VBELN", "POSNR", "EDATU"
+	   FROM "_SYS_BIC"."prd.global.ecc/CVNS_VBEP"
+	   WHERE "ETENR" = '0001'
+	 ) h
+ON p."VBELN" = h."VBELN" AND p."POSNR" = h."POSNR" 
+JOIN (
+	  SELECT t1."VBELN"
+		   ,t1."POSNR"
+		   ,t1."ETENR"
+		   ,t1."BMENG"
+			,SUM(t2."BMENG") AS "ExpectedQtyCumulative"
+	  FROM "_SYS_BIC"."prd.global.ecc/CVNS_VBEP" t1
+	  INNER JOIN "_SYS_BIC"."prd.global.ecc/CVNS_VBEP" t2 
+	  ON t1."VBELN" = t2."VBELN" 
+	  AND t1."POSNR" = t2."POSNR" 
+	  AND t1."ETENR" >= t2."ETENR"
+	  WHERE t1."BMENG" > 0
+	  GROUP BY t1."VBELN",t1."POSNR",t1."ETENR", t1."BMENG"	
+	 ) t  --Cummulative Committed Qty to calculate the BackOrderQty
+ON e."VBELN" = t."VBELN" AND e."POSNR" = t."POSNR" AND e."ETENR" = t."ETENR"
+JOIN "_SYS_BIC"."prd.global.ecc/CV_VBUP" b
+ON p."VBELN" = b."VBELN" AND p."POSNR" = b."POSNR" 
+LEFT JOIN (
+			SELECT  Max(a."VBELN") AS "VBELN"
+					,a."VBELV"
+					,a."POSNV"
+			      	,SUM(CASE WHEN b."VBTYP_N" = 'R' AND b."PLMIN" = '+' THEN IFNULL(b."RFMNG_FLO",0) --R Goods Movement, + , reference qty
+                            WHEN b."VBTYP_N"  = 'h' THEN IFNULL(b."RFMNG_FLO",0) * -1 --h is returns, (-) Should be minus, reference qty
+							ELSE 0
+					  	 END)  AS "delvd_qty"
+			FROM "_SYS_BIC"."prd.global.ecc/CV_VBFA" a
+			JOIN "_SYS_BIC"."prd.global.ecc/CV_VBFA" b
+			ON a."VBELN" = b."VBELV" 
+			AND a."POSNN" = b."POSNV"
+			WHERE a."STUFE"='00' 
+			AND a."VBTYP_N" IN ('T','J')
+			--AND b."PLMIN" = '+'			    
+			GROUP BY a."VBELV", a."POSNV" --,a.VBTYP_N, b.MEINS --,a.STUFE
+		  ) f1
+ON b."VBELN" = f1."VBELV" AND b."POSNR" = f1."POSNV" 
+LEFT JOIN (
+			SELECT a."VBELV"
+					,a."POSNV"
+					,MAX(b."VBELN") AS "LastPGIDoc"--, COUNT(*) PGIDocCount
+            		,SUM(CASE WHEN b."VBTYP_N" = 'R' THEN IFNULL(b."RFMNG",0) --R Goods Movement, + , reference qty
+                     		  WHEN b."VBTYP_N" = 'h' THEN IFNULL(b."RFMNG",0) * -1 --h is returns, (-) Should be minus, reference qty
+                           	  ELSE 0
+                         END)  AS "PGIQty"
+			FROM "_SYS_BIC"."prd.global.ecc/CV_VBFA" a
+			JOIN "_SYS_BIC"."prd.global.ecc/CV_VBFA" b
+			ON a."VBELN" = b."VBELV" AND a."POSNN" = b."POSNV"
+			WHERE a."STUFE" ='00' 
+			AND a."VBTYP_N" IN ('T','J')
+			AND b."VBELN" LIKE '49%'
+			GROUP BY a."VBELV", a."POSNV"
+		  ) f2
+ON b."VBELN" = f2."VBELV" AND b."POSNR" = f2."POSNV" 
+JOIN (
+	  SELECT
+		   v."VBELN"
+		  ,v."KUNNR" AS "ShipTo"
+		  ,k."NAME1" AS "ShipToName"
+	  FROM "_SYS_BIC"."prd.global.ecc/CV_VBPA" v
+	  JOIN "_SYS_BIC"."prd.global.ecc/CV_KNA1" k
+	  ON v."KUNNR" = k."KUNNR"
+	  WHERE "POSNR" = '000000'
+	  AND "PARVW" ='WE'
+ 	 ) c  --Shipto
+ ON a."VBELN" = c."VBELN"
+ JOIN "_SYS_BIC"."prd.global.ecc/CV_MARA" m
+ ON p."MATNR" = m."MATNR" 
+ LEFT JOIN (
+           SELECT "LABOR" 
+           			,"LBTXT" --LabOffice
+           FROM "_SYS_BIC"."prd.global.ecc/CV_T024X" 
+ 		   WHERE "SPRAS" ='E' 
+ 		   ) i
+ ON m."LABOR" = i."LABOR"
+ LEFT JOIN (
+	 		SELECT "WERKS"
+	 				,"LGORT"
+	 				,"MATNR"
+	 				,"LABST"
+	 				,"KLABS"
+	 				,"KINSM"
+	 				,IFNULL("LABST",0) + IFNULL("KLABS",0) + IFNULL("KINSM",0) AS "QOH"
+	 		FROM "_SYS_BIC"."prd.global.ecc/CV_MARD" 
+			--WHERE IFNULL("DISKZ",'') IN ('','2')
+    		--GROUP BY "WERKS", "MATNR", "LABST", "KLABS"
+ 		    ) r
+ON p."WERKS" = r."WERKS" --AND IFNULL(NULLIF(p."LGORT",''),'0010') = r."LGORT" 
+AND p."MATNR" = r."MATNR"
+AND CASE WHEN IFNULL(p."LGORT",'') IN ('','0010') AND p."WERKS" = '3000' THEN '0030' 
+         WHEN IFNULL(p."LGORT",'') <> '' THEN p."LGORT"
+    ELSE '0010' END = r."LGORT"
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_MARC" z
+ON p."WERKS" = z."WERKS" AND p."MATNR" = z."MATNR"
+LEFT JOIN (
+    	   SELECT s."VGBEL"
+    				,s."VGPOS"
+    				,MAX(s."VBELN") AS "OpenDlvDoc"
+    				,SUM(s."LGMNG") AS "OpenDlvQty"  
+    				,case when MAX(k."WADAT_IST") = '' THEN '0' ELSE SUM(s."LFIMG") END AS "QtyShippedTtLine"
+    				,MAX(k."WADAT_IST")  AS "PGIDate"
+    				,CASE WHEN MAX(k."WADAT_IST") = '' THEN 'Created'
+    				      ELSE 'Shipped' 
+    				 END AS "DlvStatus"
+   			FROM "_SYS_BIC"."prd.global.ecc/CVNS_LIPS" s
+    		JOIN "_SYS_BIC"."prd.global.ecc/CVNS_LIKP" k
+    		ON s."VBELN" = k."VBELN"
+    		WHERE  s."VGBEL" <> '' 
+    		AND s."VGBEL" NOT LIKE '4%' 
+    		AND s."VGBEL" NOT LIKE '3%'
+            AND	k."WADAT_IST" <> ''
+			GROUP BY s."VGBEL", s."VGPOS"
+		  ) l
+ON p."VBELN" = l."VGBEL" AND p."POSNR" = l."VGPOS"
+LEFT JOIN 
+          (
+          SELECT "MATNR", "STPRS"
+          FROM "_SYS_BIC"."prd.global.ecc/CV_MBEW"
+          WHERE "BWKEY" = 2000
+          ) w
+ON p."MATNR" = w."MATNR"
+LEFT JOIN --Header Incoterm
+	(
+	SELECT "VBELN", "INCO1","KURSK", "PRSDT"
+	FROM "_SYS_BIC"."prd.global.ecc/CVNS_VBKD"
+	WHERE "POSNR" = '000000'
+	) hd -- Header
+ON p."VBELN" = hd."VBELN"
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CVNS_VBKD" d --Line Incoterm
+ON p."VBELN" = d."VBELN" AND p."POSNR" = d."POSNR"
+LEFT JOIN (
+			SELECT a."OBJNR"
+	    			,MAX(CASE WHEN a."STAT" = 'E0008'  THEN 'X' ELSE '' END) AS "FrontLoad"
+	    			,MAX(CASE WHEN a."STAT" = 'E0009'  THEN 'X' ELSE '' END) AS "POReceived"
+	    			,MAX(CASE WHEN a."STAT" = 'E0001' OR a."STAT" = 'E0004' OR a."STAT" = 'E0005' THEN b."TXT04" ELSE '' END) AS "Booking"
+	    			--a."INACT", 
+					--a."CHGNR", 
+					--a."_DATAAGING"
+			FROM "_SYS_BIC"."prd.global.ecc/CV_JEST" a
+			LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_TJ30T" b
+			ON a."STAT" = b."ESTAT"
+			WHERE 
+			-- a."ERDAT">="2017-01-01"
+			a."STAT" IN ('E0001', 'E0004', 'E0005', 'E0008', 'E0009')
+    		AND a."INACT"<> 'X'
+			AND b."STSMA" = 'Z0000003' 
+			AND b."SPRAS" = 'E'
+			GROUP BY a."OBJNR"
+		   ) j
+ON a."OBJNR" = j."OBJNR" 
+LEFT JOIN (
+ 			SELECT  v."VPOBJKEY"
+ 					,MAX(v."EXIDV2") AS "EXIDV2"  --Track
+ 			FROM "_SYS_BIC"."prd.global.ecc/CV_VEKP" v
+			GROUP BY "VPOBJKEY"
+		   ) y
+ON f1."VBELN"  = y."VPOBJKEY" 
+LEFT JOIN (
+			SELECT ab."FCURR" 
+			      ,ab."TCURR"	
+			      ,ABS(ab."UKURS") AS "UKURS2"  --Exchange Rate
+				  ,ab."GDATU"
+			FROM "_SYS_BIC"."prd.global.ecc/CV_TCURR" AS ab
+			INNER JOIN (
+						SELECT  "FCURR"
+						       ,"TCURR"
+			     		       ,MIN("GDATU") AS "GDATU"
+						FROM "_SYS_BIC"."prd.global.ecc/CV_TCURR" 
+						WHERE "TCURR" = 'USD'
+						GROUP BY "FCURR", "TCURR"
+					    ) AS bc
+			ON  ab."FCURR" = bc."FCURR" 
+			AND ab."GDATU" = bc."GDATU" 
+			AND ab."TCURR" = bc."TCURR"
+		  ) x
+ON a."WAERK" = x."FCURR"
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CVNS_QMEL" q
+ON a."VBELN" = q."AUFNR"
+--LEFT JOIN "_SYS_BIC"."prd.csbg/CVNS_CSBG_SPARES_ORDERS" g
+--ON p."VBELN" = g."SALES_ORDER_NO" AND p."POSNR" = g."SALES_ORDER_LINE"
+LEFT JOIN 
+(
+select "ORDER_NO",
+"ORDER_LINE_NO",
+MAX("CARRIER") AS "CARRIER",
+MAX("CARRIER_NAME") AS "CARRIER_NAME"
+ from "_SYS_BIC"."prd.csbg/CVNS_CSBG_SPARES_DELIVERIES_NEW"
+ group by "ORDER_NO","ORDER_LINE_NO") xy
+on p."VBELN" = xy."ORDER_NO" AND p."POSNR" = xy."ORDER_LINE_NO"
+
+--LEFT JOIN (
+--			SELECT "VKORG"
+--			      ,CASE WHEN "VKORG" = '1000' OR "VKORG" = '9000' THEN 'US'
+--			            WHEN "VKORG" BETWEEN '2000' AND '2600' THEN 'EU'
+--			            WHEN "VKORG" BETWEEN '3000' AND '3001' THEN 'JP'
+--			            WHEN "VKORG" = '3100' THEN 'TW'
+--			            WHEN "VKORG" = '3200' THEN 'KR'
+--			            WHEN "VKORG" = '3300' THEN 'SG'
+--			            WHEN "VKORG" = '3400' THEN 'CN'
+--			            WHEN "VKORG" = '3600' THEN 'MY'
+--			            ELSE 'NEW'
+--			        END Region2   			            			  
+--			FROM "_SYS_BIC"."prd.csbg/CV_REGIONS" 
+--           ) s
+--ON a."VKORG" = s."VKORG"
+
+--LEFT JOIN "ALEX_GOPS"."VW_QB_EXPEDITES_log" n
+--ON a."VBELN" = CAST(n."Sales_Order__" AS NVARCHAR)  
+--LEFT JOIN "ALEX_GOPS"."vw_QB_Hot_orders" f
+--ON a."VBELN" = CAST(f."Sales_Order__" AS NVARCHAR)
+
+
+
+--Added on 12Apr2018
+LEFT JOIN 
+"_SYS_BIC"."prd.global.ecc/CV_AFKO" AFKO
+ON a."AUFNR" = AFKO."AUFNR"
+LEFT JOIN
+(
+	SELECT 
+	 AFVCHeader."AUFPL"
+	,AFVC."LARNT"
+	FROM 
+	(   
+	   	SELECT 
+		 "AUFPL"
+		,MIN("VORNR") "VORNR"
+		FROM "_SYS_BIC"."prd.global.ecc/CV_AFVC"
+		GROUP BY
+		 "AUFPL"
+	) AFVCHeader
+	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_AFVC" AFVC
+	ON AFVCHeader."AUFPL" = AFVC."AUFPL" AND AFVCHeader."VORNR" = AFVC."VORNR"
+) ACT
+ON AFKO."AUFPL" = ACT."AUFPL"
+--End of Added on 12Apr2018
+
+
+
+WHERE p."WERKS" >= '1900'
+--and (IFNULL(u."WBSTK",'') <> 'C'
+--and IFNULL(u."LFGSK",'') <> 'C')
+--AND p."ABGRU" = ''
+ --AND IFNULL(b."LFSTA",'') NOT IN ('','')
+ --AND (IFNULL(p."KWMENG",0) > IFNULL(f1."delvd_qty",0))
+ --AND IFNULL(e."BMENG",0) > 0 
+AND a."AUART" NOT IN ('ZVC','ZR07')
+--AND a."VBELN" = '0000077734'       
+--			AND a."VBELV"  = '0000962990'     
+--			AND a."VBELV"  = '0000963479'        
+--AND IFNULL(f1."delvd_qty",0) <> IFNULL(l."QtyShippedTtLine",0)
+AND (p."ERDAT" >= ADD_DAYS(CURRENT_DATE,-732)
+	OR 
+		(IFNULL(u."WBSTK",'') <> 'C' --Total goods movement status aka not Completed(Open Order)
+     	AND IFNULL(u."LFGSK",'') <> 'C'
+        AND IFNULL(p."ABGRU",'') = '' --items is not rejected 
+        AND IFNULL(b."LFSTA",'') NOT IN ('','') --delivery status
+        AND IFNULL(p."KWMENG",0) > IFNULL(f1."delvd_qty",0) --Open qtys
+        AND IFNULL(e."BMENG",0) > 0 
+        AND CASE WHEN IFNULL(t."ExpectedQtyCumulative",0) <= IFNULL(f1."delvd_qty",0)  THEN 0
+                 WHEN IFNULL(t."ExpectedQtyCumulative",0) -  IFNULL(f1."delvd_qty",0) <= IFNULL(e."BMENG",0) THEN IFNULL(t."ExpectedQtyCumulative",0) -  IFNULL(f1."delvd_qty",0)
+                 ELSE IFNULL(e."BMENG",0)
+            END > 0
+        )
+     )
+
+ORDER BY a."VBELN"
+		,p."POSNR"
+		,e."ETENR")	xyzz;
+END
+
+/********* End Procedure Script **********/

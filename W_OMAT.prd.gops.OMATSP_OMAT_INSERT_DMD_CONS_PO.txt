@@ -1,0 +1,409 @@
+PROCEDURE "W_OMAT"."prd.gops.OMAT::SP_OMAT_INSERT_DMD_CONS_PO" ( ) 
+LANGUAGE SQLSCRIPT
+	SQL SECURITY DEFINER 
+	DEFAULT SCHEMA W_OMAT
+	--READS SQL DATA 
+	AS
+BEGIN
+/*------------------------------------------------------------------------------------------------------------------------*
+*Program Name : SP_OMAT_INSERT_DMD_CONS_PO
+*Project      : Obsolescence Improvement Project
+*Developer    : Akhil Martin
+*Requestor    : David, Hickman
+*Create Date  : 2020/04/17
+*--------------------------------------------------------------------------------------------------------------------------*
+*Description  : This Stored Procedure identifies the demand, consumption, open order quantity, 
+			 	Lam quantity On Hand, Supplier Info and product details of BUY NHAs in OB PR and insert it into
+			 	OMAT Tables for OMAT Application.				
+*--------------------------------------------------------------------------------------------------------------------------*
+Change Log:
+Change Id 		Developer		Date			Change Description
+---------------------------------------------------------------------------------------------------------------------------*
+98687			AKHILJO			2020-04-17		Initial developemnt.
+105125			AKHILJO			2020-11-13		Spares consumption query Changed to Subquery Method 
+												to solve the issue with "_SYS_BIC"."prd.csbg/CVNS_CSBG_SPARES_DELIVERIES".
+106810			AKHILJO			2021-01-26		Fixed Vendor Attribute added & SBM Code.
+107767			AKHILJO			2021-03-17		New SP invoking to get the MRP PREFERRED suppliers in all the procurement
+												plants in LAM
+108422			SRIVAAP         2021-04-14      Added 5 years consumption data for MFG and SPRS
+109105			SRIVAAP         2021-05-19      Added filters for MFG and Spares Consumption
+113881 			AKHILJO			2021-09-14		Added filter for ZUP INTO Spares Consumption Logic
+115167 			AKHILJO			2021-10-20		Removed DISCARD <> 'X' from OPEN PO Qty as this Flag is not using as per Byron
+128743          TIWARIS         2023-09-11      added new column restricted all stock and new calculation for LAMQOH
+------          BERANSU         2025-02-25      Disconnected Storage location V014 from QOH
+*---------------------------------------------------------------------------------------------------------------------------*/	
+
+DECLARE OBPRTCnt INT;
+DECLARE NHACnt INT;
+
+OBPRTCnt := 0;
+NHACnt := 0;
+
+  NHALIST = Select DISTINCT CMPPRTNO, NHA FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_BUY_NHA_DTLS" WHERE "ISPROCESSED" = 'N' ;
+  
+--Get the Manufacturing weekly consumption for last 3 years.
+ --------------
+ -- Step 1.
+ --------------
+
+	MFGCONS = SELECT  DISTINCT A.CMPPRTNO,
+            	              B.MATNR,
+                              SUM(CASE WHEN B.SHKZG = 'S' THEN -1*B.MENGE ELSE B.MENGE END) AS "MFG_3YRS_CONSUMPTION"
+               FROM "_SYS_BIC"."prd.global.ecc/CV_MSEG" B 
+               INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MAKT" C ON C.MATNR = B.MATNR 
+               INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MKPF" D ON B.MBLNR = D.MBLNR 
+               INNER JOIN :NHALIST A ON A.NHA = B.MATNR
+               WHERE  B.BWART in ('261','262') and D.BLDAT > ADD_DAYS (CURRENT_DATE, -365*3)
+                              AND D.BLDAT< CURRENT_DATE
+               GROUP BY A.CMPPRTNO, B.MATNR, C.MAKTX;                 
+                        
+ --Get the Manufacturing weekly DEMAND for 26 WEEKS.
+ ---------------
+ -- Step 2.
+ ---------------
+                        
+  MFGDMD = 	SELECT DISTINCT B.CMPPRTNO,		
+						MATNR, 
+                        SUM(DMDPD + DMD1 + DMD2 + DMD3 + DMD4 + DMD5 + DMD6 + DMD7 + DMD8 + DMD9 + DMD10 + DMD11 + DMD12 + DMD13 + DMD14
+                         + DMD15 + DMD16 + DMD17 + DMD18 + DMD19 + DMD20 + DMD21 + DMD22 + DMD23 + DMD24 + DMD25 + DMD26) AS "MFG_DMD"       
+                  FROM "_SYS_BIC"."prd.global.ecc/CV_ZMMFORECAST" A
+                  INNER JOIN :NHALIST B ON B.NHA = A.MATNR
+                  WHERE ROWTYPE = '06'
+                        AND WERKS = 'COMB'
+                  GROUP BY B.CMPPRTNO, MATNR;
+ 
+  --Get the SPARES weekly DEMAND for 26 WEEKS.
+  --------------
+  -- Step 3.
+  --------------
+
+	SPRSDMD	= 	SELECT DISTINCT B.CMPPRTNO,		
+						MATNR,
+                        SUM(DMDPD + DMD1 + DMD2 + DMD3 + DMD4 + DMD5 + DMD6 + DMD7 + DMD8 + DMD9 + DMD10 + DMD11 + DMD12 + DMD13 + DMD14
+                         + DMD15 + DMD16 + DMD17 + DMD18 + DMD19 + DMD20 + DMD21 + DMD22 + DMD23 + DMD24 + DMD25 + DMD26) AS "SPRS_DMD"
+                  FROM "_SYS_BIC"."prd.global.ecc/CV_ZMMFORECAST" A
+                  INNER JOIN :NHALIST B ON B.NHA = A.MATNR
+                  WHERE ROWTYPE = '07'
+                        AND WERKS = 'COMB'
+                  GROUP BY B.CMPPRTNO, MATNR;
+                  
+  --Get the SPARES weekly CONSUMPTION for LAST 3 YEARS.
+  --------------
+  -- Step 4.
+  --------------
+
+    --105125 START Spares consumption query data fetching Changed to Table to solve the issue with the View "_SYS_BIC"."prd.csbg/CVNS_CSBG_SPARES_DELIVERIES". 
+
+	SPRSCONS =  SELECT B.CMPPRTNO, A.MATERIAL,  SUM(A.QTY_SHIPPED) AS "SPRS_3YRS_CONSUMPTION" 
+				FROM "ALEX_CUSTOM"."ZT_CSBG_SPARES_DELIVERIES" A
+				INNER JOIN :NHALIST B ON B.NHA = A.MATERIAL
+				WHERE A.SOURCE_DOC <> 'STO' 
+						AND A.ORDER_TYPE IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP') 
+						AND A.ACTUAL_GI > ADD_DAYS (CURRENT_DATE, -365*3) 
+				GROUP BY A.MATERIAL, B.CMPPRTNO
+				ORDER BY A.MATERIAL ASC;  
+
+	--105125 END Spares consumption query data fetching Changed to Table to solve the issue with the View "_SYS_BIC"."prd.csbg/CVNS_CSBG_SPARES_DELIVERIES".
+
+--Get the Manufacturing weekly consumption for last 12 Months.
+ --------------
+ -- Step 5.
+ --------------
+ 
+	MFG12MNTHSCONS =   SELECT  DISTINCT A.CMPPRTNO,
+                              B.MATNR,
+                              SUM(CASE WHEN B.SHKZG = 'S' THEN -1*B.MENGE ELSE B.MENGE END) AS "MFG_12MNTHS_CONSUMPTION" --"3 years consumed qty"
+                        FROM "_SYS_BIC"."prd.global.ecc/CV_MSEG" B 
+                        INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MAKT" C ON C.MATNR = B.MATNR 
+                        INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MKPF" D ON B.MBLNR = D.MBLNR 
+                        INNER JOIN :NHALIST A ON B.MATNR = A.NHA
+                        WHERE  B.BWART in ('261','262') and D.BLDAT > ADD_DAYS (CURRENT_DATE, -365)
+                              AND D.BLDAT< CURRENT_DATE
+                        GROUP BY A.CMPPRTNO, B.MATNR, C.MAKTX;
+    
+	--Get the LAM Quantity On Hand.
+ 	--------------
+	-- Step 5.
+ 	--------------                    
+     --old calculation                   
+ 	/*LAMQOH =    SELECT B.CMPPRTNO,
+ 						A.MATNR,
+ 						SUM(LBKUM) AS "LAMQOH"
+ 				FROM "_SYS_BIC"."prd.global.ecc/CV_MBEW" A
+ 				INNER JOIN :NHALIST B ON A.MATNR = B.NHA
+ 				GROUP BY B.CMPPRTNO, A.MATNR;*/
+ 	--128743 Change starts			
+ 	LAMQOH =    SELECT B.CMPPRTNO,
+ 						A.MATNR,
+ 						SUM(LABST +KLABS) AS "LAMQOH",
+ 						SUM(INSME+UMLME+EINME+SPEME) AS "Restricted_All_Stock"
+ 				FROM "_SYS_BIC"."prd.global.ecc/CV_MARD" A
+ 				INNER JOIN :NHALIST B ON A.MATNR = B.NHA
+ 				WHERE A.LGORT NOT IN('V014')
+ 				GROUP BY B.CMPPRTNO, A.MATNR;
+ 	--128743 change end			
+ 	
+	--Get the LAM OPEN PO Quantity.
+ 	--------------
+ 	-- Step 5.
+ 	--------------
+			
+ 	OPENPOQTY = SELECT C.CMPPRTNO,
+ 						A.MATNR, 
+ 						SUM(A.MENGE-A.WEMNG) AS "OPEN_PO_QTY"
+ 				FROM "_SYS_BIC"."prd.global.ecc/CV_ZPO_HSTRY"  A
+				INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EKPO" B ON A.EBELN = B.EBELN AND A.EBELP = B.EBELP
+				INNER JOIN :NHALIST C ON A.MATNR = C.NHA 
+				WHERE RIGHT(DUE_DT,5) <> '04-01' AND RIGHT(DUE_DT,5) <> '12-31'
+						AND A.STATUS <> 'INACT'	 AND TRIM(A.MATNR) <> '' 
+						AND TRIM(A.LOEKZ) = ''   --AND A.DISCRD <> 'X'
+						AND A.AUSSL <> 'U3'      AND A.BSART <> 'UB'
+						AND A.ELIKZ <> 'X'       AND B.PSTYP <> '7' 
+						AND B.PSTYP <> '9'
+				GROUP BY C.CMPPRTNO, A.MATNR
+				ORDER BY A.MATNR ASC ; 		
+				
+--Get the Manufacturing weekly consumption for last 5 years.
+ --------------
+ -- Step 6.
+ --------------
+
+	MFG5YrsCONS = SELECT  DISTINCT A.CMPPRTNO,
+            	              B.MATNR,
+                              SUM(CASE WHEN B.SHKZG = 'S' THEN -1*B.MENGE ELSE B.MENGE END) AS "MFG_5YRS_CONSUMPTION"
+               FROM "_SYS_BIC"."prd.global.ecc/CV_MSEG" B 
+               INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MAKT" C ON C.MATNR = B.MATNR 
+               INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MKPF" D ON B.MBLNR = D.MBLNR 
+               INNER JOIN :NHALIST A ON A.NHA = B.MATNR
+               WHERE  B.BWART in ('261','262') and D.BLDAT > ADD_DAYS (CURRENT_DATE, -365*5)
+                              AND D.BLDAT< CURRENT_DATE
+               GROUP BY A.CMPPRTNO, B.MATNR, C.MAKTX;  
+               
+  --Get the SPARES weekly CONSUMPTION for LAST 5 YEARS.
+  --------------
+  -- Step 7.
+  --------------
+
+	SPRS5YrsCONS =  SELECT B.CMPPRTNO, A.MATERIAL,  SUM(A.QTY_SHIPPED) AS "SPRS_5YRS_CONSUMPTION" 
+				FROM "ALEX_CUSTOM"."ZT_CSBG_SPARES_DELIVERIES" A
+				INNER JOIN :NHALIST B ON B.NHA = A.MATERIAL
+				WHERE A.SOURCE_DOC <> 'STO' 
+						AND A.ORDER_TYPE IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP') 
+						AND A.ACTUAL_GI > ADD_DAYS (CURRENT_DATE, -365*5) 
+				GROUP BY A.MATERIAL, B.CMPPRTNO
+				ORDER BY A.MATERIAL ASC;  	
+	
+	INSERT INTO "W_OMAT"."OMAT_DMD_CONSUMPTION_DTLS"(CMPPRTNO, NHA,"MFG_3YRS_CONSUMPTION","MFG_DMD", "SPRS_DMD", "SPRS_3YRS_CONSUMPTION",
+														"MFG_12MNTHS_CONSUMPTION","LAMQOH","RESTRICTED_ALL_STOCK","OPEN_PO_QTY","LAST_MODIFIED_ON","MFG_5YRS_CONSUMPTION","SPRS_5YRS_CONSUMPTION")
+	SELECT  DISTINCT
+			A.CMPPRTNO,
+			A.NHA,
+			B."MFG_3YRS_CONSUMPTION",
+			C."MFG_DMD",
+			D."SPRS_DMD",
+			E."SPRS_3YRS_CONSUMPTION",
+			F."MFG_12MNTHS_CONSUMPTION",
+			G."LAMQOH",
+			G."Restricted_All_Stock", --128743 change
+			H."OPEN_PO_QTY",
+			CURRENT_DATE,
+			I."MFG_5YRS_CONSUMPTION",
+			J."SPRS_5YRS_CONSUMPTION"
+			FROM :NHALIST A
+			LEFT JOIN :MFGCONS B 		ON A.NHA = B.MATNR
+			LEFT JOIN :MFGDMD C  		ON A.NHA = C.MATNR 
+			LEFT JOIN :SPRSDMD D		ON A.NHA = D.MATNR 
+			LEFT JOIN :SPRSCONS E 		ON A.NHA = E.MATERIAL
+			LEFT JOIN :MFG12MNTHSCONS F	ON A.NHA = F.MATNR
+			LEFT JOIN :LAMQOH G			ON A.NHA = G.MATNR
+			LEFT JOIN :OPENPOQTY H  	ON A.NHA = H.MATNR
+			LEFT JOIN :MFG5YrsCONS I 		ON A.NHA = I.MATNR
+			LEFT JOIN :SPRS5YrsCONS J 		ON A.NHA = J.MATERIAL
+		WHERE  A.CMPPRTNO = A.NHA
+		
+				UNION
+				
+	SELECT  DISTINCT
+			A.CMPPRTNO,
+			A.NHA,
+			B."MFG_3YRS_CONSUMPTION",
+			C."MFG_DMD",
+			D."SPRS_DMD",
+			E."SPRS_3YRS_CONSUMPTION",
+			F."MFG_12MNTHS_CONSUMPTION",
+			G."LAMQOH",
+			G."Restricted_All_Stock",  --128743 change
+			H."OPEN_PO_QTY",
+			CURRENT_DATE,
+			I."MFG_5YRS_CONSUMPTION",
+			J."SPRS_5YRS_CONSUMPTION"
+			FROM :NHALIST A
+			LEFT JOIN :MFGCONS B 		ON A.NHA = B.MATNR
+			LEFT JOIN :MFGDMD C  		ON A.NHA = C.MATNR 
+			LEFT JOIN :SPRSDMD D		ON A.NHA = D.MATNR 
+			LEFT JOIN :SPRSCONS E 		ON A.NHA = E.MATERIAL
+			LEFT JOIN :MFG12MNTHSCONS F	ON A.NHA = F.MATNR
+			LEFT JOIN :LAMQOH G			ON A.NHA = G.MATNR
+			LEFT JOIN :OPENPOQTY H  	ON A.NHA = H.MATNR
+			LEFT JOIN :MFG5YrsCONS I 		ON A.NHA = I.MATNR
+			LEFT JOIN :SPRS5YrsCONS J 		ON A.NHA = J.MATERIAL
+		WHERE  B."MFG_3YRS_CONSUMPTION" > 0 
+				OR C."MFG_DMD" > 0 
+				OR D."SPRS_DMD" > 0 
+				OR E."SPRS_3YRS_CONSUMPTION" > 0 
+				OR F."MFG_12MNTHS_CONSUMPTION" > 0 
+				OR H."OPEN_PO_QTY" > 0 
+				OR I."MFG_5YRS_CONSUMPTION">0
+			    OR J."SPRS_5YRS_CONSUMPTION">0;	
+				
+	MFGCONS   = SELECT * FROM :MFGCONS WHERE 1 = 2;
+	MFG5YrsCONS   = SELECT * FROM :MFG5YrsCONS WHERE 1 = 2;
+	MFGDMD    = SELECT * FROM :MFGDMD WHERE 1 = 2;
+	SPRSDMD   = SELECT * FROM :SPRSDMD WHERE 1 = 2;
+	SPRSCONS  = SELECT * FROM :SPRSCONS WHERE 1 = 2;
+	SPRS5YrsCONS  = SELECT * FROM :SPRS5YrsCONS WHERE 1 = 2;
+	LAMQOH    = SELECT * FROM :LAMQOH WHERE 1 = 2;
+	OPENPOQTY = SELECT * FROM :OPENPOQTY WHERE 1 = 2; 
+	MFG12MNTHSCONS = SELECT * FROM :MFG12MNTHSCONS WHERE 1 = 2;		
+	
+	--NEW SP CALL to identify MRP preferred Supplier in all procurement Plants. 107767 CHANGES START
+	CALL "W_OMAT"."prd.gops.OMAT::SP_OMAT_INSERT_SUPPLIERS_BYPLANT"();		 			 
+				
+	/* UPDATE "W_OMAT"."OMAT_OBPN_BUY_NHA_DTLS" A SET A."ISPROCESSED" = 'Y';
+				
+	WERKS = SELECT DISTINCT A.NHA, MIN(B.WERKS) AS WERKS FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" A 
+				INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" B ON TRIM(A.NHA) = TRIM(B.MATNR)
+				--INNER JOIN "_SYS_BIC"."prd.gops.bizops/CV_INFOREC" C ON C.MATERIAL = A.CMPPRTNO AND C.PLANT = B.WERKS 
+				--INNER JOIN :NHALIST D ON D.CMPPRTNO = A.CMPPRTNO WHERE AUTET = '1' 
+				WHERE B.AUTET = '1' AND B.WERKS NOT IN ('1030','1040')
+						AND B.FLIFN = 'X' --106536 Changes 
+				GROUP BY (A.NHA);
+				
+	SUPDTLS = SELECT DISTINCT A.NHA,		A.WERKS, 	B.LIFNR, 	C.NAME1 AS VENDOR
+				FROM :WERKS A
+				INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" B ON TRIM(A.NHA) = TRIM(B.MATNR) AND A.WERKS = B.WERKS AND B.AUTET = '1'
+						AND B.FLIFN = 'X' --106536 Changes 
+			 	LEFT JOIN  "_SYS_BIC"."prd.global.ecc/CV_LFA1" C ON C.LIFNR = B.LIFNR
+				ORDER BY A.NHA;
+				
+	107767 CHANGES END */	
+				
+	INSERT INTO "W_OMAT"."OMAT_PART_DTLS"("CMPPRTNO", "NHA","DESCRIPTION","VENCODE","VENNAME","LEAD_TIME","STD_COST","CURR_COST","CRITICAL"
+					,"CE","COMMODITY","SMG_GROUP","SMG_HEAD","SBM","MRP_SUPPLIER","PO_SUPP_CODE","PO_SUPP_NAME")		
+	SELECT DISTINCT A.CMPPRTNO,
+			 		A.NHA,
+			 		A1.MAKTX AS DESCRIPTION,
+			 		--107767 CHANGES START
+			 		B1.OMAT_SELECTED_SUPPLIERCD AS VENCODE,
+			 		B1.OMAT_SELECTED_SUPPLIER AS VENNAME,
+			 		/*B1.LIFNR AS VENCODE, 
+			 		B1.VENDOR AS VENNAME,
+			 		--107767 CHANGES  END */
+			 		B.PLIFZ AS LEADTIME,
+			 		C.STPRS AS STD_COST,
+			 		C.ZPLP2 AS CURR_COST,
+ 					D.ATWRT AS "CRITICAL",
+ 					E.ATWRT AS "CE",
+ 					G.ZDESC AS COMMODITY,
+ 					H.ZDESC AS "SMG_GROUP",
+ 					I.ZDESC AS SMG_HEAD,
+ 					J.ZDESC AS SBM,	
+ 					--107767 CHANGES START
+ 					--CASE WHEN B1.LIFNR IS NULL THEN 0 ELSE 1 END AS "MRP_SUPPLIER", 
+ 					CASE WHEN LENGTH(B1.SUPPCD_2000) > 0 THEN 1
+			 			WHEN LENGTH(B1.SUPPCD_1900) > 0 THEN 1
+			 			WHEN LENGTH(B1.SUPPCD_3120) > 0 THEN 1
+			 			WHEN LENGTH(B1.SUPPCD_1050) > 0 THEN 1
+			 			WHEN LENGTH(B1.SUPPCD_1060) > 0 THEN 1
+			 			WHEN LENGTH(B1.SUPPCD_1090) > 0 THEN 1
+			 			WHEN LENGTH(B1.SUPPCD_PO1) > 0 THEN 0
+			 			WHEN LENGTH(B1.SUPPCD_PR) > 0 THEN 0 END AS "MRP_SUPPLIER",
+ 					--NULL AS "PO_SUPP_CODE", 
+ 					--NULL AS "PO_SUPP_NAME"  
+ 					B1.SUPPCD_PO1 AS "PO_SUPP_CODE",
+ 					B1.SUPPNAME_PO1 AS "PO_SUPP_NAME"
+ 					--107767 CHANGES END		 
+ 	FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" A 
+ 	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_MAKT" A1 ON A1.MATNR = A.NHA
+ 	--LEFT JOIN :SUPDTLS B1 ON B1.NHA = A.NHA --107767 CHANGES
+ 	LEFT JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_BUYNHA_SUPPLIERS_PLANT" B1 ON B1.NHA = A.NHA --107767 CHANGES
+ 	INNER JOIN :NHALIST C1 ON C1.CMPPRTNO = A.CMPPRTNO
+ 	LEFT JOIN  "_SYS_BIC"."prd.global.ecc/CV_MARC" B ON A.NHA = B.MATNR AND B.WERKS = B1.OMAT_SELECTED_PLANT --B1.WERKS 107767 CHANGES
+ 	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_MBEW" C ON C.MATNR = A.NHA AND C.BWKEY = B1.OMAT_SELECTED_PLANT --B1.WERKS 107767 CHANGES
+ 	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_AUSP" D ON D.OBJEK = A.NHA AND D.ATINN = '0000006193'
+ 	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_AUSP" E ON E.OBJEK = A.NHA AND E.ATINN = '0000015276' AND E.ATWRT = 'Y'
+ 	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZSUPPLIER_XREF" F ON F.LIFNR = B1.OMAT_SELECTED_SUPPLIERCD -- B1.LIFNR 107767 CHANGES
+ 	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZSUPP_CODE_MSTR" G ON G.ZCODE = F.ZCOMMCOD
+ 	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZSUPP_CODE_MSTR" H ON H.ZCODE = F.ZGRPSMG
+ 	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZSUPP_CODE_MSTR" I ON I.ZCODE = F.ZSMGCD
+ 	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZSUPP_CODE_MSTR" J ON J.ZCODE = F.ZPRIMMCD; --106536 Changes  SBMCD CHANGED TO ZPRIMMCD bcz of the ZSUPPLIER XREF RESTRUCTURE   	
+ 	
+ 	/* --107767 CHANGES START
+ 			
+	WERKS   = SELECT * FROM :WERKS WHERE 1 = 2;
+	SUPDTLS    = SELECT * FROM :SUPDTLS WHERE 1 = 2;
+	
+	POSUPP = SELECT DISTINCT E.NHA, STRING_AGG(E.LIFNR,',') AS "POSuppCode", STRING_AGG(E.NAME1,',') AS "POSuppName" FROM (
+				SELECT DISTINCT A.NHA, B.LIFNR, D.NAME1 
+					FROM :NHALIST A
+					INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" A1 ON A1.NHA = A.NHA 
+					INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_ZPO_HSTRY" B ON B.MATNR = A.NHA
+					INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EKPO" C ON B.EBELN = C.EBELN AND B.EBELP = C.EBELP
+					INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" D ON D.LIFNR = B.LIFNR
+					WHERE A1.OPEN_PO_QTY > 0 AND RIGHT(B.DUE_DT,5) <> '04-01' AND RIGHT(B.DUE_DT,5) <> '12-31'
+						AND B.STATUS <> 'INACT'	 		AND TRIM(B.MATNR) <> '' 
+						AND TRIM(B.LOEKZ) = ''   		AND B.DISCRD <> 'X'
+						AND B.AUSSL <> 'U3'     		AND B.BSART <> 'UB'
+						AND B.ELIKZ <> 'X'       		AND C.PSTYP <> '7' 
+						AND C.PSTYP <> '9')E
+			GROUP BY E.NHA				
+			ORDER BY E.NHA;
+			
+	UPDATE "W_OMAT"."OMAT_PART_DTLS" A SET A."PO_SUPP_CODE" = B."POSuppCode", A."PO_SUPP_NAME" = B."POSuppName"
+			FROM "W_OMAT"."OMAT_PART_DTLS" A 
+			INNER JOIN :POSUPP B ON B.NHA = A.NHA;
+			
+	POSUPP = SELECT * FROM :POSUPP WHERE 1 = 2;
+	
+	UPDATE  "W_OMAT"."OMAT_PART_DTLS" A 
+		SET A.VENCODE = LEFT(B."PO_SUPP_CODE", 10),
+			A.VENNAME = C.NAME1
+	FROM "W_OMAT"."OMAT_PART_DTLS" A
+	INNER JOIN "W_OMAT"."OMAT_PART_DTLS" B ON B.CMPPRTNO = A.CMPPRTNO AND B.NHA = A.NHA
+	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" C ON C.LIFNR = LEFT(B."PO_SUPP_CODE", 10)
+	INNER JOIN :NHALIST D ON D.CMPPRTNO = A.CMPPRTNO AND D.NHA = A.NHA
+	WHERE A.VENCODE IS NULL AND LENGTH(TRIM(B."PO_SUPP_CODE")) > 0;
+	
+	UPDATE "W_OMAT"."OMAT_PART_DTLS" A 
+		SET A.VENCODE = LPAD(B.SUPPLIER_CODE,10,0),
+			A.VENNAME = C.NAME1
+	FROM "W_OMAT"."OMAT_PART_DTLS" A 
+	INNER JOIN "_SYS_BIC"."prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART" B ON B.PART_NAME = A.CMPPRTNO
+	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" C ON C.LIFNR = LPAD(B.SUPPLIER_CODE,10,0)
+	INNER JOIN :NHALIST D ON D.CMPPRTNO = A.CMPPRTNO AND D.NHA = D.CMPPRTNO
+	WHERE A.VENCODE IS NULL AND A.CMPPRTNO = A.NHA 
+	AND B.PART_NAME <> 'NA'
+	AND UPPER(B.STATE) <> 'CLOSED' 
+	AND (UPPER(B.STATE) IN ('CONFIRMED', 'IN REVIEW','IN WORK')
+		OR UPPER(B.DISPOSITION) IN ('CONFIRMED', 'DEFER'))
+	AND UPPER(B.REASON) = 'OBSOLETE COMPONENT';
+	
+	UPDATE "W_OMAT"."OMAT_PART_DTLS" A 
+		SET A.VENCODE = B.LIFNR,
+			A.VENNAME = C.NAME1
+	FROM "W_OMAT"."OMAT_PART_DTLS" A 
+	INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EINA" B ON B.MATNR = A.NHA AND B.LOEKZ <> 'X'
+	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" C ON C.LIFNR = B.LIFNR
+	INNER JOIN :NHALIST D ON D.CMPPRTNO = A.CMPPRTNO AND D.NHA <> D.CMPPRTNO
+	WHERE A.VENCODE IS NULL;
+	
+	--107767 CHANGES  END*/
+	
+	--Logging
+	
+	SELECT COUNT(DISTINCT CMPPRTNO) INTO OBPRTCnt FROM :NHALIST;
+	SELECT COUNT(DISTINCT NHA) INTO NHACnt FROM :NHALIST;
+	
+	INSERT INTO "W_OMAT"."OMAT_LOG_DTLS" VALUES ('SP_OMAT_INSERT_DMD_CONS_PO', 1 , :OBPRTCnt , :NHACnt ,  NOW());
+	
+END;

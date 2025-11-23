@@ -1,0 +1,183 @@
+PROCEDURE "W_OMAT"."prd.gops.OMAT::SP_OMAT_ODRBOM_DMD_CONS" ( ) 
+	LANGUAGE SQLSCRIPT
+	SQL SECURITY DEFINER 
+	DEFAULT SCHEMA W_OMAT
+	--READS SQL DATA AS
+AS
+BEGIN
+
+/*--------------------------------------------------------------------------------------------------------------------------*
+*Program Name : SP_OMAT_ODRBOM_DMD_CONS
+*Project      : Obsolescence Improvement Project
+*Developer    : Ishan Tiwari
+*Requestor    : David, Hickman
+*Create Date  : 
+*----------------------------------------------------------------------------------------------------------------------------*
+*Description  : This Stored Procedure identifies the demand and consumption for order bom's belonging to 571 series.
+*----------------------------------------------------------------------------------------------------------------------------*
+Change Log:
+Change Id 		Developer		Date			Change Description
+------------------------------------------------------------------------------------------------------------------------------*
+  112373   		TiwarIs		2021-07-29 		Initial developemnt.
+  112466        TiwarIs     2021-08-06      Added logic for Open PO Quantity
+  113238        TiwarIs     2021-08-30      added call to CV's instead of tables
+  114863        TiwarIs     2021-10-12      changed proc to security definer
+  115167		AKHILJO		2021-10-20		Removed DISCARD <> 'X' from OPEN PO Qty as this Flag is not using as per Byron
+  128975        TiwarIs     2023-09-28      added new calculation logic for LAMQOH
+*-----------------------------------------------------------------------------------------------------------------------------*/	
+
+
+NHALIST2 = Select DISTINCT CMPPRTNO, NHA FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_BUY_NHA_DTLS" WHERE NHA LIKE '571%'; 
+
+DELETE FROM "W_OMAT"."OMAT_ODRBOM_CONS_DTLS";
+DELETE FROM "W_OMAT"."OMAT_ODRBOM_DMD_DTLS";  
+
+INSERT INTO "W_OMAT"."OMAT_ODRBOM_DMD_DTLS"                        
+SELECT DISTINCT B.MATNR ,C.STDPD,ROWTYPE,DMDPD, DMD1,DMD2, DMD3, DMD4, DMD5, DMD6, DMD7, DMD8, DMD9, DMD10, DMD11, DMD12, DMD13, DMD14
+                        ,DMD15, DMD16, DMD17, DMD18, DMD19, DMD20, DMD21, DMD22, DMD23, DMD24, DMD25, DMD26
+                    FROM :NHALIST2 A
+					INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_ZMMFORECAST" B ON SUBSTRING(B.MATNR, 1, 11) = SUBSTRING(A.NHA, 1, 11)
+					INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MARC" C ON B.MATNR = C.MATNR
+					WHERE B.ROWTYPE IN ('6') AND B.WERKS = 'COMB' AND C.STDPD <> '';
+					
+Newlist = select DISTINCT ODRBOM,NHA from "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_ODRBOM_DMD_DTLS";
+
+INSERT INTO "W_OMAT"."OMAT_ODRBOM_CONS_DTLS"
+SELECT DISTINCT A."ODRBOM",A.NHA,CASE WHEN B.SHKZG = 'S' THEN -1*B.MENGE ELSE B.MENGE END AS "CONSUMPTION",D.BLDAT
+                  FROM :Newlist A
+                  INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MSEG"  B ON B.MATNR = A."ODRBOM"                
+                  INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MAKT" C ON C.MATNR = B.MATNR 
+                  INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MKPF" D ON B.MBLNR = D.MBLNR      
+                  WHERE  B.BWART in ('261','262') and D.BLDAT > ADD_DAYS (CURRENT_DATE, -365*5)
+                  AND D.BLDAT< CURRENT_DATE AND B.CPUDT_MKPF > ADD_DAYS (CURRENT_DATE, -365*5);
+ 
+    
+NEW_DMD = SELECT distinct NHA,"ODRBOM",ROWTYPE,
+			(DMDPD + DMD1 + DMD2 + DMD3 + DMD4 + DMD5 + DMD6 + DMD7 + DMD8 + DMD9 + DMD10 + DMD11 + DMD12 + DMD13 + DMD14
+             + DMD15 + DMD16 + DMD17 + DMD18 + DMD19 + DMD20 + DMD21 + DMD22 + DMD23 + DMD24 + DMD25 + DMD26) AS "DMD"
+		  FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_ODRBOM_DMD_DTLS";
+ 
+
+MFGDMD = SELECT DISTINCT A.NHA
+	    ,SUM("DMD") AS "MFG_DMD"
+		FROM :Newlist A
+		LEFT JOIN :NEW_DMD B ON A.NHA = B.NHA
+		WHERE ROWTYPE = '6'
+		GROUP BY A.NHA,A."ODRBOM";  
+
+ 
+NEW_DMD = SELECT * FROM :NEW_DMD WHERE 1=2;
+ 
+MFG5YRCONS = SELECT NHA,SUM("MENGE") AS "MFG_5YRS_CONS" FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_ODRBOM_CONS_DTLS" GROUP BY NHA;
+
+ODRBOM5YRCONS = SELECT DISTINCT A.NHA,A."MFG_DMD",B."MFG_5YRS_CONS" FROM :MFGDMD A LEFT JOIN :MFG5YRCONS B ON A.NHA = B.NHA;
+
+MFG5YRCONS = SELECT * FROM :MFG5YRCONS WHERE 1=2;
+
+
+MFG1YRCONS = SELECT NHA
+			,SUM("MENGE") AS "MFG_1YRS_CONS"
+			FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_ODRBOM_CONS_DTLS"
+			WHERE CONS_DATE > ADD_DAYS(CURRENT_DATE, - 365)
+			AND CONS_DATE < CURRENT_DATE
+			GROUP BY NHA;
+
+ODRBOM1YRCONS = SELECT DISTINCT A.NHA
+				,A."MFG_DMD"
+				,A."MFG_5YRS_CONS"
+				,B."MFG_1YRS_CONS"
+			FROM :ODRBOM5YRCONS A
+			LEFT JOIN :MFG1YRCONS B ON A.NHA = B.NHA;
+ 
+ ODRBOM5YRCONS = SELECT * FROM :ODRBOM5YRCONS WHERE 1=2;
+ MFG1YRCONS = SELECT * FROM :MFG1YRCONS WHERE 1=2;
+ 
+ ---OLD LOGIC FOR QOH
+ /**QOH = SELECT DISTINCT B.NHA
+		,SUM(LBKUM) AS "LAMQOH"
+		FROM "_SYS_BIC"."prd.global.ecc/CV_MBEW" A
+		INNER JOIN :Newlist B ON A.MATNR = B."ODRBOM"
+		GROUP BY B.NHA;**/
+		
+--New change 128975		
+ QOH =    SELECT DISTINCT B.NHA,
+ 					SUM(LABST +KLABS) AS "LAMQOH",
+ 					SUM(INSME+UMLME+EINME+SPEME) AS "Restricted_All_Stock"
+ 				FROM "_SYS_BIC"."prd.global.ecc/CV_MARD" A
+ 				INNER JOIN :Newlist B ON A.MATNR = B."ODRBOM"
+ 				GROUP BY B.NHA;
+----end 128975 
+		
+ POQTY = SELECT DISTINCT C.NHA,SUM(A.MENGE-A.WEMNG) AS "OPEN_PO_QTY"
+                       FROM "_SYS_BIC"."prd.global.ecc/CV_ZPO_HSTRY"  A
+                        INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EKPO" B ON A.EBELN = B.EBELN AND A.EBELP = B.EBELP
+                        INNER JOIN :Newlist C ON A.MATNR = C."ODRBOM"
+                        WHERE RIGHT(DUE_DT,5) <> '04-01' AND RIGHT(DUE_DT,5) <> '12-31'
+                                    AND A.STATUS <> 'INACT' AND TRIM(A.MATNR) <> '' 
+                                    AND TRIM(A.LOEKZ) = ''   --AND A.DISCRD <> 'X'
+                                    AND A.AUSSL <> 'U3'      AND A.BSART <> 'UB'
+                                    AND A.ELIKZ <> 'X'       AND B.PSTYP <> '7' 
+                                    AND B.PSTYP <> '9'
+                        GROUP BY  C.NHA;
+                
+Finaldata = SELECT DISTINCT A.CMPPRTNO
+			,A.NHA
+			,B."MFG_DMD"
+			,B."MFG_5YRS_CONS"
+			,B."MFG_1YRS_CONS"
+			,C."LAMQOH"
+			,D."OPEN_PO_QTY"
+			,C."Restricted_All_Stock"  ---New change 128975
+		FROM :NHALIST2 A
+		LEFT JOIN :ODRBOM1YRCONS B ON A.NHA = B.NHA
+		LEFT JOIN :QOH C ON A.NHA = C.NHA
+		LEFT JOIN :POQTY D ON A.NHA = D.NHA
+		WHERE (ABS(COALESCE(B."MFG_5YRS_CONS", 0)) + ABS(COALESCE(B."MFG_DMD", 0)) + ABS(COALESCE(B."MFG_1YRS_CONS", 0)) > 0);
+
+POQTY = select * from :POQTY where 1=2;
+QOH = SELECT * FROM :QOH WHERE 1=2;
+NHALIST2 = SELECT * FROM :NHALIST2 WHERE 1=2;
+
+
+Newlist = select * from :Newlist where 1=2;
+
+MERGE INTO "W_OMAT"."OMAT_DMD_CONSUMPTION_DTLS" A
+USING :Finaldata B
+	ON A.NHA = B.NHA
+		AND A.CMPPRTNO = B.CMPPRTNO
+WHEN MATCHED
+	THEN
+		UPDATE
+		SET A.MFG_DMD = COALESCE(A.MFG_DMD, 0) + COALESCE(B.MFG_DMD, 0)
+			,A.MFG_12MNTHS_CONSUMPTION = COALESCE(A.MFG_12MNTHS_CONSUMPTION, 0) + COALESCE(B."MFG_1YRS_CONS", 0)
+			,A.MFG_5YRS_CONSUMPTION = COALESCE(A.MFG_5YRS_CONSUMPTION, 0) + COALESCE(B."MFG_5YRS_CONS", 0)
+			,A."LAMQOH" = A."LAMQOH" + B."LAMQOH"
+			,A."OPEN_PO_QTY" = A."OPEN_PO_QTY" + B."OPEN_PO_QTY"
+			,A."RESTRICTED_ALL_STOCK" = A."RESTRICTED_ALL_STOCK" + B."Restricted_All_Stock"   ---new change 128975
+WHEN NOT MATCHED
+	THEN
+		INSERT
+		VALUES (
+			B.CMPPRTNO
+			,B.NHA
+			,NULL
+			,B.MFG_DMD
+			,NULL
+			,NULL
+			,B."MFG_1YRS_CONS"
+			,B."LAMQOH"
+			,B."OPEN_PO_QTY"
+			,CURRENT_DATE
+			,B."MFG_5YRS_CONS"
+			,NULL
+			,B."Restricted_All_Stock"   ---- new change 128975
+			);
+		               
+END
+
+
+
+
+
+
+

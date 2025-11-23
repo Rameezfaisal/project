@@ -1,0 +1,201 @@
+PROCEDURE "W_OMAT"."prd.gops.OMAT::SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh" ( )  
+	LANGUAGE SQLSCRIPT
+	SQL SECURITY DEFINER 
+	DEFAULT SCHEMA W_OMAT
+	--READS SQL DATA 
+	AS
+BEGIN
+
+/*--------------------------------------------------------------------------------------------------------------------------*
+*Program Name : SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh
+*Project      : Obsolescence Improvement Project
+*Developer    : Ishan Tiwari
+*Requestor    : David, Hickman
+*Create Date  : 
+*----------------------------------------------------------------------------------------------------------------------------*
+*Description  : This Stored Procedure identifies the change in demand, consumption for Make NHAs in OB PR on weekly basis
+                and insert it into Tables for OMAT Application.
+*----------------------------------------------------------------------------------------------------------------------------*
+Change Log:
+Change Id 		Developer		Date			Change Description
+------------------------------------------------------------------------------------------------------------------------------*
+109770     		TiwarIs		2021-06-14 		Initial developemnt.
+111630          TiwarIs     2021-07-15      Added logic to remove duplicates
+113509          TiwarIs     2021-09-03      added order type ZUP for spares consumption
+113959          TiwarIs     2021-09-20      added calculation to use CV_SQL_SO_2 for sprs demand 
+*-----------------------------------------------------------------------------------------------------------------------------*/	
+
+DECLARE OBPRTCnt INT;
+DECLARE NHACnt INT;
+
+DECLARE DT1WK DATE;
+DECLARE DT26WK DATE;
+
+DECLARE From_date DATE;
+DECLARE T_date DATE;
+
+select ADD_months(CURRENT_DATE, -12) into From_date from dummy;
+select ADD_months(CURRENT_DATE, 12) into T_date from dummy; 
+
+DT1WK := ADD_DAYS(TO_DATE(CURRENT_DATE, 'YYYY-MM-DD'),0 - WEEKDAY ( TO_DATE(CURRENT_DATE, 'YYYY-MM-DD')));
+DT26WK := ADD_DAYS(ADD_DAYS(TO_DATE(ADD_DAYS(DT1WK,182), 'YYYY-MM-DD'),0 - WEEKDAY ( TO_DATE(ADD_DAYS(DT1WK,182), 'YYYY-MM-DD'))),6);
+
+OBPRTCnt := 0;
+NHACnt := 0;
+
+INSERT INTO "W_OMAT"."OMAT_LOG_DTLS" VALUES ('SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh - Started', 1 , :OBPRTCnt , :NHACnt ,  NOW());	
+
+NHAMAINLIST = SELECT DISTINCT CMPPRTNO, NHA 
+				FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_MAKE_NHA_DTLS" A
+				INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" B ON B."OBPRTNO" = A.CMPPRTNO
+								WHERE UPPER(B."OBPR_STATE") IN ('CONFIRMED','IN REVIEW','IN WORK');
+
+NHALIST =  SELECT DISTINCT NHA FROM :NHAMAINLIST;
+
+
+
+  
+--Get the Manufacturing consumption for last 5 years.
+ --------------
+ -- Step 1.
+ --------------
+	MFGCONS =  SELECT  B.MATNR,
+				SUM(CASE WHEN B.SHKZG = 'S' THEN -1*B.MENGE ELSE B.MENGE END) AS "MFG_5YRS_CONSUMPTION"
+				FROM :NHALIST A inner join
+				"_SYS_BIC"."prd.global.ecc/CV_MSEG" B ON A.NHA = B.MATNR
+				INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MAKT" C ON C.MATNR = B.MATNR 
+				INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MKPF" D ON B.MBLNR = D.MBLNR  
+				WHERE  B.BWART in ('261','262') and (D.BLDAT > ADD_DAYS (CURRENT_DATE, -365*5) AND D.BLDAT< CURRENT_DATE)
+				AND (B."WERKS" <2001 OR B."WERKS" = 3120) AND B.CPUDT_MKPF > ADD_DAYS (CURRENT_DATE, -365*5)
+				GROUP BY B.MATNR;
+  
+ NHALIST_MFGCONS = SELECT DISTINCT A.CMPPRTNO, A.NHA, B."MFG_5YRS_CONSUMPTION" FROM :NHAMAINLIST A
+    		   LEFT JOIN :MFGCONS B ON --B.CMPPRTNO = A.CMPPRTNO AND 
+    		   B.MATNR = A.NHA;
+   		   
+    MFGCONS = SELECT * FROM :MFGCONS WHERE 1 = 2;
+
+  
+  MFGDMD = 	SELECT d.MATNR ,SUM(CASE WHEN F.PLUMI = '-' THEN f.MNG01 WHEN F.PLUMI = '+' THEN -1*f.MNG01 END) as "MFG_DMD"
+					FROM "_SYS_BIC"."prd.global.ecc/CV_MDKP" d inner join
+					:NHALIST as M	on M.NHA = d.MATNR
+					INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MDTB" f on f.DTNUM = d.DTNUM
+					WHERE F.PLUMI in ('+','-') and (d.PLWRK <2001 or d.PLWRK =3120) and f.DELKZ IN ('AR','SB')
+					AND F.DAT00 >= DT1WK and F.DAT00 <= DT26WK
+					GROUP BY d.MATNR; 
+                 
+NHALIST_MFGDMD =  SELECT DISTINCT A.CMPPRTNO, A.NHA, A."MFG_5YRS_CONSUMPTION", B."MFG_DMD" FROM :NHALIST_MFGCONS A
+    		   			LEFT JOIN :MFGDMD B ON --B.CMPPRTNO = A.CMPPRTNO AND 
+    		   			B.MATNR = A.NHA; 
+    		   			
+NHALIST_MFGCONS = SELECT * FROM :NHALIST_MFGCONS WHERE 1 = 2;
+MFGDMD = SELECT * FROM :MFGDMD WHERE 1 = 2;     		   			
+
+  
+  --Get the SPARES weekly DEMAND for 26 WEEKS.
+  --------------
+  -- Step 3.
+  --------------
+
+	SPRSDMD	= 	SELECT DISTINCT A1."Part" as "MATNR"
+              , SUM(A1."OpenQty") AS "SPRS_DMD"
+        FROM (
+        		SELECT DISTINCT A.NHA, B.*    
+        		FROM  :NHALIST A
+            	INNER JOIN "_SYS_BIC"."prd.gops.GLIS/CV_SQL_SO_2"(
+                	PLACEHOLDER."$$IP_ORDER_TYPE$$" =>  'ALL',
+	 				PLACEHOLDER."$$IP_DATE_FLAG$$" => 'L',
+	 				PLACEHOLDER."$$IP_SALES_ORG$$" => 'ALL',
+	 				PLACEHOLDER."$$IP_ERDAT_FROM$$" => :From_date,
+	 				PLACEHOLDER."$$IP_ERDAT_TO$$" => :T_date,
+	 				PLACEHOLDER."$$IP_DATA_PRUNING_FLAG$$" => 'NNNNNNN'
+            	) B ON
+                	A.NHA = B."Part"
+        		WHERE (
+           			"OrderGroup" = 'SO'
+            		AND LOWER("OrderStatus") <> 'closed'
+            		AND "DeliveryDueDate" >= DT1WK
+            		AND "DeliveryDueDate" <= DT26WK
+            		AND "OrderType" IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP'))
+        	)A1
+        GROUP BY A1."Part"
+        ORDER BY A1."Part" ASC;
+                  
+  NHALIST_SPRSDMD =  SELECT DISTINCT A.CMPPRTNO, A.NHA, A."MFG_5YRS_CONSUMPTION", A."MFG_DMD", B."SPRS_DMD" FROM :NHALIST_MFGDMD A
+    		   			LEFT JOIN :SPRSDMD B ON 
+    		   			B.MATNR = A.NHA;       
+    		   			
+NHALIST_MFGDMD = SELECT * FROM :NHALIST_MFGDMD WHERE 1 = 2;  
+SPRSDMD = SELECT * FROM :SPRSDMD WHERE 1 = 2; 
+                  
+  --Get the SPARES weekly CONSUMPTION for LAST 5 YEARS.
+  --------------
+  -- Step 4.
+  --------------  
+--Spares consumption query data fetching Changed to Table to solve the issue with the View "_SYS_BIC"."prd.csbg/CVNS_CSBG_SPARES_DELIVERIES".
+	SPRSCONS =  SELECT A.MATERIAL,  SUM(A.QTY_SHIPPED) AS "SPRS_5YRS_CONSUMPTION" 
+				FROM "ALEX_CUSTOM"."ZT_CSBG_SPARES_DELIVERIES" A
+				INNER JOIN :NHALIST B ON B.NHA = A.MATERIAL
+				WHERE A.SOURCE_DOC <> 'STO' 
+						AND A.ORDER_TYPE IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP') 
+						AND A.ACTUAL_GI > ADD_DAYS (CURRENT_DATE, -365*5) 
+				GROUP BY A.MATERIAL
+				HAVING SUM(A.QTY_SHIPPED) >0;                       
+    
+   NHALIST_SPRSCONS =  SELECT DISTINCT A.CMPPRTNO, A.NHA, A."MFG_5YRS_CONSUMPTION", A."MFG_DMD", A."SPRS_DMD", B."SPRS_5YRS_CONSUMPTION"
+   						FROM :NHALIST_SPRSDMD A
+    		   			LEFT JOIN :SPRSCONS B ON B.MATERIAL = A.NHA;       
+    		   			
+NHALIST_SPRSDMD = SELECT * FROM :NHALIST_SPRSDMD WHERE 1 = 2;
+SPRSCONS = SELECT * FROM :SPRSCONS WHERE 1 = 2; 
+  
+  --Get the Manufacturing weekly consumption for last 12 Months.
+ --------------
+ -- Step 5.
+ --------------
+ 
+	MFG12MNTHSCONS =    SELECT  DISTINCT
+                          B.MATNR,
+                          SUM(CASE WHEN B.SHKZG = 'S' THEN -1*B.MENGE ELSE B.MENGE END) AS "MFG_12MNTHS_CONSUMPTION" 
+                        FROM "_SYS_BIC"."prd.global.ecc/CV_MSEG" B 
+                        INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MAKT" C ON C.MATNR = B.MATNR 
+                        INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MKPF" D ON B.MBLNR = D.MBLNR 
+                        INNER JOIN :NHALIST A ON B.MATNR = A.NHA
+                        WHERE  B.BWART in ('261','262') and D.BLDAT > ADD_DAYS (CURRENT_DATE, -365) 
+                        AND D.BLDAT< CURRENT_DATE AND B.CPUDT_MKPF > ADD_DAYS (CURRENT_DATE, -365)
+                        GROUP BY B.MATNR;
+                         
+
+NHALIST_MFG12MNTHSCONS =  SELECT DISTINCT A.CMPPRTNO, A.NHA, A."MFG_5YRS_CONSUMPTION", A."MFG_DMD", A."SPRS_DMD", A."SPRS_5YRS_CONSUMPTION"
+   								,B."MFG_12MNTHS_CONSUMPTION" FROM :NHALIST_SPRSCONS A
+    		   					LEFT JOIN :MFG12MNTHSCONS B ON --B.CMPPRTNO = A.CMPPRTNO AND 
+    		   					B.MATNR = A.NHA
+    		   					WHERE  (ABS(COALESCE("MFG_5YRS_CONSUMPTION",0)) + ABS(COALESCE(A."MFG_DMD",0)) + ABS(COALESCE(A."SPRS_DMD",0)) 
+				+ ABS(COALESCE(A."SPRS_5YRS_CONSUMPTION",0)) > 0);  
+   		   					    
+ NHALIST_SPRSCONS = SELECT * FROM :NHALIST_SPRSCONS WHERE 1 = 2;    		   			
+ MFG12MNTHSCONS = SELECT * FROM :MFG12MNTHSCONS WHERE 1 = 2; 
+
+DELETE FROM "W_OMAT"."OMAT_MAKENHA_DMD_CONSUMPTION_DTLS";
+
+INSERT INTO "W_OMAT"."OMAT_MAKENHA_DMD_CONSUMPTION_DTLS"(CMPPRTNO, NHA,"MFG_5YRS_CONSUMPTION","MFG_DMD", "SPRS_DMD", "SPRS_5YRS_CONSUMPTION",
+														"MFG_12MNTHS_CONSUMPTION","LAST_MODIFIED_ON")
+SELECT  DISTINCT
+			A.CMPPRTNO,
+			A.NHA,
+			A."MFG_5YRS_CONSUMPTION",
+			A."MFG_DMD",
+			A."SPRS_DMD",
+			A."SPRS_5YRS_CONSUMPTION",
+			A."MFG_12MNTHS_CONSUMPTION",
+			CURRENT_DATE
+		FROM :NHALIST_MFG12MNTHSCONS A;
+		
+
+				
+	SELECT COUNT(DISTINCT CMPPRTNO) INTO OBPRTCnt FROM :NHAMAINLIST;
+	SELECT COUNT(DISTINCT NHA) INTO NHACnt FROM :NHAMAINLIST;			
+		
+	INSERT INTO "W_OMAT"."OMAT_LOG_DTLS" VALUES ('SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh - End', 1 , :OBPRTCnt , :NHACnt ,  NOW());	
+
+END;

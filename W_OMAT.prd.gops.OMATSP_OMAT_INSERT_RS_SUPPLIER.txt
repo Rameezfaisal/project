@@ -1,0 +1,114 @@
+PROCEDURE "W_OMAT"."prd.gops.OMAT::SP_OMAT_INSERT_RS_SUPPLIER" ( ) 
+	LANGUAGE SQLSCRIPT
+	SQL SECURITY DEFINER 
+	DEFAULT SCHEMA W_OMAT
+	--READS SQL DATA
+AS
+BEGIN
+
+/*------------------------------------------------------------------------------------------------------------------------*
+*Program Name : SP_OMAT_INSERT_RS_SUPPLIER
+*Project      : Obsolescence Improvement Project
+*Developer    : Ishan Tiwari
+*Requestor    : David, Hickman
+*Create Date  : 
+*--------------------------------------------------------------------------------------------------------------------------*
+*Description  : This Stored Procedure identifies the Supplier Information for R,S parts.				
+*--------------------------------------------------------------------------------------------------------------------------*
+Change Log:
+Change Id 		Developer		Date			Change Description
+---------------------------------------------------------------------------------------------------------------------------*
+ 119804         TiwarIs       2022-03-07        Initial development.
+ 121072         TiwarIs       2022-04-02        updating Supplier info for RSCXD Dtls table
+
+*---------------------------------------------------------------------------------------------------------------------------*/	
+
+
+NHALIST = SELECT Distinct A.NHA FROM  "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_RSCXD_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_RSCXD_DMD_CONS" B ON A.NHA = B.NHA WHERE "TYPE" IN ('R','S');
+
+SUPPLINFO = SELECT A.NHA,"SupplierID","Supplier"
+		    FROM :NHALIST A LEFT JOIN "_SYS_BIC"."prd.gops.GLIS/CV_ML_PART" B ON A.NHA = B."Part";
+
+--Identifies all OPEN POs and its suppliers.
+POSUPP = SELECT DISTINCT E.NHA, STRING_AGG(E.LIFNR,',') AS "POSuppCode", STRING_AGG(E.NAME1,',') AS "POSuppName" FROM (
+				SELECT DISTINCT A.NHA, B.LIFNR, D.NAME1 
+					FROM :NHALIST A INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_RSCXD_DMD_CONS" X ON A.NHA = X.NHA
+					LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZPO_HSTRY" B ON B.MATNR = A.NHA
+					INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EKPO" C ON B.EBELN = C.EBELN AND B.EBELP = C.EBELP
+					INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" D ON D.LIFNR = B.LIFNR
+					WHERE X.OPEN_PO_QTY >0 AND RIGHT(B.DUE_DT,5) <> '04-01' AND RIGHT(B.DUE_DT,5) <> '12-31'
+						AND B.STATUS <> 'INACT'	 		AND TRIM(B.MATNR) <> '' 
+						AND TRIM(B.LOEKZ) = ''   		AND B.DISCRD <> 'X'
+						AND B.AUSSL <> 'U3'     		AND B.BSART <> 'UB'
+						AND B.ELIKZ <> 'X'       		AND C.PSTYP <> '7' 
+						AND C.PSTYP <> '9')E
+			GROUP BY E.NHA				
+			ORDER BY E.NHA;
+
+
+OPENPOSUPPL = SELECT A.NHA,
+		CASE WHEN LOCATE(B."POSuppCode",',') > 0 THEN SUBSTR_BEFORE(B."POSuppCode",',') ELSE LEFT(B."POSuppCode", 10) END as "SUPPCD_PO1",
+		C.NAME1 as "SUPPNAME_PO1",
+	   CASE WHEN LOCATE(B."POSuppCode",',') > 0 AND LENGTH(B."POSuppCode") <=21 THEN SUBSTR_AFTER(B."POSuppCode",',') ELSE SUBSTRING(B."POSuppCode", 12,10) END as "SUPPCD_PO2",
+	   D.NAME1 as "SUPPNAME_PO2"
+		FROM :NHALIST A 
+		INNER JOIN :POSUPP B ON B.NHA = A.NHA			
+		LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" C ON C.LIFNR = CASE WHEN LOCATE(B."POSuppCode",',') > 0 THEN SUBSTR_BEFORE(B."POSuppCode",',') ELSE LEFT(B."POSuppCode", 10) END
+		LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" D ON D.LIFNR = CASE WHEN LOCATE(B."POSuppCode",',') > 0 AND LENGTH(B."POSuppCode") <=21 THEN SUBSTR_AFTER(B."POSuppCode",',') ELSE SUBSTRING(B."POSuppCode", 12,10) END;
+
+OBPRSUPPL = select A.NHA,LPAD(E.SUPPLIER_CODE,10,0) as "SUPPCD_PR",
+			F.NAME1 as "SUPPNAME_PR"
+	FROM :NHALIST A 
+	INNER JOIN "_SYS_BIC"."prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART" E ON E.PART_NAME = A.NHA AND E.PART_NAME <> 'NA' AND UPPER(E.STATE) <> 'CLOSED' 
+					AND (UPPER(E.STATE) IN ('CONFIRMED', 'IN REVIEW','IN WORK') OR UPPER(E.DISPOSITION) IN ('CONFIRMED', 'DEFER')) AND UPPER(E.REASON) = 'OBSOLETE COMPONENT'
+	LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" F ON F.LIFNR = LPAD(E.SUPPLIER_CODE,10,0);
+
+MERGE INTO "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" T
+USING 
+(
+	SELECT DISTINCT A.NHA,NULL as "SUPPCD_1900",
+	NULL AS "SUPPNAME_1900",A."SupplierID" AS "SUPPCD_2000",A."Supplier" AS "SUPPNAME_2000",
+	NULL AS "SUPPCD_3120",NULL AS "SUPPNAME_3120",
+	NULL AS "SUPPCD_1050",NULL AS "SUPPNAME_1050",
+	NULL AS "SUPPCD_1060",NULL AS "SUPPNAME_1060",
+	NULL AS "SUPPCD_1090",NULL AS "SUPPNAME_1090",
+	B."SUPPCD_PO1",B."SUPPNAME_PO1",B."SUPPCD_PO2",
+	B."SUPPNAME_PO2",C."SUPPCD_PR",C."SUPPNAME_PR"
+,CASE WHEN LENGTH(A."SupplierID") > 0
+      OR LENGTH(B."SUPPCD_PO1") = 10
+      OR LENGTH(C."SUPPCD_PR") > 0 THEN '2000' ELSE NULL END AS "OMAT_SELECTED_PLANT"
+,CASE WHEN LENGTH(A."SupplierID") > 0 THEN A."SupplierID"
+	  WHEN LENGTH(B."SUPPCD_PO1") = 10 THEN B."SUPPCD_PO1"
+	  WHEN LENGTH(B."SUPPCD_PO2") = 10 THEN LEFT(B."SUPPCD_PO2", 10)
+	  WHEN LENGTH(C."SUPPCD_PR") > 0 THEN C."SUPPCD_PR" END AS "OMAT_SELECTED_SUPPLIERCD"
+,CASE WHEN LENGTH(A."SupplierID") > 0 THEN A."Supplier"
+	  WHEN LENGTH(B.SUPPCD_PO1) = 10 THEN B.SUPPNAME_PO1
+	  WHEN LENGTH(B.SUPPCD_PO2) = 10 THEN B.SUPPNAME_PO2
+	  WHEN LENGTH(C.SUPPCD_PR) > 0 THEN C.SUPPNAME_PR END AS "OMAT_SELECTED_SUPPLIER"
+FROM :SUPPLINFO A LEFT JOIN :OPENPOSUPPL B ON A.NHA = B.NHA
+LEFT JOIN :OBPRSUPPL C ON A.NHA = C.NHA
+) S
+ON T.NHA = S.NHA
+WHEN NOT MATCHED
+THEN INSERT
+VALUES
+(
+S.NHA,S."SUPPCD_1900",S."SUPPNAME_1900",S."SUPPCD_2000",S."SUPPNAME_2000",
+S."SUPPCD_3120",S."SUPPNAME_3120",S."SUPPCD_1050",S."SUPPNAME_1050",
+S."SUPPCD_1060",S."SUPPNAME_1060",S."SUPPCD_1090",S."SUPPNAME_1090",
+S."SUPPCD_PO1",S."SUPPNAME_PO1",S."SUPPCD_PO2",S."SUPPNAME_PO2",S."SUPPCD_PR",S."SUPPNAME_PR",
+S."OMAT_SELECTED_PLANT",S."OMAT_SELECTED_SUPPLIERCD",S."OMAT_SELECTED_SUPPLIER"
+);
+
+Update A 
+SET A.VENCODE = B.OMAT_SELECTED_SUPPLIERCD ,
+ A.VENNAME = B.OMAT_SELECTED_SUPPLIER,
+ A."PO_SUPPLIER_CODE" = B.SUPPCD_PO1,
+ A."PO_SUPPLIER" = B.SUPPNAME_PO1
+from "W_OMAT"."OMAT_RSCXD_DTLS" A
+inner join "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" B ON A.NHA = B.NHA;
+
+
+
+END

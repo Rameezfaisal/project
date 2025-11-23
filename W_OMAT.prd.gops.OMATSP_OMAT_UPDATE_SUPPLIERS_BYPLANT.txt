@@ -1,0 +1,332 @@
+PROCEDURE "W_OMAT"."prd.gops.OMAT::SP_OMAT_UPDATE_SUPPLIERS_BYPLANT" ( ) 
+       LANGUAGE SQLSCRIPT
+       SQL SECURITY DEFINER 
+       DEFAULT SCHEMA W_OMAT
+       --READS SQL DATA 
+       AS
+BEGIN
+/*------------------------------------------------------------------------------------------------------------------------*
+*Program Name : SP_OMAT_UPDATE_SUPPLIERS_BYPLANT
+*Project      : Obsolescence Improvement Project
+*Developer    : Akhil Martin
+*Requestor    : David, Hickman
+*Create Date  : 2021/03/17
+*--------------------------------------------------------------------------------------------------------------------------*
+*Description  : DAILY/WEEKLY REFRESH 
+                           This Stored Procedure identifies the MRP Preffered and Active suppliers in various MFG WHS in LAM. This SP 
+                           also identifies the supplier with whom we have the OPEN PO and the supplier who created the OB PR in iplm
+                          This is to collect the inventory information from the supplier for the BUY NHA & OB Part No.                     
+*--------------------------------------------------------------------------------------------------------------------------*
+Change Log:
+Change Id           Developer           Date                Change Description
+---------------------------------------------------------------------------------------------------------------------------*
+107767              AKHILJO                   2021-03-17          Initial developemnt.
+108512              AKHILJO                   2021-04-17          A07 & A06 Supplier Status exception is removed..
+108523              AKHILJO                   2021-04-18          INFOREC missing Supplier details added from EORD.
+108622              AKHILJO                   2021-04-26          INFOREC CV Change as per GIS instruction.
+127253              AKHILJO                   2023-03-15          checking plants 1000,1010,1020 to fetch supplier names
+                                                                               , beacuse certain super boms build in RFs are configured only in 1000.
+                                                                               Similarly looking R,S,C,X,D Base part supplier if no specific 
+                                                                               supplier exist for R,S,C,X,D PARTS in the system
+                           BERANSU         2024-01-11      Check the Supplier Code with 10 Character Length
+*---------------------------------------------------------------------------------------------------------------------------*/      
+DECLARE OBPRTCnt INT;
+       DECLARE NHACnt INT;
+
+       OBPRTCnt := 0;
+       NHACnt := 0; 
+       
+--DELETE THE TABLE CONTENT TO LOAD WITH REFRESHED DATA
+DELETE FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS";
+
+/*LOGIC TO PICK THE MRP PREFERRED SUPPLIER IN 1900, 2000, 3120, 1050, 1060, 1090 (Procurement Plants) and from OPEN POs and from the PR.
+       LOAD all the Buy NHAs and its MRP PREFERRED SUPPLIER FROM 1900, FOLLOWED BY OTHER PLANTS (MAKE SURE NO DUPLICATED PART IN THIS TABLE, 
+       hence while inserting into this table only those which are not in this table and are in OMAT table are considered)*/
+       
+       INSERT INTO "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS"("NHA", SUPPCD_1900, SUPPNAME_1900, SUPPCD_2000, SUPPNAME_2000, SUPPCD_3120, SUPPNAME_3120
+                                                     , SUPPCD_1050,       SUPPNAME_1050, SUPPCD_1060, SUPPNAME_1060, SUPPCD_1090, SUPPNAME_1090)
+       SELECT DISTINCT A.NHA,    
+                                  --AKHILJO Changes START
+                                  --LEFT(LPAD(B.SUPCODE,10,0),10) AS SUPPCD_1900,
+                                  --B.SUPPLIERNAME AS SUPPNAME_1900,
+                                  --LEFT(LPAD(C.SUPCODE,10,0),10) AS SUPPCD_2000, 
+                                  --C.SUPPLIERNAME AS SUPPNAME_2000, 
+                                  --LEFT(LPAD(D.SUPCODE,10,0),10) AS SUPPCD_3120,
+                                  --D.SUPPLIERNAME AS SUPPNAME_3120, 
+                                  CASE WHEN LENGTH(TRIM(B.SUPCODE)) > 0  THEN LEFT(LPAD(B.SUPCODE,10,0),10) ELSE LEFT(LPAD(J.SUPCODE,10,0),10) END AS SUPPCD_1900, 
+                                  CASE WHEN LENGTH(TRIM(B.SUPCODE)) > 0  THEN B.SUPPLIERNAME ELSE J.SUPPLIERNAME END AS SUPPNAME_1900,
+                                  CASE WHEN LENGTH(TRIM(C.SUPCODE)) > 0  THEN LEFT(LPAD(C.SUPCODE,10,0),10) ELSE LEFT(LPAD(H.SUPCODE,10,0),10) END AS SUPPCD_2000, 
+                                  CASE WHEN LENGTH(TRIM(C.SUPCODE)) > 0  THEN C.SUPPLIERNAME ELSE H.SUPPLIERNAME END AS SUPPNAME_2000, 
+                                  CASE WHEN LENGTH(TRIM(D.SUPCODE)) > 0  THEN LEFT(LPAD(D.SUPCODE,10,0),10) ELSE LEFT(LPAD(I.SUPCODE,10,0),10) END AS SUPPCD_3120,
+                                  CASE WHEN LENGTH(TRIM(D.SUPCODE)) > 0  THEN D.SUPPLIERNAME ELSE I.SUPPLIERNAME END AS SUPPNAME_3120, 
+                                  -- AKHILJO Changes END
+                                LEFT(LPAD(E.SUPCODE,10,0),10) AS SUPPCD_1050,
+                                  E.SUPPLIERNAME AS SUPPNAME_1050, 
+                                LEFT(LPAD(F.SUPCODE,10,0),10) AS SUPPCD_1060,
+                                  F.SUPPLIERNAME AS SUPPNAME_1060, 
+                                LEFT(LPAD(G.SUPCODE,10,0),10) AS SUPPCD_1090,
+                                  G.SUPPLIERNAME AS SUPPNAME_1090
+       FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" A
+       LEFT JOIN "_SYS_BIC"."prd.csbg.spares/CV_ZT_INFOREC_DATA_SCHED" B ON B.MATERIAL = A.NHA AND B.MRP = '1' AND B.PLANT = '1900' AND B.SUPCAT <> 'A05' AND B.SUPCAT <> 'A08'  AND B.SUPCAT <> 'A15' AND B.SUPCODE IS NOT NULL --AND B.SUPPLIER_STATUS <> 'A06'  AND B.SUPPLIER_STATUS <> 'A07'  
+       LEFT JOIN "_SYS_BIC"."prd.csbg.spares/CV_ZT_INFOREC_DATA_SCHED" C ON C.MATERIAL = A.NHA AND C.MRP = '1' AND C.PLANT = '2000' AND C.SUPCAT <> 'A05' AND C.SUPCAT <> 'A08'  AND C.SUPCAT <> 'A15' AND C.SUPCODE IS NOT NULL --AND C.SUPPLIER_STATUS <> 'A06'  AND C.SUPPLIER_STATUS <> 'A07'   
+       LEFT JOIN "_SYS_BIC"."prd.csbg.spares/CV_ZT_INFOREC_DATA_SCHED" D ON D.MATERIAL = A.NHA AND D.MRP = '1' AND D.PLANT = '3120' AND D.SUPCAT <> 'A05' AND D.SUPCAT <> 'A08'  AND D.SUPCAT <> 'A15' AND D.SUPCODE IS NOT NULL --AND D.SUPPLIER_STATUS <> 'A06'  AND D.SUPPLIER_STATUS <> 'A07'  
+       LEFT JOIN "_SYS_BIC"."prd.csbg.spares/CV_ZT_INFOREC_DATA_SCHED" E ON E.MATERIAL = A.NHA AND E.MRP = '1' AND E.PLANT = '1050' AND E.SUPCAT <> 'A05' AND E.SUPCAT <> 'A08'  AND E.SUPCAT <> 'A15' AND E.SUPCODE IS NOT NULL --AND E.SUPPLIER_STATUS <> 'A06'  AND E.SUPPLIER_STATUS <> 'A07'  
+       LEFT JOIN "_SYS_BIC"."prd.csbg.spares/CV_ZT_INFOREC_DATA_SCHED" F ON F.MATERIAL = A.NHA AND F.MRP = '1' AND F.PLANT = '1060' AND F.SUPCAT <> 'A05' AND F.SUPCAT <> 'A08'  AND F.SUPCAT <> 'A15' AND F.SUPCODE IS NOT NULL --AND F.SUPPLIER_STATUS <> 'A06'  AND F.SUPPLIER_STATUS <> 'A07'  
+       LEFT JOIN "_SYS_BIC"."prd.csbg.spares/CV_ZT_INFOREC_DATA_SCHED" G ON G.MATERIAL = A.NHA AND G.MRP = '1' AND G.PLANT = '1090' AND G.SUPCAT <> 'A05' AND G.SUPCAT <> 'A08'  AND G.SUPCAT <> 'A15' AND G.SUPCODE IS NOT NULL --AND G.SUPPLIER_STATUS <> 'A06'  AND G.SUPPLIER_STATUS <> 'A07'  
+       -- AKHILJO Changes START
+       LEFT JOIN "_SYS_BIC"."prd.csbg.spares/CV_ZT_INFOREC_DATA_SCHED" H ON H.MATERIAL = A.NHA AND H.MRP = '1' AND H.PLANT = '1000' AND H.SUPCAT <> 'A05' AND H.SUPCAT <> 'A08'  AND H.SUPCAT <> 'A15' AND H.SUPCODE IS NOT NULL --AND G.SUPPLIER_STATUS <> 'A06'  AND G.SUPPLIER_STATUS <> 'A07'  
+       LEFT JOIN "_SYS_BIC"."prd.csbg.spares/CV_ZT_INFOREC_DATA_SCHED" I ON I.MATERIAL = A.NHA AND I.MRP = '1' AND I.PLANT = '1010' AND I.SUPCAT <> 'A05' AND I.SUPCAT <> 'A08'  AND I.SUPCAT <> 'A15' AND I.SUPCODE IS NOT NULL --AND G.SUPPLIER_STATUS <> 'A06'  AND G.SUPPLIER_STATUS <> 'A07'  
+       LEFT JOIN "_SYS_BIC"."prd.csbg.spares/CV_ZT_INFOREC_DATA_SCHED" J ON J.MATERIAL = A.NHA AND J.MRP = '1' AND J.PLANT = '1020' AND J.SUPCAT <> 'A05' AND J.SUPCAT <> 'A08'  AND J.SUPCAT <> 'A15' AND J.SUPCODE IS NOT NULL --AND G.SUPPLIER_STATUS <> 'A06'  AND G.SUPPLIER_STATUS <> 'A07'              
+       -- AKHILJO Changes END
+       ORDER BY A.NHA      ;
+       
+       --UPDATE MRP preferred Supplier from EORD for those records missing from INFOREC.
+       UPDATE "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A 
+             -- AKHILJO Changes START
+             --SET A.SUPPCD_1900 = B.LIFNR,
+             --       A.SUPPNAME_1900 = B1.NAME1,
+             --     A.SUPPCD_2000 = C.LIFNR,
+             --       A.SUPPNAME_2000 = C1.NAME1,
+             --     A.SUPPCD_3120 = D.LIFNR,
+             --       A.SUPPNAME_3120 = D1.NAME1,
+                    SET A.SUPPCD_1900 = CASE WHEN LENGTH(TRIM(B.LIFNR)) > 0  THEN LEFT(LPAD(B.LIFNR,10,0),10) ELSE LEFT(LPAD(J.LIFNR,10,0),10) END, 
+                    A.SUPPNAME_1900 = CASE WHEN LENGTH(TRIM(B.LIFNR)) > 0  THEN B1.NAME1 ELSE J1.NAME1 END,
+                    A.SUPPCD_2000 = CASE WHEN LENGTH(TRIM(C.LIFNR)) > 0  THEN C.LIFNR ELSE H.LIFNR END,
+                    A.SUPPNAME_2000 = CASE WHEN LENGTH(TRIM(C.LIFNR)) > 0  THEN C1.NAME1 ELSE H1.NAME1 END,
+                    A.SUPPCD_3120 = CASE WHEN LENGTH(TRIM(D.LIFNR)) > 0  THEN D.LIFNR ELSE I.LIFNR END,
+                    A.SUPPNAME_3120 = CASE WHEN LENGTH(TRIM(D.LIFNR)) > 0  THEN D1.NAME1 ELSE I1.NAME1 END,
+                    --AKHILJO Changes END
+                    A.SUPPCD_1050 = E.LIFNR,
+                    A.SUPPNAME_1050 = E1.NAME1,
+                    A.SUPPCD_1060 = F.LIFNR,
+                    A.SUPPNAME_1060 = F1.NAME1,
+                    A.SUPPCD_1090 = G.LIFNR,
+                    A.SUPPNAME_1090 = G1.NAME1
+       FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A 
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" B ON TRIM(A.NHA) = TRIM(B.MATNR) AND B.AUTET = '1' AND B.WERKS ='1900' AND B.FLIFN = 'X'
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" B1 ON B1.LIFNR = B.LIFNR
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" C ON TRIM(A.NHA) = TRIM(C.MATNR) AND C.AUTET = '1' AND C.WERKS ='2000' AND C.FLIFN = 'X'
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" C1 ON C1.LIFNR = C.LIFNR
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" D ON TRIM(A.NHA) = TRIM(D.MATNR) AND D.AUTET = '1' AND D.WERKS ='3120' AND D.FLIFN = 'X'
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" D1 ON D1.LIFNR = D.LIFNR
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" E ON TRIM(A.NHA) = TRIM(E.MATNR) AND E.AUTET = '1' AND E.WERKS ='1050' AND E.FLIFN = 'X'
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" E1 ON E1.LIFNR = E.LIFNR
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" F ON TRIM(A.NHA) = TRIM(F.MATNR) AND F.AUTET = '1' AND F.WERKS ='1060' AND F.FLIFN = 'X'
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" F1 ON F1.LIFNR = F.LIFNR
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" G ON TRIM(A.NHA) = TRIM(G.MATNR) AND G.AUTET = '1' AND G.WERKS ='1090' AND G.FLIFN = 'X'
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" G1 ON G1.LIFNR = G.LIFNR
+       --AKHILJO Changes START
+       --WHERE A.SUPPCD_1900 IS NULL AND A.SUPPCD_2000 IS NULL AND A.SUPPCD_3120 IS NULL AND A.SUPPCD_1050 IS NULL AND A.SUPPCD_1060 IS NULL AND A.SUPPCD_1090 IS NULL;
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" H ON TRIM(A.NHA) = TRIM(H.MATNR) AND H.AUTET = '1' AND H.WERKS ='1000' AND H.FLIFN = 'X'
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" H1 ON H1.LIFNR = H.LIFNR
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" I ON TRIM(A.NHA) = TRIM(I.MATNR) AND I.AUTET = '1' AND I.WERKS ='1010' AND I.FLIFN = 'X'
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" I1 ON I1.LIFNR = I.LIFNR
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" J ON TRIM(A.NHA) = TRIM(J.MATNR) AND J.AUTET = '1' AND J.WERKS ='1020' AND J.FLIFN = 'X'
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" J1 ON J1.LIFNR = J.LIFNR
+       WHERE (A.SUPPCD_1900 IS NULL OR LENGTH(TRIM(A.SUPPCD_1900)) = 0) AND 
+        (A.SUPPCD_2000 IS NULL OR LENGTH(TRIM(A.SUPPCD_2000)) = 0) AND 
+        (A.SUPPCD_3120 IS NULL OR LENGTH(TRIM(A.SUPPCD_3120)) = 0) AND 
+        (A.SUPPCD_1050 IS NULL OR LENGTH(TRIM(A.SUPPCD_1050)) = 0) AND 
+        (A.SUPPCD_1060 IS NULL OR LENGTH(TRIM(A.SUPPCD_1060)) = 0) AND 
+        (A.SUPPCD_1090 IS NULL OR LENGTH(TRIM(A.SUPPCD_1090)) = 0) ;
+       --AKHILJO Changes END 
+       
+DUPLICATERECORD = SELECT DISTINCT NHA FROM (
+                                        SELECT NHA, 
+                                        ROW_NUMBER() OVER(PARTITION BY NHA
+                                 ORDER BY NHA) AS DuplicateCount
+                                  FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_BUYNHA_SUPPLIERS_PLANT") A1
+                                  WHERE A1.DuplicateCount > 1;
+
+                                 
+DELETE FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A 
+WHERE CONCAT(A.NHA,A.SUPPCD_1900) IN (SELECT DISTINCT CONCAT(A2.NHA,A2.SUPPCD_1900) FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A2
+INNER JOIN :DUPLICATERECORD A3 ON A3.NHA = A2.NHA
+INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" B ON B.MATNR = A2.NHA AND A2.SUPPCD_1900 = B.LIFNR AND B.WERKS = '1900' AND B.FLIFN <> 'X' AND (B.AUTET = '1' OR B.AUTET <> '1')) ;
+
+DELETE FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A
+WHERE CONCAT(A.NHA,A.SUPPCD_2000) IN (SELECT DISTINCT CONCAT(A2.NHA,A2.SUPPCD_2000) FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A2
+INNER JOIN :DUPLICATERECORD A1 ON A1.NHA = A2.NHA
+INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" C ON C.MATNR = A2.NHA AND A2.SUPPCD_2000 = C.LIFNR AND C.WERKS = '2000' AND C.FLIFN <> 'X' AND (C.AUTET = '1' OR C.AUTET <> '1')) ;
+
+DELETE FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A
+WHERE CONCAT(A.NHA,A.SUPPCD_3120) IN (SELECT DISTINCT CONCAT(A2.NHA,A2.SUPPCD_3120) FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A2
+INNER JOIN :DUPLICATERECORD A1 ON A1.NHA = A2.NHA
+INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" D ON D.MATNR = A2.NHA AND A2.SUPPCD_3120 = D.LIFNR AND D.WERKS = '3120' AND D.FLIFN <> 'X' AND (D.AUTET = '1' OR D.AUTET <> '1'));
+
+DELETE FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A
+WHERE CONCAT(A.NHA,A.SUPPCD_1050) IN (SELECT DISTINCT CONCAT(A2.NHA,A2.SUPPCD_1050) FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A2
+INNER JOIN :DUPLICATERECORD A1 ON A1.NHA = A2.NHA
+INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" E ON E.MATNR = A2.NHA AND A2.SUPPCD_1050 = E.LIFNR AND E.WERKS = '1050' AND E.FLIFN <> 'X' AND (E.AUTET = '1' OR E.AUTET <> '1')) ;
+
+DELETE FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A
+WHERE CONCAT(A.NHA,A.SUPPCD_1060) IN (SELECT DISTINCT CONCAT(A2.NHA,A2.SUPPCD_1060) FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A2
+INNER JOIN :DUPLICATERECORD A1 ON A1.NHA = A2.NHA
+INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" F ON F.MATNR = A2.NHA AND A2.SUPPCD_1060 = F.LIFNR AND F.WERKS = '1060' AND F.FLIFN <> 'X' AND (F.AUTET = '1' OR F.AUTET <> '1')) ;
+
+DELETE FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A
+WHERE CONCAT(A.NHA,A.SUPPCD_1090) IN (SELECT DISTINCT CONCAT(A2.NHA,A2.SUPPCD_1090) FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A2
+INNER JOIN :DUPLICATERECORD A1 ON A1.NHA = A2.NHA
+INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" G ON G.MATNR = A2.NHA AND A2.SUPPCD_1090 = G.LIFNR AND G.WERKS = '1090' AND G.FLIFN <> 'X' AND (G.AUTET = '1' OR G.AUTET <> '1'));
+
+--AKHILJO Changes START
+--R,S,C,X,D Parts if not having supplier info added, check the BASE part supplier. Below query covers 3-6R3 Patterns. 
+-- Filter the data in the table with No supplier info and join them.
+UPDATE "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A
+SET A.SUPPCD_1900 = CASE WHEN LENGTH(TRIM(B.LIFNR)) > 0  THEN LEFT(LPAD(B.LIFNR,10,0),10) ELSE LEFT(LPAD(J.LIFNR,10,0),10) END, 
+                    A.SUPPNAME_1900 = CASE WHEN LENGTH(TRIM(B.LIFNR)) > 0  THEN B1.NAME1 ELSE J1.NAME1 END,
+                    A.SUPPCD_2000 = CASE WHEN LENGTH(TRIM(C.LIFNR)) > 0  THEN C.LIFNR ELSE H.LIFNR END,
+                    A.SUPPNAME_2000 = CASE WHEN LENGTH(TRIM(C.LIFNR)) > 0  THEN C1.NAME1 ELSE H1.NAME1 END,
+                    A.SUPPCD_3120 = CASE WHEN LENGTH(TRIM(D.LIFNR)) > 0  THEN D.LIFNR ELSE I.LIFNR END,
+                    A.SUPPNAME_3120 = CASE WHEN LENGTH(TRIM(D.LIFNR)) > 0  THEN D1.NAME1 ELSE I1.NAME1 END,
+                    A.SUPPCD_1050 = E.LIFNR,
+                    A.SUPPNAME_1050 = E1.NAME1,
+                    A.SUPPCD_1060 = F.LIFNR,
+                    A.SUPPNAME_1060 = F1.NAME1,
+                    A.SUPPCD_1090 = G.LIFNR,
+                    A.SUPPNAME_1090 = G1.NAME1
+FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" B ON TRIM(B.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', '-'),'S','-'),'C','-'),'X','-'),'D','-') AND B.AUTET = '1' AND B.WERKS ='1900' AND B.FLIFN = 'X' 
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" B1 ON B1.LIFNR = B.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" C ON TRIM(C.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', '-'),'S','-'),'C','-'),'X','-'),'D','-') AND C.AUTET = '1' AND C.WERKS ='2000' AND C.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" C1 ON C1.LIFNR = C.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" D ON TRIM(D.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', '-'),'S','-'),'C','-'),'X','-'),'D','-') AND D.AUTET = '1' AND D.WERKS ='3120' AND D.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" D1 ON D1.LIFNR = D.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" E ON TRIM(E.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', '-'),'S','-'),'C','-'),'X','-'),'D','-') AND E.AUTET = '1' AND E.WERKS ='1050' AND E.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" E1 ON E1.LIFNR = E.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" F ON TRIM(F.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', '-'),'S','-'),'C','-'),'X','-'),'D','-') AND F.AUTET = '1' AND F.WERKS ='1060' AND F.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" F1 ON F1.LIFNR = F.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" G ON TRIM(G.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', '-'),'S','-'),'C','-'),'X','-'),'D','-') AND G.AUTET = '1' AND G.WERKS ='1090' AND G.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" G1 ON G1.LIFNR = G.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" H ON TRIM(H.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', '-'),'S','-'),'C','-'),'X','-'),'D','-') AND H.AUTET = '1' AND H.WERKS ='1000' AND H.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" H1 ON H1.LIFNR = H.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" I ON TRIM(I.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', '-'),'S','-'),'C','-'),'X','-'),'D','-') AND I.AUTET = '1' AND I.WERKS ='1010' AND I.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" I1 ON I1.LIFNR = I.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" J ON TRIM(J.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', '-'),'S','-'),'C','-'),'X','-'),'D','-') AND J.AUTET = '1' AND J.WERKS ='1020' AND J.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" J1 ON J1.LIFNR = J.LIFNR
+WHERE (NHA like '%R%' OR NHA like '%S%' OR NHA like '%C%' OR NHA like '%X%' OR NHA like '%D%') AND
+       (SUPPCD_1900 IS NULL OR LENGTH(TRIM(SUPPCD_1900)) = 0) AND 
+        (SUPPCD_2000 IS NULL OR LENGTH(TRIM(SUPPCD_2000)) = 0) AND 
+        (SUPPCD_3120 IS NULL OR LENGTH(TRIM(SUPPCD_3120)) = 0) AND 
+        (SUPPCD_1050 IS NULL OR LENGTH(TRIM(SUPPCD_1050)) = 0) AND 
+        (SUPPCD_1060 IS NULL OR LENGTH(TRIM(SUPPCD_1060)) = 0) AND 
+        (SUPPCD_1090 IS NULL OR LENGTH(TRIM(SUPPCD_1090)) = 0) ;
+
+
+--R,S,C,X,D Parts if not having supplier info added, check the BASE part supplier. Below query covers R2-6-2 Patterns    
+-- Filter the data in the table with No supplier info and join them. 
+UPDATE "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A
+SET A.SUPPCD_1900 = CASE WHEN LENGTH(TRIM(B.LIFNR)) > 0  THEN LEFT(LPAD(B.LIFNR,10,0),10) ELSE LEFT(LPAD(J.LIFNR,10,0),10) END, 
+                    A.SUPPNAME_1900 = CASE WHEN LENGTH(TRIM(B.LIFNR)) > 0  THEN B1.NAME1 ELSE J1.NAME1 END,
+                    A.SUPPCD_2000 = CASE WHEN LENGTH(TRIM(C.LIFNR)) > 0  THEN C.LIFNR ELSE H.LIFNR END,
+                    A.SUPPNAME_2000 = CASE WHEN LENGTH(TRIM(C.LIFNR)) > 0  THEN C1.NAME1 ELSE H1.NAME1 END,
+                    A.SUPPCD_3120 = CASE WHEN LENGTH(TRIM(D.LIFNR)) > 0  THEN D.LIFNR ELSE I.LIFNR END,
+                    A.SUPPNAME_3120 = CASE WHEN LENGTH(TRIM(D.LIFNR)) > 0  THEN D1.NAME1 ELSE I1.NAME1 END,
+                    A.SUPPCD_1050 = E.LIFNR,
+                    A.SUPPNAME_1050 = E1.NAME1,
+                    A.SUPPCD_1060 = F.LIFNR,
+                    A.SUPPNAME_1060 = F1.NAME1,
+                    A.SUPPCD_1090 = G.LIFNR,
+                    A.SUPPNAME_1090 = G1.NAME1
+FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" B ON TRIM(B.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', ''),'S',''),'C',''),'X',''),'D','') AND B.AUTET = '1' AND B.WERKS ='1900' AND B.FLIFN = 'X' 
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" B1 ON B1.LIFNR = B.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" C ON TRIM(C.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', ''),'S',''),'C',''),'X',''),'D','') AND C.AUTET = '1' AND C.WERKS ='2000' AND C.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" C1 ON C1.LIFNR = C.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" D ON TRIM(D.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', ''),'S',''),'C',''),'X',''),'D','') AND D.AUTET = '1' AND D.WERKS ='3120' AND D.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" D1 ON D1.LIFNR = D.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" E ON TRIM(E.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', ''),'S',''),'C',''),'X',''),'D','') AND E.AUTET = '1' AND E.WERKS ='1050' AND E.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" E1 ON E1.LIFNR = E.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" F ON TRIM(F.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', ''),'S',''),'C',''),'X',''),'D','') AND F.AUTET = '1' AND F.WERKS ='1060' AND F.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" F1 ON F1.LIFNR = F.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" G ON TRIM(G.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', ''),'S',''),'C',''),'X',''),'D','') AND G.AUTET = '1' AND G.WERKS ='1090' AND G.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" G1 ON G1.LIFNR = G.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" H ON TRIM(H.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', ''),'S',''),'C',''),'X',''),'D','') AND H.AUTET = '1' AND H.WERKS ='1000' AND H.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" H1 ON H1.LIFNR = H.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" I ON TRIM(I.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', ''),'S',''),'C',''),'X',''),'D','') AND I.AUTET = '1' AND I.WERKS ='1010' AND I.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" I1 ON I1.LIFNR = I.LIFNR
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_EORD" J ON TRIM(J.MATNR) = REPLACE (REPLACE (REPLACE (REPLACE (REPLACE (A.NHA, 'R', ''),'S',''),'C',''),'X',''),'D','') AND J.AUTET = '1' AND J.WERKS ='1020' AND J.FLIFN = 'X'
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" J1 ON J1.LIFNR = J.LIFNR
+WHERE (NHA like 'R%' OR NHA like 'S%' OR NHA like 'C%' OR NHA like 'X%' OR NHA like 'D%') AND
+       (SUPPCD_1900 IS NULL OR LENGTH(TRIM(SUPPCD_1900)) = 0) AND 
+        (SUPPCD_2000 IS NULL OR LENGTH(TRIM(SUPPCD_2000)) = 0) AND 
+        (SUPPCD_3120 IS NULL OR LENGTH(TRIM(SUPPCD_3120)) = 0) AND 
+        (SUPPCD_1050 IS NULL OR LENGTH(TRIM(SUPPCD_1050)) = 0) AND 
+        (SUPPCD_1060 IS NULL OR LENGTH(TRIM(SUPPCD_1060)) = 0) AND 
+        (SUPPCD_1090 IS NULL OR LENGTH(TRIM(SUPPCD_1090)) = 0) ;
+
+--AKHILJO Changes END
+
+
+--Identifies all OPEN POs and its suppliers.
+POSUPP = SELECT DISTINCT E.NHA, STRING_AGG(E.LIFNR,',') AS "POSuppCode", STRING_AGG(E.NAME1,',') AS "POSuppName" FROM (
+                           SELECT DISTINCT A.NHA, B.LIFNR, D.NAME1 
+                                  FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" A
+                                  INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_ZPO_HSTRY" B ON B.MATNR = A.NHA
+                                  INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EKPO" C ON B.EBELN = C.EBELN AND B.EBELP = C.EBELP
+                                  INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" D ON D.LIFNR = B.LIFNR
+                                  WHERE A.OPEN_PO_QTY > 0 AND RIGHT(B.DUE_DT,5) <> '04-01' AND RIGHT(B.DUE_DT,5) <> '12-31'
+                                        AND B.STATUS <> 'INACT'                AND TRIM(B.MATNR) <> '' 
+                                        AND TRIM(B.LOEKZ) = ''          AND B.DISCRD <> 'X'
+                                        AND B.AUSSL <> 'U3'              AND B.BSART <> 'UB'
+                                        AND B.ELIKZ <> 'X'              AND C.PSTYP <> '7' 
+                                        AND C.PSTYP <> '9' AND LENGTH(B.LIFNR)=10 )E
+                    GROUP BY E.NHA                           
+                    ORDER BY E.NHA;
+       
+       --Update the OPEN PO Suppliers into this Table                            
+       UPDATE "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A 
+             SET A."SUPPCD_PO1" = CASE WHEN LOCATE(B."POSuppCode",',') > 0 THEN SUBSTR_BEFORE(B."POSuppCode",',') ELSE LEFT(B."POSuppCode", 10) END,
+                    A."SUPPNAME_PO1" =  C.NAME1,
+                    A."SUPPCD_PO2" = CASE WHEN LOCATE(B."POSuppCode",',') > 0 AND LENGTH(B."POSuppCode") <=21 THEN SUBSTR_AFTER(B."POSuppCode",',') ELSE SUBSTRING(B."POSuppCode", 12,10) END,
+                    A."SUPPNAME_PO2" =  D.NAME1
+             FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A 
+             INNER JOIN :POSUPP B ON B.NHA = A.NHA                 
+             LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" C ON C.LIFNR = CASE WHEN LOCATE(B."POSuppCode",',') > 0 THEN SUBSTR_BEFORE(B."POSuppCode",',') ELSE LEFT(B."POSuppCode", 10) END
+             LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" D ON D.LIFNR = CASE WHEN LOCATE(B."POSuppCode",',') > 0 AND LENGTH(B."POSuppCode") <=21 THEN SUBSTR_AFTER(B."POSuppCode",',') ELSE SUBSTRING(B."POSuppCode", 12,10) END;
+             
+       --Update the Supplier Opened the OB PR into this Table 
+       UPDATE "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A 
+             SET A.SUPPCD_PR = LPAD(E.SUPPLIER_CODE,10,0),
+                    A.SUPPNAME_PR = F.NAME1
+       FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" A 
+       INNER JOIN "_SYS_BIC"."prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART" E ON E.PART_NAME = A.NHA AND E.PART_NAME <> 'NA' AND UPPER(E.STATE) <> 'CLOSED' 
+                                  AND (UPPER(E.STATE) IN ('CONFIRMED', 'IN REVIEW','IN WORK') OR UPPER(E.DISPOSITION) IN ('CONFIRMED', 'DEFER')) AND UPPER(E.REASON) = 'OBSOLETE COMPONENT'
+       LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" F ON F.LIFNR = LPAD(E.SUPPLIER_CODE,10,0);
+
+       
+       --UPDATE SELECTED PLANT, SUPPLIER CD & SUPPLIER NAME TO BE USED IN OMAT FOR NHA
+       UPDATE "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" B1 
+             SET B1.OMAT_SELECTED_PLANT = CASE WHEN LENGTH(B1.SUPPCD_2000) > 0 THEN '2000'
+                                                                  WHEN LENGTH(B1.SUPPCD_1900) > 0 THEN '1900'
+                                                                  WHEN LENGTH(B1.SUPPCD_3120) > 0 THEN '3120'
+                                                                  WHEN LENGTH(B1.SUPPCD_1050) > 0 THEN '1050'
+                                                                  WHEN LENGTH(B1.SUPPCD_1060) > 0 THEN '1060'
+                                                                  WHEN LENGTH(B1.SUPPCD_1090) > 0 THEN '1090'
+                                                                  WHEN LENGTH(B1.SUPPCD_PO1) = 10 THEN '2000'
+                                                                  WHEN LENGTH(B1.SUPPCD_PR) > 0 THEN '2000' END,
+              B1.OMAT_SELECTED_SUPPLIERCD = CASE WHEN LENGTH(B1.SUPPCD_2000) > 0 THEN B1.SUPPCD_2000
+                                                                  WHEN LENGTH(B1.SUPPCD_1900) > 0 THEN B1.SUPPCD_1900
+                                                                  WHEN LENGTH(B1.SUPPCD_3120) > 0 THEN B1.SUPPCD_3120
+                                                                  WHEN LENGTH(B1.SUPPCD_1050) > 0 THEN B1.SUPPCD_1050
+                                                                  WHEN LENGTH(B1.SUPPCD_1060) > 0 THEN B1.SUPPCD_1060
+                                                                  WHEN LENGTH(B1.SUPPCD_1090) > 0 THEN B1.SUPPCD_1090
+                                                                  WHEN LENGTH(B1.SUPPCD_PO1) = 10 THEN B1.SUPPCD_PO1
+                                                                  WHEN LENGTH(B1.SUPPCD_PO2) = 10 THEN LEFT(B1.SUPPCD_PO2, 10)
+                                                                  WHEN LENGTH(B1.SUPPCD_PR) > 0 THEN B1.SUPPCD_PR END,
+              B1.OMAT_SELECTED_SUPPLIER = CASE WHEN LENGTH(B1.SUPPCD_2000) > 0 THEN B1.SUPPNAME_2000
+                                                                  WHEN LENGTH(B1.SUPPCD_1900) > 0 THEN B1.SUPPNAME_1900
+                                                                  WHEN LENGTH(B1.SUPPCD_3120) > 0 THEN B1.SUPPNAME_3120
+                                                                  WHEN LENGTH(B1.SUPPCD_1050) > 0 THEN B1.SUPPNAME_1050
+                                                                  WHEN LENGTH(B1.SUPPCD_1060) > 0 THEN B1.SUPPNAME_1060
+                                                                  WHEN LENGTH(B1.SUPPCD_1090) > 0 THEN B1.SUPPNAME_1090
+                                                                  WHEN LENGTH(B1.SUPPCD_PO1) = 10 THEN B1.SUPPNAME_PO1
+                                                                  WHEN LENGTH(B1.SUPPCD_PO2) = 10 THEN B1.SUPPNAME_PO2
+                                                                  WHEN LENGTH(B1.SUPPCD_PR) > 0 THEN B1.SUPPNAME_PR END
+       FROM "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS" B1; 
+       
+       
+       INSERT INTO "W_OMAT"."OMAT_LOG_DTLS" VALUES ('SP_OMAT_UPDATE_SUPPLIERS_BYPLANT - Finished', 1 , :OBPRTCnt , :NHACnt ,  NOW());
+  
+
+END;

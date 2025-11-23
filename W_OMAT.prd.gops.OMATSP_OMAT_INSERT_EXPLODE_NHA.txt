@@ -1,0 +1,309 @@
+PROCEDURE "W_OMAT"."prd.gops.OMAT::SP_OMAT_INSERT_EXPLODE_NHA" (
+	IN I_PRNO NVARCHAR(20) 
+ ) 
+	LANGUAGE SQLSCRIPT
+	SQL SECURITY DEFINER  
+	DEFAULT SCHEMA W_OMAT
+	--READS SQL DATA 
+	AS
+BEGIN
+
+/*--------------------------------------------------------------------------------------------------------------*
+*Program Name : SP_OMAT_INSERT_EXPLODE_NHA
+*Project      : Obsolescence Improvement Project
+*Developer    : Akhil Martin, Prasoon Pandey
+*Requestor    : David, Hickman
+*Create Date  : 2020/04/15
+*---------------------------------------------------------------------------------------------------------------*
+*Description  : This Stored Procedure identifies all the NHAs of a Component  
+			 	part and insert it into Table for OMAT Application.				
+*---------------------------------------------------------------------------------------------------------------*
+Change Log:
+Change Id 		Developer				Date			Change Description
+----------------------------------------------------------------------------------------------------------------*
+54144			AKHILJO,PANDEPR			2020-04-15		Initial developemnt.
+103689			AKHILJO					2020-10-09		MATKL = 'F','E' type OB Part added to Buy NHA Table.
+106810			AKHILJO					2021-01-21		Buy NHA Table Duplicate record Fix & DELTA RTS parts removed.
+112006          SRIVAAP                 2021-07-28      Added column for inactive status 
+*---------------------------------------------------------------------------------------------------------------*/	
+
+-- Define the variables required for Logic.
+DECLARE LoopCounter INT;
+DECLARE PartCOUNTER  INT;
+DECLARE NHALoopCounter INT;
+DECLARE NHAPartCOUNTER  INT;
+DECLARE NHACount INT;
+DECLARE NHATOTALCount INT;
+
+DECLARE OBPR VARCHAR(15);
+DECLARE CURRENT_LEVEL INT; -- Variable to set the levels of NHAs reporting to component Part
+DECLARE EXPLODE_LEVEL INT; -- Default to 15 level exploding, Keep in mind exploding to top to get the NHA not to the bottom.
+DECLARE CURRENT_PART VARCHAR(20); -- = '685-151520-102'; --'853-036522-001' ;--'810-017604-020'; --'853-281869-001'; --'02-186621-00'; -- This Variable will be an i/p parameter when we convert this query to SP
+DECLARE OB_PART VARCHAR(20); -- Variable to store the compoenent Part through out the SP.
+DECLARE TOTAL_LEVELS INTEGER;
+DECLARE LevelNHACountCounter INTEGER;
+DECLARE CMPQPAVal INTEGER;
+
+ OBPR := :I_PRNO;
+ CURRENT_LEVEL := 1;
+ EXPLODE_LEVEL := 15;
+ NHATOTALCount := 0;
+ 
+   
+-- Temporary Table to store the results during the process
+CREATE LOCAL TEMPORARY TABLE "#NHALIST" (
+	"ROWN0" INTEGER,
+	"CMPPRTNO" VARCHAR(20),
+    "NHA" VARCHAR(20),
+	"LEVEL" INTEGER ,
+    "CHILDPN" VARCHAR(20),
+    "BOMITEM" VARCHAR(4),
+	"BOMQPA" INTEGER ,
+	"CMPQPA" INTEGER ,
+    "NHAMATKL" VARCHAR(20),
+    "NHAMSTAE" VARCHAR(20),
+    "EXPLODED" VARCHAR(2)
+ );
+ 
+ -- If the OB PRTNO is already in 'OBSOLETE' Status then No need to get its NHA. Only OB PRTNO to be there in the application. 
+ OBPRTLIST = SELECT DISTINCT 	
+		 		DENSE_RANK() over(ORDER BY OBPRTNO ASC)ID,  		OBPRTNO, 	 PART_STATUS
+ 			 FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS"
+ 			 WHERE OBPRNO = :OBPR AND (PART_STATUS = 'OB' OR PART_STATUS = 'OS' OR PART_STATUS = 'OP') AND IS_OBPRT_PROCESSED <> 'Yes'; 
+ 			 
+ LoopCounter := 1;
+
+ SELECT MAX(ID) INTO PartCOUNTER FROM :OBPRTLIST;
+ 
+ WHILE :LoopCounter <= :PartCOUNTER DO 
+	 BEGIN
+	 
+	 	SELECT OBPRTNO INTO OB_PART FROM :OBPRTLIST WHERE ID = :LoopCounter;
+	 	
+	 	 -- Insert the passed component part information to the Temp table at level 1.
+	 	INSERT INTO "W_OMAT"."OMAT_OBPN_NHA_DTLS" 
+	 	SELECT :OB_PART AS CMPPRTNO,		:OB_PART AS NHA, 	1 AS "LEVEL",				OB_PART AS CHILDPN,			'' AS BOMITEM,
+	 			1 AS BOMQPA,			1 AS CMPQPA,		A.MATKL AS MATKL,		C.PART_STATUS AS MSTAE, 		'N' AS EXPLODED, 	CURRENT_DATE AS LAST_MODIFIED_ON,'A' AS "NHA_STATUS_INACTIVE" 
+	 	FROM "_SYS_BIC"."prd.global.ecc/CV_MARA"  A
+	 	INNER JOIN :OBPRTLIST C ON C.OBPRTNO = A.MATNR
+	 	LEFT OUTER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_NHA_DTLS"  B ON A.MATNR = B.CMPPRTNO
+	 	WHERE MATNR = :OB_PART
+	 	AND B.CMPPRTNO IS NULL;
+	 	
+	 	LoopCounter := :LoopCounter + 1;
+	 
+	 END;
+ END WHILE;
+ 
+ -- Get All OB PRTNO that are not yet 'OBSOLETED'
+  OBPRTLIST = SELECT DISTINCT 	
+		 		DENSE_RANK() over(ORDER BY OBPRTNO ASC)ID,  		OBPRTNO, 	 PART_STATUS
+ 			 FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS"
+ 			 WHERE OBPRNO = :OBPR AND PART_STATUS <> 'OB' AND PART_STATUS <> 'OS' AND PART_STATUS <> 'OP'; 
+ 
+  LoopCounter := 1;
+
+ SELECT MAX(ID) INTO PartCOUNTER FROM :OBPRTLIST;
+ 
+ WHILE  :LoopCounter <= :PartCOUNTER DO 
+	 BEGIN
+	 
+	 	SELECT OBPRTNO INTO OB_PART FROM :OBPRTLIST WHERE ID = :LoopCounter;
+	 	
+	 	CURRENT_PART := :OB_PART;
+	 	CURRENT_LEVEL := 1;
+	 	
+	 	 -- Insert the passed component part information to the Temp table at level 1.
+ 		INSERT INTO "#NHALIST"
+ 		SELECT 0 AS "ROWN0",
+ 				:OB_PART AS CMPPRTNO,
+ 				:CURRENT_PART AS NHA,
+ 			    :CURRENT_LEVEL AS "LEVEL",
+ 				:CURRENT_PART AS CHILDPN,
+				'' AS BOMITEM,
+				1 AS BOMQPA,
+				0 AS CMPQPA,
+				A.MATKL AS NHAMATKL,
+				A.MSTAE AS NHAMSTAE,
+				'N' AS EXPLODED
+		FROM "_SYS_BIC"."prd.global.ecc/CV_MARA" A
+	 	LEFT OUTER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_NHA_DTLS"  B ON A.MATNR = B.CMPPRTNO
+	 	WHERE MATNR = :CURRENT_PART
+	 	AND B.CMPPRTNO IS NULL;
+	 	
+	 	-- Start the loop for 15 level of exploding.	
+		WHILE :CURRENT_LEVEL <= :EXPLODE_LEVEL DO
+			BEGIN	
+		
+				--Nested loop Count to control the exploding of all the parts in current level
+				NHALoopCounter := 1;
+		
+				/* Get the count of DISTINCT NHA in the CURRENT LEVEL, Looping will be for that much time to explode all the NHAs in the current level.
+		  		 First Statement picks only set of NHAs in the current Level which are not in OB status and are not Phatom parts.
+		   		Phantom parts(NHAMATKL = X) are not physical entities, any component part reporting to a Phantom part is reporting to the parent non Phantom part of the X(phantom) part
+		   		If NHA is not Phantom and if Obsoleted OB, then we don't have to explode it to get its NHA.*/
+				SELECT COUNT(DISTINCT NHA) INTO NHAPartCOUNTER FROM  "#NHALIST" WHERE EXPLODED = 'N' AND "LEVEL" = :CURRENT_LEVEL AND NHAMATKL <> 'X' AND NHAMSTAE <> 'OB' AND NHAMSTAE <> 'OS' AND NHAMSTAE <> 'OP';
+		
+				-- Add the count of Phantom parts in the current level to the counter.
+				SELECT COUNT(DISTINCT NHA) + :NHAPartCOUNTER INTO NHAPartCOUNTER FROM  "#NHALIST" WHERE EXPLODED = 'N' AND "LEVEL" = :CURRENT_LEVEL AND NHAMATKL = 'X' AND NHAMSTAE <> 'OB' AND NHAMSTAE <> 'OS' AND NHAMSTAE <> 'OP';
+		
+				--Loop until all the valid parts in the current level is exploded.	
+				WHILE :NHALoopCounter <= :NHAPartCOUNTER DO
+					BEGIN			
+				
+						--IF there is any non phantom part, that are not OBSOLETED,then fetch the part for exploding.
+						IF ((SELECT TOP 1 NHA FROM "#NHALIST" WHERE EXPLODED = 'N' AND "LEVEL" = :CURRENT_LEVEL AND NHAMATKL <> 'X' AND NHAMSTAE <> 'OB' AND NHAMSTAE <> 'OS' AND NHAMSTAE <> 'OP')  IS NOT NULL) THEN
+				
+							SELECT TOP 1 NHA INTO CURRENT_PART FROM "#NHALIST" WHERE EXPLODED = 'N' AND "LEVEL" = :CURRENT_LEVEL AND NHAMATKL <> 'X' AND NHAMSTAE <> 'OB' AND NHAMSTAE <> 'OS' AND NHAMSTAE <> 'OP' ORDER BY NHA ASC;
+				
+						ELSE
+							-- If there is no more non Phantom part that are not Obsoleted, then fetch the Phantom part for exploding.				
+							SELECT TOP 1 NHA INTO CURRENT_PART FROM "#NHALIST" WHERE EXPLODED = 'N' AND "LEVEL" = :CURRENT_LEVEL AND NHAMATKL = 'X' AND NHAMSTAE <> 'OB' AND NHAMSTAE <> 'OS' AND NHAMSTAE <> 'OP' ORDER BY NHA ASC;
+				
+						END IF;
+				
+						-- While inserting the dataset to the Temp Table, level is incremented to 1 as the new set of parts that are fetching are of next higher level.
+		
+	        			INSERT INTO  "#NHALIST"
+						SELECT DISTINCT 0 AS "ROWN0",
+							:OB_PART AS CMPPRTNO,
+							PRTNO AS NHA, 
+							:CURRENT_LEVEL + 1 AS "LEVEL",
+							BOMCPNO AS CHILDPN,
+							BOMITEM, 
+							BOMQPA,
+							0 AS CMPQPA,
+							MATKL AS NHAMATKL,
+							MSTAE AS NHAMSTAE,
+							'N' AS EXPLODED
+						FROM "_SYS_BIC"."prd.gops.DDS2K/CV_BOMREC" A
+						INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MARA" B ON A.PRTNO = B.MATNR
+						WHERE BOMCPNO = :CURRENT_PART
+							AND POSTP = 'L'
+ 							AND BOMEDAT <= CURRENT_DATE -- To fetch valid NHA. If BOMCPNO is expired(BOMIDAT< today) then component part it is valid to that NHA
+ 							AND BOMIDAT > CURRENT_DATE;
+ 				
+ 						UPDATE "#NHALIST"  A SET EXPLODED = 'Y' FROM "#NHALIST" A WHERE NHA = :CURRENT_PART AND "LEVEL" = :CURRENT_LEVEL;
+ 					
+						NHALoopCounter := :NHALoopCounter + 1;
+ 					
+      					COMMIT;
+ 					
+					END;
+				END WHILE;	
+		
+				--Once the exploding is completed in the current level go to next level(new parts added in to the temp table as part of exploding)
+				CURRENT_LEVEL := :CURRENT_LEVEL + 1;
+	
+			END;
+		END WHILE;	 
+		
+		 -- COMQPA Logic Starts
+ 
+ 		NHALIST = SELECT * FROM "#NHALIST";
+
+ 		TRUNCATE TABLE "#NHALIST";
+
+ 		INSERT INTO "#NHALIST"
+ 		SELECT DISTINCT ROW_NUMBER() OVER(Partition by LEVEL ORDER BY NHA, CHILDPN) AS "ROWN0", 
+				"CMPPRTNO",		"NHA",		"LEVEL",		"CHILDPN",		"BOMITEM",		"BOMQPA",		"CMPQPA",		"NHAMATKL",		"NHAMSTAE",		"EXPLODED"  FROM :NHALIST;
+
+		UPDATE "#NHALIST" X SET CMPQPA = BOMQPA WHERE LEVEL = 1;
+
+		-- Getting Number of Levels for Loop.
+		SELECT COUNT(DISTINCT "LEVEL") INTO TOTAL_LEVELS FROM "#NHALIST";
+		CURRENT_LEVEL := 2;
+
+		WHILE :CURRENT_LEVEL <= :TOTAL_LEVELS DO
+			BEGIN
+				Select MAX("ROWN0") INTO LevelNHACountCounter FROM "#NHALIST" WHERE LEVEL = :CURRENT_LEVEL;
+		
+				WHILE :LevelNHACountCounter >= 1 DO
+					BEGIN
+			
+						SELECT DISTINCT X.BOMQPA*SUM(Y.CMPQPA) INTO CMPQPAVal FROM "#NHALIST" X Join "#NHALIST" Y 
+							ON X.CHILDPN = Y.NHA AND Y.LEVEL = :CURRENT_LEVEL-1
+							AND X.LEVEL = :CURRENT_LEVEL AND X."ROWN0" = :LevelNHACountCounter
+						GROUP BY Y.NHA,X.BOMQPA;
+				
+						UPDATE "#NHALIST" X SET X.CMPQPA = :CMPQPAVal WHERE LEVEL = :CURRENT_LEVEL AND "ROWN0" = :LevelNHACountCounter;
+				
+						LevelNHACountCounter := :LevelNHACountCounter-1;				
+			
+					END;
+				END WHILE;
+		
+				CURRENT_LEVEL := CURRENT_LEVEL+1; 
+			
+			END;
+ 		END WHILE; 
+ 		 		
+ 		-- FOR Logging purpose to know How many NHAs processed.
+ 		SELECT COUNT(DISTINCT NHA) INTO NHACount FROM "#NHALIST"; 		
+ 		NHATotalCount := NHATotalCount + :NHACount;
+ 		
+ 
+
+ 		INSERT INTO "W_OMAT"."OMAT_OBPN_NHA_DTLS" 
+ 		SELECT 	CMPPRTNO,		NHA, 		"LEVEL",				CHILDPN,				BOMITEM,
+	 			BOMQPA,			CMPQPA,		NHAMATKL AS MATKL,		NHAMSTAE AS MSTAE, 		EXPLODED, 	CURRENT_DATE AS LAST_MODIFIED_ON,'A' AS "NHA_STATUS_INACTIVE" 
+ 		FROM "#NHALIST"  A
+ 		WHERE NHAMSTAE <> 'OB' AND NHAMSTAE <> 'OS' AND NHAMSTAE <> 'OP'; 
+ 		
+ 		--Parts which are not MATKL LIKE '%P%' are also getting added in the iPLM PR, especially MATKL ='F'(FreeStock) & 'E'(Document)
+ 		--Code added to include such OB Part into the OMAT System.
+ 		--103689 Changes START
+ 		INSERT INTO "W_OMAT"."OMAT_OBPN_BUY_NHA_DTLS" ("CMPPRTNO",	"NHA", "LEVEL",	"CMPQPA", "MATKL", "MSTAE","LAST_MODIFIED_ON","ISPROCESSED")
+ 		SELECT DISTINCT A.CMPPRTNO, 		A.NHA, 		A."LEVEL", 		SUM(A.CMPQPA) AS CMPQPA, 		A.MATKL, 		A.MSTAE,
+ 			 			CURRENT_DATE AS LAST_MODIFIED_ON,	 	'N' AS ISPROCESSED
+ 		FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_NHA_DTLS" A
+ 		LEFT OUTER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_BUY_NHA_DTLS" B ON B.CMPPRTNO = A.CMPPRTNO AND B.NHA = A.NHA --106536 Changes
+		WHERE A.CMPPRTNO = :OB_PART
+		AND A.CMPPRTNO = A.NHA
+		AND CONCAT(B.CMPPRTNO,B.NHA) IS NULL  --106536 Changes 
+		GROUP BY A.CMPPRTNO, A.NHA, A."LEVEL", A.MATKL, A.MSTAE
+		ORDER BY A.CMPPRTNO, A."LEVEL", A.NHA;
+ 		--103689 Changes END 
+ 		
+ 		INSERT INTO "W_OMAT"."OMAT_OBPN_BUY_NHA_DTLS" ("CMPPRTNO",	"NHA", "LEVEL",	"CMPQPA", "MATKL", "MSTAE","LAST_MODIFIED_ON","ISPROCESSED")
+ 		SELECT DISTINCT A.CMPPRTNO, 		A.NHA, 		A."LEVEL", 		SUM(A.CMPQPA) AS CMPQPA, 		A.MATKL, 		A.MSTAE,
+ 			 			CURRENT_DATE AS LAST_MODIFIED_ON,	 	'N' AS ISPROCESSED 
+ 		FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_NHA_DTLS" A		
+ 		LEFT OUTER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_BUY_NHA_DTLS" B ON B.CMPPRTNO = A.CMPPRTNO AND B.NHA = A.NHA   --106536 Changes  
+		WHERE A.CMPPRTNO = :OB_PART AND A.CMPPRTNO <> A.NHA --103689 Changes AND A.CMPPRTNO <> A.NHA ADDED
+		AND CONCAT(B.CMPPRTNO,B.NHA) IS NULL AND A.NHA NOT LIKE '%DELTA%' --106536 Changes 
+		AND LENGTH(TRIM(A.MATKL)) = 2 AND A.MATKL LIKE 'P%' AND A.MSTAE <> 'OB' AND A.MSTAE <> 'OS' AND A.MSTAE <> 'OP' 
+		GROUP BY A.CMPPRTNO, A.NHA, A."LEVEL",  A.MATKL, A.MSTAE
+		ORDER BY A.CMPPRTNO, A."LEVEL", A.NHA;		
+				
+		PGPM = SELECT TOP 1 CMPPRTNO, NHA, "ApproverName", "BusinessUnit" FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_NHA_DTLS" A
+				INNER JOIN "ALEX_GOPS"."ApprovalMatrix" B ON B."ProductEndItem" = A.NHA 
+				WHERE A.NHA LIKE 'EI-%' AND A.CMPPRTNO = :OB_PART AND B."BusinessFunction" = 'Product Management';
+		
+		EIDTLS = SELECT DISTINCT STRING_AGG("NHA",',') AS "EIDTLS" FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_NHA_DTLS" 		
+					WHERE NHA LIKE 'EI-%' AND CMPPRTNO = :OB_PART GROUP BY "CMPPRTNO";
+				
+		UPDATE "W_OMAT"."OMAT_OBPRTNO_DTLS"  A 
+			SET A.PG_PM = B."ApproverName", 
+				A.ENDITEM = (SELECT DISTINCT "EIDTLS" FROM :EIDTLS), 
+				A.BUSINESS_UNIT = B."BusinessUnit"				
+		FROM "W_OMAT"."OMAT_OBPRTNO_DTLS"  A
+		INNER JOIN :PGPM B ON A.OBPRTNO = B.CMPPRTNO; 
+ 		
+ 		UPDATE "W_OMAT"."OMAT_OBPRTNO_DTLS"  A 
+ 			SET A."IS_OBPRT_PROCESSED"  = 'Yes'
+ 		FROM "W_OMAT"."OMAT_OBPRTNO_DTLS"  A
+ 		WHERE A.OBPRTNO = OB_PART;
+ 		
+ 		DELETE FROM "#NHALIST";
+ 
+		LoopCounter := :LoopCounter + 1;		
+			 
+ 	 END;
+ END WHILE;	
+
+ DROP TABLE "#NHALIST";
+ 
+ INSERT INTO "W_OMAT"."OMAT_LOG_DTLS" VALUES (CONCAT('SP_OMAT_INSERT_EXPLODE_NHA - ', :I_PRNO), 1 , :PartCOUNTER , :NHATotalCount ,  NOW());
+ 
+END;
