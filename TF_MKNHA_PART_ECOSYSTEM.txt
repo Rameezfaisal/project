@@ -1,0 +1,82 @@
+
+/*-----------------------------------------------------------------------------*
+*Program Name : TF_MKNHA_PART_ECOSYSTEM
+*Project      : OMAT
+*Developer    : Ishan Tiwari
+*Requestor    : David Hickman
+*Create Date  : 2021/07/01
+*------------------------------------------------------------------------------*
+*Description  : This Table Function fetches Make NHA related information.
+*------------------------------------------------------------------------------*
+  Change Id 		 Developer		     Date		Change Description
+-------------------------------------------------------------------------------
+AXD@AXD//110659    TIWARIS	   2021-07-01   Initial Development.
+AXD@AXD//111659    TIWARIS	   2021-07-15   Removed unwanted columns.
+AXD@AXD//113030    TIWARIS	   2021-08-19   modified query to reduce memory consumption.
+*-------------------------------------------------------------------------------*/	
+
+FUNCTION "W_OMAT"."prd.gops.OMAT::TF_MKNHA_PART_ECOSYSTEM" ( ) 
+	RETURNS TABLE
+	(
+	"OBPRNO" VARCHAR (20),
+	"OBPRTNO" VARCHAR(20),
+	"NHA" VARCHAR(20),
+	"DESCRIPTION" NVARCHAR(150),
+	"CMPQPA" INTEGER,
+	"LEVEL" INTEGER,
+	"MATKL" VARCHAR(20),
+	"PART_STATUS" VARCHAR(3),
+	"MFG_5YRS_CONSUMPTION"  INTEGER,
+	"SPRS_5YRS_CONSUMPTION" INTEGER,
+	"MFG_12MNTHS_CONSUMPTION" INTEGER,
+	"MFG_DMD" INTEGER,
+	"SPRS_DMD" INTEGER
+	)
+	
+	
+	LANGUAGE SQLSCRIPT
+	SQL SECURITY INVOKER AS
+BEGIN
+
+BASEDATA = SELECT DISTINCT  A.OBPRNO, A.OBPRTNO,A.PART_STATUS, CAST(A.RELTD_OB_PR AS VARCHAR) AS RELTD_OB_PR
+FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A
+WHERE UPPER(A.OBPR_STATE) IN ('CONFIRMED', 'IN WORK', 'IN REVIEW') ;
+
+DTLS_INFO = select DISTINCT C.CMPQPA,C."LEVEL",C.MATKL,C.CMPPRTNO 
+from "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_MAKE_NHA_DTLS" C
+join "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A
+ON C.CMPPRTNO = A.OBPRTNO
+WHERE UPPER(A.OBPR_STATE) IN ('CONFIRMED', 'IN WORK', 'IN REVIEW');
+
+NHA_INFO = SELECT distinct B.CMPPRTNO, B.NHA, D.MAKTX AS DESCRIPTION, SUM(C.CMPQPA) AS CMPQPA, MAX(C.LEVEL) AS LEVEL, 
+                        C.MATKL,
+                        B.MFG_12MNTHS_CONSUMPTION,B.MFG_DMD, B.SPRS_DMD,B.MFG_5YRS_CONSUMPTION,
+                        B.SPRS_5YRS_CONSUMPTION
+                  FROM "W_OMAT"."OMAT_MAKENHA_DMD_CONSUMPTION_DTLS" B 
+                  INNER JOIN "W_OMAT"."OMAT_OBPN_MAKE_NHA_DTLS" C ON C.CMPPRTNO = B.CMPPRTNO AND C.NHA = B.NHA
+                  LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_MAKT" D ON D.MATNR = B.NHA
+                  GROUP BY B.CMPPRTNO, B.NHA, D.MAKTX, 
+                        C.MATKL, B.MFG_12MNTHS_CONSUMPTION,B.MFG_DMD, B.SPRS_DMD,
+                        B.MFG_5YRS_CONSUMPTION,
+                        B.SPRS_5YRS_CONSUMPTION;
+
+FINAL_DATA_SET = SELECT  DISTINCT  A.OBPRNO, A.OBPRTNO,
+                                    IFNULL(E.NHA,A.OBPRTNO) as "NHA", 
+                                    IFNULL(E.DESCRIPTION,B.DESCRIPTION) AS DESCRIPTION,
+                                    IFNULL(E.CMPQPA,C.CMPQPA) AS CMPQPA,
+                                    IFNULL(E.LEVEL,C."LEVEL") AS LEVEL,
+                                    IFNULL(E.MATKL,C.MATKL) AS MATKL,
+                                    A.PART_STATUS,
+                                    CASE WHEN E.MFG_5YRS_CONSUMPTION <= 0 THEN 0 ELSE E.MFG_5YRS_CONSUMPTION END AS MFG_5YRS_CONSUMPTION,
+                                    E.SPRS_5YRS_CONSUMPTION,
+                                    CASE WHEN E.MFG_12MNTHS_CONSUMPTION <= 0 THEN 0 ELSE E.MFG_12MNTHS_CONSUMPTION END AS MFG_12MNTHS_CONSUMPTION,
+                                    E.MFG_DMD, E.SPRS_DMD
+                        FROM :BASEDATA A
+                        INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPR_INFO_DTLS" B ON B.OBPRNO = A.OBPRNO AND B.OBPRTNO = A.OBPRTNO
+                        INNER JOIN :DTLS_INFO C ON C.CMPPRTNO = A.OBPRTNO 
+                        LEFT JOIN :NHA_INFO E ON E.CMPPRTNO = A.OBPRTNO;
+
+RETURN
+SELECT * FROM :FINAL_DATA_SET;
+
+END;

@@ -1,0 +1,74 @@
+FUNCTION "_SYS_BIC"."prd.ev::PARSE_20" (IN COMMA_SEPARATED NVARCHAR(5000)) 
+	RETURNS table
+	(
+		OBJECT	nvarchar(20)
+	)
+	LANGUAGE SQLSCRIPT
+	SQL SECURITY INVOKER AS
+BEGIN
+/* 02/01/2019	Sankar Tadinada		Built original code to parse a conna seperated list into a table.*/
+/* 02/14/2019   Gil Woodring		AXD@ACD//72015 Released to AXQ*/
+/* 05/07/2020   VenuGopal Sarabu	AXD@AXD//95273 Released to AXQ    Added Replace function to the input string to remove single quptes in the input*/
+/***************************** 
+	Write your function logic
+ *****************************/
+ 
+ 	declare seq integer;
+	declare loc integer;
+	declare slen integer;
+	declare my_input nvarchar(5000);
+	declare current_obj nvarchar(20);
+	
+	SELECT 1 INTO SEQ FROM DUMMY;
+	SELECT 1 INTO LOC  FROM DUMMY;
+	SELECT LENGTH(:comma_separated) INTO SLEN FROM DUMMY;
+		   
+	select REPLACE(:comma_separated,'''',' ') into my_input from dummy; -- Added Replace function by venu 
+	
+	
+	WHILE (:LOC <> 0) DO 
+	BEGIN
+		SELECT LOCATE(:my_input, ',') INTO LOC FROM DUMMY;
+	
+		IF (:LOC = 0) THEN
+			SELECT :my_input into current_obj FROM DUMMY;
+			--SELECT (SEQ + 1) INTO SEQ FROM DUMMY;
+				
+			if seq = 1 then
+			  var_out = 
+			  select current_obj as object from dummy;
+			else
+			  var_out = 
+			  select * from :var_out
+			  union all
+			  select current_obj as object from dummy;
+			end if;
+
+			SELECT (SEQ + 1) INTO SEQ FROM DUMMY;
+		ELSE
+			SELECT SUBSTRING(:my_input, 1, :LOC-1) into current_obj FROM DUMMY;
+					
+			if seq = 1 then
+			  var_out = 
+			  select current_obj as object from dummy;
+			else
+			  var_out = 
+			  select * from :var_out
+			  union all
+			  select current_obj as object from dummy;
+			end if;
+	
+			SELECT (SEQ + 1) INTO SEQ FROM DUMMY;
+			SELECT SUBSTRING(:my_input, :LOC+1, :SLEN) INTO my_input FROM DUMMY;
+			SELECT LENGTH(:my_input) INTO SLEN FROM DUMMY;
+		END IF;
+	END;
+	END WHILE;
+ 
+ 	return
+ 	--select rtrim(ltrim(object)) as OBJECT from :var_out
+ 	select trim(object) as OBJECT from :var_out
+ 	--select * from :var_out
+ 	;
+ 
+END;

@@ -1,0 +1,186 @@
+PROCEDURE "W_OMAT"."prd.gops.OMAT::SP_OMAT_INSERT_MAKENHA_DMD_CONS" ( ) 
+LANGUAGE SQLSCRIPT
+	SQL SECURITY DEFINER 
+	DEFAULT SCHEMA W_OMAT
+	--READS SQL DATA 
+	AS
+BEGIN
+/*------------------------------------------------------------------------------------------------------------------------*
+*Program Name : SP_OMAT_INSERT_MAKENHA_DMD_CONS
+*Project      : Obsolescence Improvement Project
+*Developer    : Ishan Tiwari
+*Requestor    : David, Hickman
+*Create Date  : 
+*--------------------------------------------------------------------------------------------------------------------------*
+*Description  : This Stored Procedure identifies the demand, consumption of MAKE NHAs in OB PR and insert it into
+			 	OMAT Tables for OMAT Application.				
+*--------------------------------------------------------------------------------------------------------------------------*
+Change Log:
+Change Id 		Developer		Date			Change Description
+---------------------------------------------------------------------------------------------------------------------------*
+109742          TiwarIs       2021-06-14         Initial development.
+111626          TiwarIs       2021-07-15         removed condition LENGTH(TRIM(A.MATKL)) = 2 
+113167          TiwarIs       2021-08-20         added condition NHA_STATUS_INACTIVE <> 'X'
+113483          TiwarIs       2021-09-03         added order type ZUP for spares consumption
+113943          TiwarIs       2021-09-17         added new spares demand calculation based on CV_SQL_SO_2 
+*---------------------------------------------------------------------------------------------------------------------------*/	
+
+DECLARE OBPRTCnt INT;
+DECLARE NHACnt INT;
+
+DECLARE DT1WK DATE;
+DECLARE DT26WK DATE;
+DECLARE From_date DATE;
+DECLARE T_date DATE;
+
+select ADD_months(CURRENT_DATE, -12) into From_date from dummy;
+select ADD_months(CURRENT_DATE, 12) into T_date from dummy; 
+
+DT1WK := ADD_DAYS(TO_DATE(CURRENT_DATE, 'YYYY-MM-DD'),0 - WEEKDAY ( TO_DATE(CURRENT_DATE, 'YYYY-MM-DD')));
+DT26WK := ADD_DAYS(ADD_DAYS(TO_DATE(ADD_DAYS(DT1WK,182), 'YYYY-MM-DD'),0 - WEEKDAY ( TO_DATE(ADD_DAYS(DT1WK,182), 'YYYY-MM-DD'))),6);
+
+
+/* Inserting new Make NHA's */
+INSERT INTO "W_OMAT"."OMAT_OBPN_MAKE_NHA_DTLS"
+SELECT DISTINCT A.CMPPRTNO, A.NHA, SUM(A.CMPQPA) AS CMPQPA, A.MATKL, A.MSTAE,
+ 		CURRENT_DATE AS LAST_MODIFIED_ON, A."LEVEL", 'N' AS ISPROCESSED
+ 		FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_NHA_DTLS" A		
+ 		LEFT OUTER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_MAKE_NHA_DTLS" B ON B.CMPPRTNO = A.CMPPRTNO AND B.NHA = A.NHA 
+		WHERE 
+		--A.CMPPRTNO = :OB_PART AND
+		A.CMPPRTNO <> A.NHA 
+		AND CONCAT(B.CMPPRTNO,B.NHA) IS NULL AND A.NHA NOT LIKE '%DELTA%' AND A.NHA_STATUS_INACTIVE <> 'X'
+		AND A.MATKL in ('M','MN','X') AND A.MSTAE <> 'OB' AND A.MSTAE <> 'OS' AND A.MSTAE <> 'OP' 
+		GROUP BY A.CMPPRTNO, A.NHA, A."LEVEL",  A.MATKL, A.MSTAE
+		ORDER BY A.CMPPRTNO, A."LEVEL", A.NHA;
+
+
+
+MKNHA = select DISTINCT CMPPRTNO,NHA from "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPN_MAKE_NHA_DTLS" A where ISPROCESSED = 'N';
+
+/* Manufacturing 26 week demand */
+
+MFGDMD26WK = select M.CMPPRTNO,d.MATNR as "Material", sum(CASE WHEN F.PLUMI = '-' THEN f.MNG01 WHEN F.PLUMI = '+' THEN -1*f.MNG01 END) as "Demand"
+--,F.DAT01 as "Delivery Date",F.DELKZ
+					from "_SYS_BIC"."prd.global.ecc/CV_MDKP" d inner join
+					:MKNHA as M	on M.NHA = d.MATNR
+					inner join "_SYS_BIC"."prd.global.ecc/CV_MDTB" f on f.DTNUM = d.DTNUM
+					where F.PLUMI in ('+','-') and (d.PLWRK <2001 or d.PLWRK =3120) and f.DELKZ IN ('AR','SB')
+					and F.DAT00 >= DT1WK and F.DAT00 <= DT26WK
+					group by  M.CMPPRTNO,d.MATNR;
+
+
+
+/*Manufacturing 5 yrs consumption*/
+
+MFGCONS5YRS = SELECT  A.CMPPRTNO,B.MATNR,
+				SUM(CASE WHEN B.SHKZG = 'S' THEN -1*B.MENGE ELSE B.MENGE END) AS "5YRS_CONSUMPTION"
+				FROM "_SYS_BIC"."prd.global.ecc/CV_MSEG" B 
+				INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MAKT" C ON C.MATNR = B.MATNR 
+				INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MKPF" D ON B.MBLNR = D.MBLNR 
+				INNER JOIN
+				:MKNHA A ON A.NHA = B.MATNR
+				WHERE  B.BWART in ('261','262') and D.BLDAT > ADD_DAYS (CURRENT_DATE, -365*5)
+				AND D.BLDAT< CURRENT_DATE AND (B."WERKS" <2001 OR B."WERKS" = 3120) AND B.CPUDT_MKPF > ADD_DAYS (CURRENT_DATE, -365*5)
+				GROUP BY A.CMPPRTNO,B.MATNR;
+
+/* Spares 5yrs Consumption */
+-- Spares consumption query data fetching Changed to Table to solve the issue with the View "_SYS_BIC"."prd.csbg/CVNS_CSBG_SPARES_DELIVERIES". 
+SPRSCONS =  SELECT B.CMPPRTNO, A.MATERIAL,  SUM(A.QTY_SHIPPED) AS "SPRS_5YRS_CONSUMPTION" 
+				FROM "ALEX_CUSTOM"."ZT_CSBG_SPARES_DELIVERIES" A
+				INNER JOIN :MKNHA B ON B.NHA = A.MATERIAL
+				WHERE A.SOURCE_DOC <> 'STO' 
+						AND A.ORDER_TYPE IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP') 
+						AND A.ACTUAL_GI > ADD_DAYS (CURRENT_DATE, -365*5) 
+				GROUP BY A.MATERIAL, B.CMPPRTNO
+				HAVING SUM(A.QTY_SHIPPED) >0;
+
+
+/* Spares 26 week demand */
+
+SPRSDMD26WK = SELECT DISTINCT A1.CMPPRTNO
+              ,A1."Part" as "Material"
+            , SUM(A1."OpenQty") AS "Demand"
+        FROM (
+        		SELECT DISTINCT A.CMPPRTNO, B.*    
+        		FROM  :MKNHA A
+            	INNER JOIN "_SYS_BIC"."prd.gops.GLIS/CV_SQL_SO_2"(
+                	PLACEHOLDER."$$IP_ORDER_TYPE$$" =>  'ALL',
+	 				PLACEHOLDER."$$IP_DATE_FLAG$$" => 'L',
+	 				PLACEHOLDER."$$IP_SALES_ORG$$" => 'ALL',
+	 				PLACEHOLDER."$$IP_ERDAT_FROM$$" => :From_date,
+	 				PLACEHOLDER."$$IP_ERDAT_TO$$" => :T_date,
+	 				PLACEHOLDER."$$IP_DATA_PRUNING_FLAG$$" => 'NNNNNNN'
+            	) B ON
+                	A.NHA = B."Part"
+        		WHERE (
+           			"OrderGroup" = 'SO'
+            		AND LOWER("OrderStatus") <> 'closed'
+            		AND "DeliveryDueDate" >= DT1WK
+            		AND "DeliveryDueDate" <= DT26WK
+            		AND "OrderType" IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP'))
+        	)A1
+        GROUP BY A1.CMPPRTNO,A1."Part"
+        ORDER BY A1."Part" ASC;
+
+
+/* MFG 12 month consumption */
+MKMFG12MNCONS =   SELECT  DISTINCT A.CMPPRTNO,
+                          B.MATNR,
+                          SUM(CASE WHEN B.SHKZG = 'S' THEN -1*B.MENGE ELSE B.MENGE END) AS "MFG_12MNTHS_CONSUMPTION" 
+                        FROM "_SYS_BIC"."prd.global.ecc/CV_MSEG" B 
+                        INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MAKT" C ON C.MATNR = B.MATNR 
+                        INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_MKPF" D ON B.MBLNR = D.MBLNR 
+                        INNER JOIN :MKNHA A ON B.MATNR = A.NHA
+                        WHERE  B.BWART in ('261','262') and (D.BLDAT > ADD_DAYS (CURRENT_DATE, -365) AND D.BLDAT< CURRENT_DATE)
+                        AND B.CPUDT_MKPF > ADD_DAYS (CURRENT_DATE, -365)
+                        GROUP BY A.CMPPRTNO, B.MATNR, C.MAKTX;
+
+
+--- Inserting MFG data
+INSERT INTO "W_OMAT"."OMAT_MAKENHA_DMD_CONSUMPTION_DTLS" ("CMPPRTNO","NHA","MFG_5YRS_CONSUMPTION","MFG_DMD","SPRS_5YRS_CONSUMPTION","SPRS_DMD",
+                                                          "MFG_12MNTHS_CONSUMPTION","LAST_MODIFIED_ON")
+                                                          
+Select A."CMPPRTNO",A."NHA",
+B."5YRS_CONSUMPTION",
+C."Demand",
+D."SPRS_5YRS_CONSUMPTION",
+E."Demand",
+F."MFG_12MNTHS_CONSUMPTION",
+CURRENT_DATE
+FROM :MKNHA A
+LEFT JOIN :MFGCONS5YRS B ON A.NHA = B.MATNR AND A.CMPPRTNO = B.CMPPRTNO
+LEFT JOIN :MFGDMD26WK C ON A.NHA = C."Material" AND A.CMPPRTNO = C.CMPPRTNO
+LEFT JOIN :SPRSCONS D ON A.NHA = D."MATERIAL" AND A.CMPPRTNO = D.CMPPRTNO
+LEFT JOIN :SPRSDMD26WK E ON A.NHA = E."Material" AND A.CMPPRTNO = E.CMPPRTNO
+LEFT JOIN :MKMFG12MNCONS F ON A.NHA = F.MATNR AND A.CMPPRTNO = F.CMPPRTNO
+WHERE B."5YRS_CONSUMPTION" >0
+OR C."Demand" >0
+OR D."SPRS_5YRS_CONSUMPTION" >0
+OR E."Demand" >0
+OR F."MFG_12MNTHS_CONSUMPTION" >0;
+
+
+
+UPDATE "W_OMAT"."OMAT_OBPN_MAKE_NHA_DTLS" A
+SET A.ISPROCESSED = 'Y'
+FROM "W_OMAT"."OMAT_OBPN_MAKE_NHA_DTLS" A
+WHERE A.ISPROCESSED = 'N';
+
+
+MFGCONS5YRS = SELECT * FROM :MFGCONS5YRS WHERE 1=2;
+MFGDMD26WK = SELECT * FROM :MFGDMD26WK WHERE 1=2;
+SPRSCONS = SELECT * FROM :SPRSCONS WHERE 1=2;
+SPRSDMD26WK = SELECT * FROM :SPRSDMD26WK WHERE 1=2;
+MKMFG12MNCONS = SELECT * FROM :MKMFG12MNCONS WHERE 1=2;
+
+	SELECT COUNT(DISTINCT CMPPRTNO) INTO OBPRTCnt FROM :MKNHA;
+	SELECT COUNT(DISTINCT NHA) INTO NHACnt FROM :MKNHA;
+	
+	INSERT INTO "W_OMAT"."OMAT_LOG_DTLS" VALUES ('SP_OMAT_INSERT_MAKENHA_DMD_CONS', 1 , :OBPRTCnt , :NHACnt ,  NOW());
+
+ 
+End;
+
+
+
