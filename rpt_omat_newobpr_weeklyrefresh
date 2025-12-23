@@ -45,3 +45,134 @@ obprlst_df = (
 )
 
 obprlst_df.createOrReplaceTempView("obprlst")
+
+
+
+
+
+
+
+base_df = (
+    df_iplm
+    .select(
+        F.col("name").alias("ob_prno"),
+        F.col("part_name").alias("ob_prtno"),
+        F.col("mstae").alias("part_status"),
+        F.col("state").alias("obpr_state"),
+        F.col("disposition"),
+        F.col("reason"),
+        F.col("is_the_last_time_buy_available").alias("is_ltb_avail"),
+        F.col("ob_last_buy_date").alias("ltb_date"),
+        F.col("lrc_suppliers_date_to_zero_inventory").alias("supplier_date_to_zero")
+    )
+    .filter(F.col("ob_prtno") != "NA")
+    .filter(F.upper("obpr_state") != "CLOSED")
+    .filter(
+        (F.upper("obpr_state").isin("CONFIRMED","IN REVIEW","IN WORK")) |
+        (F.upper("disposition").isin("CONFIRMED","DEFER"))
+    )
+    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
+)
+
+obprdtls_df = (
+    base_df
+    .join(obprlst_df, "ob_prno", "inner")
+    .join(df_omat_src, ["ob_prno","ob_prtno"], "left")
+    .filter(df_omat_src.obprno.isNull())
+    .withColumn(
+        "id",
+        F.row_number().over(Window.partitionBy("ob_prno").orderBy("ob_prtno"))
+    )
+    .withColumn("ltb_qty", F.lit(0))
+    .withColumn("reltd_ob_prs", F.lit(None).cast("string"))
+    .withColumn("duplicate_pr_flag", F.lit("No"))
+    .withColumn("is_obprt_processed", F.lit("No"))
+)
+
+obprdtls_df.createOrReplaceTempView("obprdtls")
+
+
+
+
+
+
+
+related_prs_df = (
+    obprdtls_df.alias("d")
+    .join(
+        df_omat_src.alias("o"),
+        (F.col("d.ob_prtno") == F.col("o.obprtno")) &
+        (~F.upper(F.col("o.obpr_state")).isin("CLOSED","CANCELLED")),
+        "left"
+    )
+    .join(
+        df_iplm.alias("p"),
+        (F.col("p.part_name") == F.col("d.ob_prtno")) &
+        (F.col("p.name") != F.col("d.ob_prno")) &
+        (F.upper(F.col("p.state")) != "CLOSED") &
+        (
+            (F.upper(F.col("p.state")).isin("CONFIRMED","IN REVIEW","IN WORK")) |
+            (F.upper(F.col("p.disposition")).isin("CONFIRMED","DEFER"))
+        ) &
+        (F.upper(F.col("p.reason")) == "OBSOLETE COMPONENT"),
+        "left"
+    )
+    .groupBy("d.ob_prno","d.ob_prtno")
+    .agg(
+        F.when(
+            F.count("o.obprtno") == 0,
+            F.concat_ws(",", F.collect_set("p.name"))
+        ).otherwise(F.max("o.reltd_ob_pr")).alias("reltd_ob_prs")
+    )
+)
+
+related_prs_df.createOrReplaceTempView("related_prs")
+
+
+
+
+
+
+
+spark.sql(f"""
+INSERT INTO {tbl_omat_obprt_tgt}
+SELECT
+    d.ob_prno        AS obprno,
+    d.ob_prtno       AS obprtno,
+    d.part_status,
+    d.obpr_state,
+    d.is_ltb_avail,
+    d.ltb_date,
+    d.ltb_qty,
+    r.reltd_ob_prs   AS reltd_ob_pr,
+    CASE WHEN r.reltd_ob_prs IS NOT NULL THEN 'Yes' ELSE 'No' END,
+    '' AS business_unit,
+    '' AS pg_pm,
+    '' AS enditem,
+    d.is_obprt_processed,
+    current_timestamp(),
+    current_timestamp(),
+    d.supplier_date_to_zero,
+    'A'
+FROM obprdtls d
+LEFT JOIN related_prs r
+  ON d.ob_prno = r.ob_prno
+ AND d.ob_prtno = r.ob_prtno
+""")
+
+
+
+
+
+
+spark.sql(f"""
+INSERT INTO {tbl_omat_log_tgt}
+SELECT
+    concat('SP_OMAT_INSERT_NEWOBPR_WklyRefresh - ', ob_prno),
+    (SELECT COUNT(*) FROM obprlst),
+    COUNT(DISTINCT ob_prtno),
+    0,
+    current_timestamp()
+FROM obprdtls
+GROUP BY ob_prno
+""")
