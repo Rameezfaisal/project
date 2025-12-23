@@ -1,19 +1,16 @@
 from pyspark.sql import functions as F
 
-d = obprdtls_df.alias("d")
-o = df_omat_src.alias("o")
-p = df_iplm.alias("p")
-
-related_prs_df = (
-    d
+# Step 1: Join and PROJECT clean columns (no aggregation yet)
+joined_df = (
+    obprdtls_df.alias("d")
     .join(
-        o,
+        df_omat_src.alias("o"),
         (F.col("d.ob_prtno") == F.col("o.obprtno")) &
         (~F.upper(F.col("o.obpr_state")).isin("CLOSED", "CANCELLED")),
         "left"
     )
     .join(
-        p,
+        df_iplm.alias("p"),
         (F.col("p.part_name") == F.col("d.ob_prtno")) &
         (F.col("p.name") != F.col("d.ob_prno")) &
         (F.upper(F.col("p.state")) != "CLOSED") &
@@ -24,16 +21,25 @@ related_prs_df = (
         (F.upper(F.col("p.reason")) == "OBSOLETE COMPONENT"),
         "left"
     )
-    .groupBy(
-        F.col("d.ob_prno"),
-        F.col("d.ob_prtno")
+    .select(
+        F.col("d.ob_prno").alias("ob_prno"),
+        F.col("d.ob_prtno").alias("ob_prtno"),
+        F.col("o.obprtno").alias("omat_obprtno"),
+        F.col("o.reltd_ob_pr").alias("omat_reltd_ob_pr"),
+        F.col("p.name").alias("iplm_prno")
     )
+)
+
+# Step 2: Aggregate (now columns are unambiguous)
+related_prs_df = (
+    joined_df
+    .groupBy("ob_prno", "ob_prtno")
     .agg(
         F.when(
-            F.count(F.col("o.obprtno")) == 0,
-            F.concat_ws(",", F.collect_set(F.col("p.name")))
+            F.count("omat_obprtno") == 0,
+            F.concat_ws(",", F.collect_set("iplm_prno"))
         )
-        .otherwise(F.max(F.col("o.reltd_ob_pr")))
+        .otherwise(F.max("omat_reltd_ob_pr"))
         .alias("reltd_ob_prs")
     )
 )
