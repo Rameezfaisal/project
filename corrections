@@ -1,2 +1,50 @@
-AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `d`.`obpr_state_cd` cannot be resolved. Did you mean one of the following? [`d`.`obpr_state`, `d`.`part_status_cd`, `d`.`ltb_date`, `d`.`ob_prtno`, `d`.`ltb_qty`].; line 7 pos 4;
-'InsertIntoStatement RelationV2[business_unit#13452, created_on#13453, duplicate_pr_flag#13454, enditem#13455, is_ltb_avail#13456, is_obprt_processed#13457, is_weekly_processed#13458, last_modified_on#13459, ltb_date#13460, ltb_qty#13461, obprno#13462, obprtno#13463, obpr_state#13464, part_status#13465, pg_pm#13466, reltd_ob_pr#13467, supplier_date_to_zero#13468] spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk.rpt_omat_obprtno_dtls 
+spark.sql(f"""
+INSERT INTO {tbl_omat_obprt_tgt}
+SELECT
+    d.ob_prno                AS obprno,
+    d.ob_prtno               AS obprtno,
+    d.part_status_cd         AS part_status,
+    d.obpr_state_cd          AS obpr_state,
+    d.is_ltb_avail_cd        AS is_ltb_avail,
+    d.ltb_date_cd            AS ltb_date,
+    d.ltb_qty                AS ltb_qty,
+    r.reltd_ob_prs           AS reltd_ob_pr,
+    CASE
+        WHEN r.reltd_ob_prs IS NOT NULL THEN 'Yes'
+        ELSE 'No'
+    END                      AS duplicate_pr_flag,
+    ''                       AS business_unit,
+    ''                       AS pg_pm,
+    ''                       AS enditem,
+    d.is_obprt_processed     AS is_obprt_processed,
+    current_timestamp()      AS created_on,
+    current_timestamp()      AS last_modified_on,
+    d.supplier_date_to_zero_cd  AS supplier_date_to_zero,
+    'A'                      AS is_weekly_processed
+FROM (
+    SELECT
+        ob_prno,
+        ob_prtno,
+        part_status_cd,
+        obpr_state_cd,
+        is_ltb_avail_cd,
+        ltb_date_cd,
+        ltb_qty,
+        is_obprt_processed,
+        supplier_date_to_zero_cd
+    FROM obprdtls
+) d
+LEFT JOIN related_prs r
+  ON d.ob_prno  = r.ob_prno
+ AND d.ob_prtno = r.ob_prtno
+""")
+
+
+
+
+
+
+
+NumberFormatException: [CAST_INVALID_INPUT] The value '' of the type "STRING" cannot be cast to "INT" because it is malformed. Correct the value as per the syntax, or change its target type. Use `try_cast` to tolerate malformed input and return NULL instead. If necessary set "spark.sql.ansi.enabled" to "false" to bypass this error.
+== SQL(line 2, position 1) ==
+INSERT INTO eng_test.rpt_omat_obprtno_dtls
