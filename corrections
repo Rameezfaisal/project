@@ -1,1 +1,58 @@
-AnalysisException: [AMBIGUOUS_REFERENCE] Reference `ob_prno` is ambiguous, could be: [`b`.`ob_prno`, `l`.`ob_prno`].
+from pyspark.sql import functions as F
+
+# aliases
+b = obprdtls_df.alias("b")
+l = obprlst_df.alias("l")
+o = df_omat_src.alias("o")
+p = df_iplm.alias("p")
+
+# ------------------------------------------------------------
+# Step 1: Join obprdtls with obprlst and DROP duplicate key
+# ------------------------------------------------------------
+base = (
+    b
+    .join(l, F.col("b.ob_prno") == F.col("l.ob_prno"), "inner")
+    .drop(F.col("l.ob_prno"))   # 🔴 THIS LINE FIXES THE ERROR
+)
+
+# ------------------------------------------------------------
+# Step 2: Join OMAT (existing related PRs)
+# ------------------------------------------------------------
+base2 = (
+    base
+    .join(
+        o,
+        (F.col("b.ob_prtno") == F.col("o.obprtno")) &
+        (~F.upper(F.col("o.obpr_state")).isin("CLOSED", "CANCELLED")),
+        "left"
+    )
+)
+
+# ------------------------------------------------------------
+# Step 3: Join IPLM (new related PRs)
+# ------------------------------------------------------------
+joined = (
+    base2
+    .join(
+        p,
+        (F.col("p.part_name") == F.col("b.ob_prtno")) &
+        (F.col("p.name") != F.col("b.ob_prno")) &
+        (F.upper(F.col("p.state")) != "CLOSED") &
+        (
+            (F.upper(F.col("p.state")).isin("CONFIRMED","IN REVIEW","IN WORK")) |
+            (F.upper(F.col("p.disposition")).isin("CONFIRMED","DEFER"))
+        ) &
+        (F.upper(F.col("p.reason")) == "OBSOLETE COMPONENT"),
+        "left"
+    )
+)
+
+# ------------------------------------------------------------
+# Step 4: Aggregate (no ambiguity remains)
+# ------------------------------------------------------------
+related_prs_df = (
+    joined
+    .groupBy("ob_prno", "ob_prtno")
+    .agg(
+        F.when(
+            F.count("o.obprtno") ==
