@@ -1,39 +1,27 @@
 spark.sql(f"""
 INSERT INTO {tbl_omat_obprt_tgt}
 SELECT
-    d.ob_prno              AS obprno,
-    d.ob_prtno             AS obprtno,
-    d.part_status          AS part_status,
-    d.obpr_state           AS obpr_state,
-    d.is_ltb_avail         AS is_ltb_avail,
-    d.ltb_date             AS ltb_date,
-    d.ltb_qty              AS ltb_qty,
-    r.reltd_ob_prs         AS reltd_ob_pr,
+    d.ob_prno                  AS obprno,
+    d.ob_prtno                 AS obprtno,
+    d.part_status_cd           AS part_status,
+    d.obpr_state               AS obpr_state,
+    d.is_ltb_avail             AS is_ltb_avail,
+    d.ltb_date                 AS ltb_date,
+    d.ltb_qty                  AS ltb_qty,
+    r.reltd_ob_prs             AS reltd_ob_pr,
     CASE 
         WHEN r.reltd_ob_prs IS NOT NULL THEN 'Yes'
         ELSE 'No'
-    END                    AS duplicate_pr_flag,
-    ''                     AS business_unit,
-    ''                     AS pg_pm,
-    ''                     AS enditem,
-    d.is_obprt_processed   AS is_obprt_processed,
-    current_timestamp()    AS created_on,
-    current_timestamp()    AS last_modified_on,
-    d.supplier_date_to_zero AS supplier_date_to_zero,
-    'A'                    AS is_weekly_processed
-FROM (
-    SELECT
-        ob_prno,
-        ob_prtno,
-        part_status,
-        obpr_state,
-        is_ltb_avail,
-        ltb_date,
-        ltb_qty,
-        is_obprt_processed,
-        supplier_date_to_zero
-    FROM obprdtls
-) d
+    END                        AS duplicate_pr_flag,
+    ''                          AS business_unit,
+    ''                          AS pg_pm,
+    ''                          AS enditem,
+    d.is_obprt_processed       AS is_obprt_processed,
+    current_timestamp()        AS created_on,
+    current_timestamp()        AS last_modified_on,
+    d.supplier_date_to_zero    AS supplier_date_to_zero,
+    'A'                        AS is_weekly_processed
+FROM obprdtls d
 LEFT JOIN related_prs r
   ON d.ob_prno  = r.ob_prno
  AND d.ob_prtno = r.ob_prtno
