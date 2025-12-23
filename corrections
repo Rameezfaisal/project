@@ -1,10 +1,10 @@
-spark.sql("CREATE OR REPLACE TEMP VIEW iplm_prp AS SELECT * FROM " + tbl_iplm_prp)
-spark.sql("CREATE OR REPLACE TEMP VIEW omat_obprt_src AS SELECT * FROM " + tbl_omat_obprt_src)
-spark.sql("CREATE OR REPLACE TEMP VIEW omat_obprt_tgt AS SELECT * FROM " + tbl_omat_obprt_tgt)
+df_iplm_prp = spark.read.table(tbl_iplm_prp)
+df_omat_obprt_src = spark.read.table(tbl_omat_obprt_src)
 
 
 
-spark.sql("SHOW TABLES").show(truncate=False)
+df_iplm_prp.createOrReplaceTempView("iplm_prp")
+df_omat_obprt_src.createOrReplaceTempView("omat_obprt_src")
 
 
 
