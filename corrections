@@ -1,18 +1,82 @@
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+base_df = (
+    df_iplm
+    .select(
+        F.col("name").alias("ob_prno"),
+        F.col("part_name").alias("ob_prtno"),
+        F.col("mstae").alias("part_status"),
+        F.col("state").alias("obpr_state"),
+        F.col("disposition"),
+        F.col("reason"),
+        F.col("is_the_last_time_buy_available").alias("is_ltb_avail"),
+        F.col("ob_last_buy_date").alias("ltb_date"),
+        F.col("lrc_suppliers_date_to_zero_inventory").alias("supplier_date_to_zero")
+    )
+    .filter(F.col("ob_prtno") != "NA")
+    .filter(F.upper("obpr_state") != "CLOSED")
+    .filter(
+        (F.upper("obpr_state").isin("CONFIRMED","IN REVIEW","IN WORK")) |
+        (F.upper("disposition").isin("CONFIRMED","DEFER"))
+    )
+    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
+)
+
+b = base_df.alias("b")
+l = obprlst_df.alias("l")
+o = df_omat_src.alias("o")
+
+obprdtls_df = (
+    b
+    # join OBPR list
+    .join(l, F.col("b.ob_prno") == F.col("l.ob_prno"), "inner")
+    .drop(F.col("l.ob_prno"))          # ✅ FIX: remove duplicate key here
+
+    # left join OMAT to avoid duplicates
+    .join(
+        o,
+        (F.col("b.ob_prno") == F.col("o.obprno")) &
+        (F.col("b.ob_prtno") == F.col("o.obprtno")),
+        "left"
+    )
+    .filter(F.col("o.obprno").isNull())
+    .drop(F.col("o.obprno"))
+    .drop(F.col("o.obprtno"))
+
+    # windowing
+    .withColumn(
+        "id",
+        F.row_number().over(
+            Window.partitionBy("b.ob_prno").orderBy("b.ob_prtno")
+        )
+    )
+    .withColumn("ltb_qty", F.lit(0))
+    .withColumn("reltd_ob_prs", F.lit(None).cast("string"))
+    .withColumn("duplicate_pr_flag", F.lit("No"))
+    .withColumn("is_obprt_processed", F.lit("No"))
+)
+
+obprdtls_df.createOrReplaceTempView("obprdtls")
+
+
+
+
+
+from pyspark.sql import functions as F
+
 # ------------------------------------------------------------
 # Resolve Related PRs (SAP: RLTDPRS logic)
 # ------------------------------------------------------------
 
-# Step 1: create a clean base from obprdtls (break lineage)
+# base set (already filtered + de-duplicated)
 base_rel = (
     obprdtls_df
-    .select(
-        "ob_prno",
-        "ob_prtno"
-    )
+    .select("ob_prno", "ob_prtno")
     .distinct()
 )
 
-# Step 2: join OMAT for existing related PRs (not closed/cancelled)
+# join OMAT for existing related PRs
 omat_rel = (
     base_rel
     .join(
@@ -30,7 +94,7 @@ omat_rel = (
     )
 )
 
-# Step 3: join IPLM for open related PRs
+# join IPLM for open related PRs
 iplm_rel = (
     omat_rel
     .join(
@@ -53,7 +117,7 @@ iplm_rel = (
     )
 )
 
-# Step 4: aggregate (no ambiguity possible)
+# aggregate
 related_prs_df = (
     iplm_rel
     .groupBy("ob_prno", "ob_prtno")
