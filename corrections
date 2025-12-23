@@ -1,32 +1,52 @@
 from pyspark.sql import functions as F
 
-# ------------------------------------------------------------------
-# Step 0: Re-materialize a CLEAN obprdtls (this is the key fix)
-# ------------------------------------------------------------------
-clean_obprdtls = (
+# ------------------------------------------------------------
+# Step 1: Build a FLAT base dataframe (no joins, no lineage)
+# ------------------------------------------------------------
+flat_base = (
     obprdtls_df
     .select(
-        F.col("ob_prno").alias("ob_prno"),
-        F.col("ob_prtno").alias("ob_prtno")
+        "ob_prno",
+        "ob_prtno"
     )
     .distinct()
 )
 
-# ------------------------------------------------------------------
-# Step 1: Join + project only required columns
-# ------------------------------------------------------------------
-joined_df = (
-    clean_obprdtls
+# ------------------------------------------------------------
+# Step 2: Join OMAT (for existing related PRs)
+# ------------------------------------------------------------
+omat_join = (
+    flat_base
     .join(
-        df_omat_src,
-        (clean_obprdtls.ob_prtno == df_omat_src.obprtno) &
-        (~F.upper(df_omat_src.obpr_state).isin("CLOSED", "CANCELLED")),
+        df_omat_src.select(
+            "obprtno",
+            "reltd_ob_pr",
+            "obpr_state"
+        ),
+        flat_base.ob_prtno == df_omat_src.obprtno,
         "left"
     )
+    .filter(
+        (df_omat_src.obpr_state.isNull()) |
+        (~F.upper(df_omat_src.obpr_state).isin("CLOSED", "CANCELLED"))
+    )
+)
+
+# ------------------------------------------------------------
+# Step 3: Join IPLM (for new related PRs)
+# ------------------------------------------------------------
+iplm_join = (
+    omat_join
     .join(
-        df_iplm,
-        (df_iplm.part_name == clean_obprdtls.ob_prtno) &
-        (df_iplm.name != clean_obprdtls.ob_prno) &
+        df_iplm.select(
+            "name",
+            "part_name",
+            "state",
+            "disposition",
+            "reason"
+        ),
+        (df_iplm.part_name == omat_join.ob_prtno) &
+        (df_iplm.name != omat_join.ob_prno) &
         (F.upper(df_iplm.state) != "CLOSED") &
         (
             (F.upper(df_iplm.state).isin("CONFIRMED","IN REVIEW","IN WORK")) |
@@ -35,27 +55,20 @@ joined_df = (
         (F.upper(df_iplm.reason) == "OBSOLETE COMPONENT"),
         "left"
     )
-    .select(
-        clean_obprdtls.ob_prno.alias("ob_prno"),
-        clean_obprdtls.ob_prtno.alias("ob_prtno"),
-        df_omat_src.obprtno.alias("omat_obprtno"),
-        df_omat_src.reltd_ob_pr.alias("omat_reltd_ob_pr"),
-        df_iplm.name.alias("iplm_prno")
-    )
 )
 
-# ------------------------------------------------------------------
-# Step 2: Aggregate (no ambiguity possible now)
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# Step 4: Aggregate (NO ambiguity possible)
+# ------------------------------------------------------------
 related_prs_df = (
-    joined_df
+    iplm_join
     .groupBy("ob_prno", "ob_prtno")
     .agg(
         F.when(
-            F.count("omat_obprtno") == 0,
-            F.concat_ws(",", F.collect_set("iplm_prno"))
+            F.count("obprtno") == 0,
+            F.concat_ws(",", F.collect_set("name"))
         )
-        .otherwise(F.max("omat_reltd_ob_pr"))
+        .otherwise(F.max("reltd_ob_pr"))
         .alias("reltd_ob_prs")
     )
 )
