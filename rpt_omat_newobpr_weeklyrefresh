@@ -1,9 +1,16 @@
-# =========================================
-# PARAMETERS (EDIT ONLY HERE)
-# =========================================
-src_iplm = "prd_iplm"
-src_omat = "prd_gops_omat"
-tgt_schema = "w_omat"
+# ================================
+# FULL TABLE PATH PARAMETERS
+# ================================
+
+# Source tables (FULL paths)
+tbl_iplm_prp        = "prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART"
+tbl_omat_obprt_src  = "prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS"
+
+# Target tables (FULL paths)
+tbl_omat_obprt_tgt  = "w_omat.omat_obprtno_dtls"
+tbl_omat_log_tgt    = "w_omat.omat_log_dtls"
+
+# Control
 weekly_limit = 10
 
 
@@ -15,8 +22,8 @@ CREATE OR REPLACE TEMP VIEW obprlst AS
 SELECT DISTINCT
        DENSE_RANK() OVER (ORDER BY a.name) AS id,
        a.name AS ob_prno
-FROM {src_iplm}.cv_iplm_problem_report_part a
-LEFT JOIN {src_omat}.cv_omat_obprtno_dtls b
+FROM {tbl_iplm_prp} a
+LEFT JOIN {tbl_omat_obprt_src} b
        ON a.name = b.obprno
       AND a.part_name = b.obprtno
 WHERE a.part_name <> 'NA'
@@ -30,10 +37,13 @@ WHERE a.part_name <> 'NA'
 ORDER BY a.name
 LIMIT {weekly_limit}
 """.format(
-    src_iplm=src_iplm,
-    src_omat=src_omat,
+    tbl_iplm_prp=tbl_iplm_prp,
+    tbl_omat_obprt_src=tbl_omat_obprt_src,
     weekly_limit=weekly_limit
 ))
+
+
+
 
 
 
@@ -53,10 +63,10 @@ SELECT
     'No' AS duplicate_pr_flag,
     'No' AS is_obprt_processed,
     a.lrc_suppliers_date_to_zero_inventory AS supplier_date_to_zero
-FROM {src_iplm}.cv_iplm_problem_report_part a
+FROM {tbl_iplm_prp} a
 JOIN obprlst o
   ON a.name = o.ob_prno
-LEFT JOIN {src_omat}.cv_omat_obprtno_dtls b
+LEFT JOIN {tbl_omat_obprt_src} b
   ON a.name = b.obprno
  AND a.part_name = b.obprtno
 WHERE a.part_name <> 'NA'
@@ -68,9 +78,13 @@ WHERE a.part_name <> 'NA'
   AND UPPER(a.reason) = 'OBSOLETE COMPONENT'
   AND CONCAT(b.obprno, b.obprtno) IS NULL
 """.format(
-    src_iplm=src_iplm,
-    src_omat=src_omat
+    tbl_iplm_prp=tbl_iplm_prp,
+    tbl_omat_obprt_src=tbl_omat_obprt_src
 ))
+
+
+
+
 
 
 
@@ -82,15 +96,15 @@ SELECT
     d.ob_prtno,
     CASE
         WHEN COUNT(o.obprtno) = 0 THEN
-            STRING_AGG(p.name, ',')
+            concat_ws(',', collect_set(p.name))
         ELSE
             MAX(o.reltd_ob_pr)
     END AS reltd_ob_prs
 FROM obprdtls d
-LEFT JOIN {src_omat}.cv_omat_obprtno_dtls o
+LEFT JOIN {tbl_omat_obprt_src} o
        ON d.ob_prtno = o.obprtno
       AND UPPER(o.obpr_state) NOT IN ('CLOSED','CANCELLED')
-LEFT JOIN {src_iplm}.cv_iplm_problem_report_part p
+LEFT JOIN {tbl_iplm_prp} p
        ON p.part_name = d.ob_prtno
       AND p.name <> d.ob_prno
       AND UPPER(p.state) <> 'CLOSED'
@@ -101,16 +115,18 @@ LEFT JOIN {src_iplm}.cv_iplm_problem_report_part p
       AND UPPER(p.reason) = 'OBSOLETE COMPONENT'
 GROUP BY d.ob_prno, d.ob_prtno
 """.format(
-    src_iplm=src_iplm,
-    src_omat=src_omat
+    tbl_omat_obprt_src=tbl_omat_obprt_src,
+    tbl_iplm_prp=tbl_iplm_prp
 ))
 
 
 
 
 
+
+
 spark.sql("""
-INSERT INTO {tgt_schema}.omat_obprtno_dtls
+INSERT INTO {tbl_omat_obprt_tgt}
 SELECT
     d.ob_prno  AS obprno,
     d.ob_prtno AS obprtno,
@@ -134,27 +150,28 @@ LEFT JOIN related_prs r
   ON d.ob_prno = r.ob_prno
  AND d.ob_prtno = r.ob_prtno
 """.format(
-    tgt_schema=tgt_schema
+    tbl_omat_obprt_tgt=tbl_omat_obprt_tgt
 ))
 
 
 
 
 
+
 spark.sql("""
-MERGE INTO {tgt_schema}.omat_obprtno_dtls t
+MERGE INTO {tbl_omat_obprt_tgt} t
 USING (
     SELECT
         a.part_name,
         a.is_the_last_time_buy_available AS is_ltb_avail,
         a.ob_last_buy_date AS ltb_date,
         a.lrc_suppliers_date_to_zero_inventory AS supplier_date_to_zero
-    FROM {src_iplm}.cv_iplm_problem_report_part a
+    FROM {tbl_iplm_prp} a
     INNER JOIN (
         SELECT
             obprtno,
             MAX(submitted_date) AS submitted_date
-        FROM {tgt_schema}.omat_obprtno_dtls
+        FROM {tbl_omat_obprt_tgt}
         WHERE reltd_ob_pr IS NOT NULL
           AND LENGTH(reltd_ob_pr) > 0
         GROUP BY obprtno
@@ -168,18 +185,20 @@ WHEN MATCHED THEN UPDATE SET
     t.ltb_date = s.ltb_date,
     t.supplier_date_to_zero = s.supplier_date_to_zero
 """.format(
-    src_iplm=src_iplm,
-    tgt_schema=tgt_schema
+    tbl_omat_obprt_tgt=tbl_omat_obprt_tgt,
+    tbl_iplm_prp=tbl_iplm_prp
 ))
 
 
 
 
 
+
+
 spark.sql("""
-INSERT INTO {tgt_schema}.omat_log_dtls
+INSERT INTO {tbl_omat_log_tgt}
 SELECT
-    CONCAT('SP_OMAT_INSERT_NEWOBPR_WklyRefresh - ', ob_prno),
+    concat('SP_OMAT_INSERT_NEWOBPR_WklyRefresh - ', ob_prno),
     (SELECT COUNT(*) FROM obprlst),
     COUNT(DISTINCT ob_prtno),
     0,
@@ -187,5 +206,7 @@ SELECT
 FROM obprdtls
 GROUP BY ob_prno
 """.format(
-    tgt_schema=tgt_schema
+    tbl_omat_log_tgt=tbl_omat_log_tgt
 ))
+
+
