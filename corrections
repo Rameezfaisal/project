@@ -1,20 +1,45 @@
-spark.sql(f"""
-INSERT INTO {tbl_omat_log_tgt} (
-    executed_on,
-    obprtno_cnt,
-    obprtno_nha_cnt,
-    obpr_cnt,
-    program_name
-)
-SELECT
-    current_timestamp()                       AS executed_on,
-    COUNT(DISTINCT d.ob_prtno)                AS obprtno_cnt,
-    0                                         AS obprtno_nha_cnt,
-    (SELECT COUNT(*) FROM obprlst)             AS obpr_cnt,
-    concat(
-        'SP_OMAT_INSERT_NEWOBPR_WklyRefresh - ',
-        d.ob_prno
-    )                                         AS program_name
-FROM obprdtls d
-GROUP BY d.ob_prno
-""")
+### Cell 1 — Imports
+Initialize required Spark SQL functions and window utilities used across the notebook.
+
+
+### Cell 2 — Parameters
+Define source and target table paths and runtime controls.
+Only this cell should be edited when moving across environments.
+
+
+### Cell 3 — Read Source Tables
+Load IPLM and OMAT source tables from Fabric Lakehouse into DataFrames.
+
+
+
+### Cell 4 — Identify New OBPRs
+Identify new OB Problem Reports added during the week
+that are not yet present in OMAT.
+This replicates the OBPR list logic from the SAP stored procedure.
+
+
+
+### Cell 5 — Build OBPR Part Details
+Create the core OBPR–Part dataset with status, LTB,
+supplier date, and processing flags.
+This replaces the SAP temporary table #OBPRDTLS.
+
+
+
+### Cell 6 — Resolve Related PRs
+Derive related open PRs for each OBPR–Part combination
+using IPLM and existing OMAT data.
+This implements the SAP RLTDPRS logic.
+
+
+
+### Cell 7 — Insert into OMAT Target Table
+Insert processed OBPR–Part records into the OMAT target table.
+Column order and data types are explicitly controlled to ensure Delta safety.
+
+
+
+
+### Cell 8 — Insert Execution Log
+Insert execution metrics into OMAT log table,
+including OBPR count, part count, and execution timestamp.
