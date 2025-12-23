@@ -1,25 +1,36 @@
-# Source tables (FULL paths)
-tbl_iplm_prp       = "prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART"
-tbl_omat_obprt_src = "prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS"
-
-# Target tables (FULL paths)
-tbl_omat_obprt_tgt = "w_omat.omat_obprtno_dtls"
-tbl_omat_log_tgt   = "w_omat.omat_log_dtls"
-
-weekly_limit = 10
-
-
+#### cell 1
 
 
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
+
+
+#### cell 2
+
+
+# Source tables (FULL paths)
+tbl_iplm_prp        = "lhs_glb.eng_test.stg_omat_iplm_problem_report_part"
+tbl_omat_obprt_src  = "lhs_glb.eng_test.rpt_omat_obprtno_dtls"
+
+# Target tables (FULL paths)
+tbl_omat_obprt_tgt  = "eng_test.rpt_omat_obprtno_dtls"
+tbl_omat_log_tgt    = "eng_test.rpt_omat_log_dtls"
+
+# Control
+weekly_limit = 10
+
+
+
+#### cell 3
+
+
 
 df_iplm = spark.read.table(tbl_iplm_prp)
 df_omat_src = spark.read.table(tbl_omat_obprt_src)
 
 
 
-
+#### cell 4
 
 obprlst_df = (
     df_iplm
@@ -49,6 +60,7 @@ obprlst_df.createOrReplaceTempView("obprlst")
 
 
 
+#### cell 5
 
 
 
@@ -74,14 +86,28 @@ base_df = (
     .filter(F.upper("reason") == "OBSOLETE COMPONENT")
 )
 
+b = base_df.alias("b")
+o = df_omat_src.alias("o")
+
 obprdtls_df = (
-    base_df
-    .join(obprlst_df, "ob_prno", "inner")
-    .join(df_omat_src, ["ob_prno","ob_prtno"], "left")
-    .filter(df_omat_src.obprno.isNull())
+    b
+    .join(obprlst_df.alias("l"), F.col("b.ob_prno") == F.col("l.ob_prno"), "inner")
+    .join(
+        o,
+        (F.col("b.ob_prno") == F.col("o.obprno")) &
+        (F.col("b.ob_prtno") == F.col("o.obprtno")),
+        "left"
+    )
+    #  disambiguated NULL check
+    .filter(F.col("o.obprno").isNull())
+    #  remove right-side columns to avoid ambiguity later
+    .drop(F.col("o.obprno"))
+    .drop(F.col("o.obprtno"))
     .withColumn(
         "id",
-        F.row_number().over(Window.partitionBy("ob_prno").orderBy("ob_prtno"))
+        F.row_number().over(
+            Window.partitionBy("b.ob_prno").orderBy("b.ob_prtno")
+        )
     )
     .withColumn("ltb_qty", F.lit(0))
     .withColumn("reltd_ob_prs", F.lit(None).cast("string"))
@@ -92,87 +118,3 @@ obprdtls_df = (
 obprdtls_df.createOrReplaceTempView("obprdtls")
 
 
-
-
-
-
-
-related_prs_df = (
-    obprdtls_df.alias("d")
-    .join(
-        df_omat_src.alias("o"),
-        (F.col("d.ob_prtno") == F.col("o.obprtno")) &
-        (~F.upper(F.col("o.obpr_state")).isin("CLOSED","CANCELLED")),
-        "left"
-    )
-    .join(
-        df_iplm.alias("p"),
-        (F.col("p.part_name") == F.col("d.ob_prtno")) &
-        (F.col("p.name") != F.col("d.ob_prno")) &
-        (F.upper(F.col("p.state")) != "CLOSED") &
-        (
-            (F.upper(F.col("p.state")).isin("CONFIRMED","IN REVIEW","IN WORK")) |
-            (F.upper(F.col("p.disposition")).isin("CONFIRMED","DEFER"))
-        ) &
-        (F.upper(F.col("p.reason")) == "OBSOLETE COMPONENT"),
-        "left"
-    )
-    .groupBy("d.ob_prno","d.ob_prtno")
-    .agg(
-        F.when(
-            F.count("o.obprtno") == 0,
-            F.concat_ws(",", F.collect_set("p.name"))
-        ).otherwise(F.max("o.reltd_ob_pr")).alias("reltd_ob_prs")
-    )
-)
-
-related_prs_df.createOrReplaceTempView("related_prs")
-
-
-
-
-
-
-
-spark.sql(f"""
-INSERT INTO {tbl_omat_obprt_tgt}
-SELECT
-    d.ob_prno        AS obprno,
-    d.ob_prtno       AS obprtno,
-    d.part_status,
-    d.obpr_state,
-    d.is_ltb_avail,
-    d.ltb_date,
-    d.ltb_qty,
-    r.reltd_ob_prs   AS reltd_ob_pr,
-    CASE WHEN r.reltd_ob_prs IS NOT NULL THEN 'Yes' ELSE 'No' END,
-    '' AS business_unit,
-    '' AS pg_pm,
-    '' AS enditem,
-    d.is_obprt_processed,
-    current_timestamp(),
-    current_timestamp(),
-    d.supplier_date_to_zero,
-    'A'
-FROM obprdtls d
-LEFT JOIN related_prs r
-  ON d.ob_prno = r.ob_prno
- AND d.ob_prtno = r.ob_prtno
-""")
-
-
-
-
-
-
-spark.sql(f"""
-INSERT INTO {tbl_omat_log_tgt}
-SELECT
-    concat('SP_OMAT_INSERT_NEWOBPR_WklyRefresh - ', ob_prno),
-    (SELECT COUNT(*) FROM obprlst),
-    COUNT(DISTINCT ob_prtno),
-    0,
-    current_timestamp()
-FROM obprdtls
-GROUP BY ob_prno
-""")
