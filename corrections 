@@ -1,25 +1,29 @@
 spark.sql("""
 CREATE OR REPLACE TEMP VIEW obprlst AS
-SELECT DISTINCT
-       DENSE_RANK() OVER (ORDER BY a.NAME) AS id,
-       a.NAME AS ob_prno
+SELECT
+    DENSE_RANK() OVER (ORDER BY NAME) AS id,
+    NAME AS ob_prno
 FROM (
-    SELECT * FROM {tbl_iplm_prp}
-) a
-LEFT JOIN (
-    SELECT * FROM {tbl_omat_obprt_src}
-) b
-  ON a.NAME = b.OBPRNO
- AND a.PART_NAME = b.OBPRTNO
-WHERE a.PART_NAME <> 'NA'
-  AND UPPER(a.STATE) <> 'CLOSED'
+    SELECT DISTINCT
+           NAME,
+           PART_NAME,
+           STATE,
+           DISPOSITION,
+           REASON
+    FROM {tbl_iplm_prp}
+) base
+LEFT JOIN {tbl_omat_obprt_src}
+  ON base.NAME = OBPRNO
+ AND base.PART_NAME = OBPRTNO
+WHERE PART_NAME <> 'NA'
+  AND UPPER(STATE) <> 'CLOSED'
   AND (
-        UPPER(a.STATE) IN ('CONFIRMED','IN REVIEW','IN WORK')
-        OR UPPER(a.DISPOSITION) IN ('CONFIRMED','DEFER')
+        UPPER(STATE) IN ('CONFIRMED','IN REVIEW','IN WORK')
+        OR UPPER(DISPOSITION) IN ('CONFIRMED','DEFER')
       )
-  AND UPPER(a.REASON) = 'OBSOLETE COMPONENT'
-  AND b.OBPRNO IS NULL
-ORDER BY a.NAME
+  AND UPPER(REASON) = 'OBSOLETE COMPONENT'
+  AND OBPRNO IS NULL
+ORDER BY NAME
 LIMIT {weekly_limit}
 """.format(
     tbl_iplm_prp=tbl_iplm_prp,
