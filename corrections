@@ -1,69 +1,28 @@
-from pyspark.sql import functions as F
-
-# ------------------------------------------------------------
-# Cell 6 — Resolve Related PRs (FINAL)
-# ------------------------------------------------------------
-
-# Step 1: clean base (already correct from Cell 5)
-base_rel = (
-    obprdtls_df
-    .select("ob_prno", "ob_prtno")
-    .distinct()
-)
-
-# Step 2: join OMAT with explicit projection (CRITICAL FIX)
-omat_rel = (
-    base_rel
-    .join(
-        df_omat_src.select(
-            F.col("obprtno").alias("omat_obprtno"),
-            F.col("reltd_ob_pr").alias("omat_reltd_ob_pr"),
-            F.col("obpr_state").alias("omat_obpr_state")
-        ),
-        base_rel.ob_prtno == F.col("omat_obprtno"),
-        "left"
-    )
-    .filter(
-        F.col("omat_obpr_state").isNull() |
-        (~F.upper(F.col("omat_obpr_state")).isin("CLOSED", "CANCELLED"))
-    )
-)
-
-# Step 3: join IPLM (state column is different name, no conflict)
-iplm_rel = (
-    omat_rel
-    .join(
-        df_iplm.select(
-            F.col("name").alias("iplm_prno"),
-            "part_name",
-            "state",
-            "disposition",
-            "reason"
-        ),
-        (F.col("part_name") == F.col("ob_prtno")) &
-        (F.col("iplm_prno") != F.col("ob_prno")) &
-        (F.upper(F.col("state")) != "CLOSED") &
-        (
-            (F.upper(F.col("state")).isin("CONFIRMED","IN REVIEW","IN WORK")) |
-            (F.upper(F.col("disposition")).isin("CONFIRMED","DEFER"))
-        ) &
-        (F.upper(F.col("reason")) == "OBSOLETE COMPONENT"),
-        "left"
-    )
-)
-
-# Step 4: aggregate (NO ambiguous columns remain)
-related_prs_df = (
-    iplm_rel
-    .groupBy("ob_prno", "ob_prtno")
-    .agg(
-        F.when(
-            F.count("omat_obprtno") == 0,
-            F.concat_ws(",", F.collect_set("iplm_prno"))
-        )
-        .otherwise(F.max("omat_reltd_ob_pr"))
-        .alias("reltd_ob_prs")
-    )
-)
-
-related_prs_df.createOrReplaceTempView("related_prs")
+spark.sql(f"""
+INSERT INTO {tbl_omat_obprt_tgt}
+SELECT
+    d.ob_prno                    AS obprno,
+    d.ob_prtno                   AS obprtno,
+    d.part_status                AS part_status,
+    d.obpr_state                 AS obpr_state,
+    d.is_ltb_avail               AS is_ltb_avail,
+    d.ltb_date                   AS ltb_date,
+    d.ltb_qty                    AS ltb_qty,
+    r.reltd_ob_prs               AS reltd_ob_pr,
+    CASE 
+        WHEN r.reltd_ob_prs IS NOT NULL THEN 'Yes'
+        ELSE 'No'
+    END                          AS duplicate_pr_flag,
+    ''                            AS business_unit,
+    ''                            AS pg_pm,
+    ''                            AS enditem,
+    d.is_obprt_processed          AS is_obprt_processed,
+    current_timestamp()           AS created_on,
+    current_timestamp()           AS last_modified_on,
+    d.supplier_date_to_zero       AS supplier_date_to_zero,
+    'A'                           AS is_weekly_processed
+FROM obprdtls d
+LEFT JOIN related_prs r
+  ON d.ob_prno  = r.ob_prno
+ AND d.ob_prtno = r.ob_prtno
+""")
