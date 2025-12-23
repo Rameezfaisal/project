@@ -1,0 +1,21 @@
+base_df = (
+    df_iplm
+    .select(
+        F.col("name").alias("ob_prno"),
+        F.col("part_name").alias("ob_prtno"),
+        F.col("mstae").alias("part_status_cd"),   # 🔑 renamed here
+        F.col("state").alias("obpr_state"),
+        F.col("disposition"),
+        F.col("reason"),
+        F.col("is_the_last_time_buy_available").alias("is_ltb_avail"),
+        F.col("ob_last_buy_date").alias("ltb_date"),
+        F.col("lrc_suppliers_date_to_zero_inventory").alias("supplier_date_to_zero")
+    )
+    .filter(F.col("ob_prtno") != "NA")
+    .filter(F.upper("obpr_state") != "CLOSED")
+    .filter(
+        (F.upper("obpr_state").isin("CONFIRMED","IN REVIEW","IN WORK")) |
+        (F.upper("disposition").isin("CONFIRMED","DEFER"))
+    )
+    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
+)
