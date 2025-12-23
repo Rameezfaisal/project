@@ -1,1 +1,10 @@
 AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `log_desc` cannot be resolved. Did you mean one of the following? [`executed_on`, `obprtno_cnt`, `obprtno_nha_cnt`, `obpr_cnt`, `program_name`].; line 2 pos 0
+
+CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_log_dtls (
+  executed_on        TIMESTAMP,  -- SECONDDATE
+  obprtno_cnt        INT,
+  obprtno_nha_cnt    INT,
+  obpr_cnt           INT,
+  program_name       STRING
+)
+USING DELTA;
