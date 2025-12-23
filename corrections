@@ -1,5 +1,1 @@
-AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `obpr_state` cannot be resolved. Did you mean one of the following? [`obpr_state_cd`, `ltb_date`, `ob_prtno`, `ob_prno`, `part_status_cd`].;
-'Filter NOT (upper('obpr_state) = CLOSED)
-+- Filter NOT (ob_prtno#10042 = NA)
-   +- Project [name#8212 AS ob_prno#10041, part_name#8208 AS ob_prtno#10042, mstae#8251 AS part_status_cd#10043, state#8213 AS obpr_state_cd#10044, disposition#8223, reason#8217, is_the_last_time_buy_available#8240 AS is_ltb_avail#10045, ob_last_buy_date#8236 AS ltb_date#10046, lrc_suppliers_date_to_zero_inventory#8211 AS supplier_date_to_zero#10047]
-      +- SubqueryAlias spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk.stg_omat_iplm_problem_report_part
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `is_ltb_avail` is ambiguous, could be: [`obprdtls`.`is_ltb_avail`, `obprdtls`.`is_ltb_avail`].; line 30 pos 8
