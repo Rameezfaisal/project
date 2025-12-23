@@ -23,26 +23,27 @@ base_df = (
     .filter(F.upper("reason") == "OBSOLETE COMPONENT")
 )
 
-obprdtls_df = (
-    base_df
-    # join with obprlst (this join is fine, names match)
-    .join(obprlst_df, base_df.ob_prno == obprlst_df.ob_prno, "inner")
+b = base_df.alias("b")
+o = df_omat_src.alias("o")
 
-    # LEFT JOIN with OMAT source — EXPLICIT ON CONDITION
+obprdtls_df = (
+    b
+    .join(obprlst_df.alias("l"), F.col("b.ob_prno") == F.col("l.ob_prno"), "inner")
     .join(
-        df_omat_src,
-        (base_df.ob_prno == df_omat_src.obprno) &
-        (base_df.ob_prtno == df_omat_src.obprtno),
+        o,
+        (F.col("b.ob_prno") == F.col("o.obprno")) &
+        (F.col("b.ob_prtno") == F.col("o.obprtno")),
         "left"
     )
-    # keep only new OBPR + PRT combinations
-    .filter(df_omat_src.obprno.isNull())
-
-    # window logic
+    # ✅ disambiguated NULL check
+    .filter(F.col("o.obprno").isNull())
+    # ✅ remove right-side columns to avoid ambiguity later
+    .drop(F.col("o.obprno"))
+    .drop(F.col("o.obprtno"))
     .withColumn(
         "id",
         F.row_number().over(
-            Window.partitionBy("ob_prno").orderBy("ob_prtno")
+            Window.partitionBy("b.ob_prno").orderBy("b.ob_prtno")
         )
     )
     .withColumn("ltb_qty", F.lit(0))
