@@ -1,66 +1,124 @@
+#### cell 1
+
+
 from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
-# aliases
-b = obprdtls_df.alias("b")
-l = obprlst_df.alias("l")
-o = df_omat_src.alias("o")
-p = df_iplm.alias("p")
 
-# ------------------------------------------------------------
-# Step 1: Join obprdtls with obprlst and DROP duplicate key
-# ------------------------------------------------------------
-base = (
-    b
-    .join(l, F.col("b.ob_prno") == F.col("l.ob_prno"), "inner")
-    .drop(F.col("l.ob_prno"))   # 🔴 THIS LINE FIXES THE ERROR
+#### cell 2
+
+
+# Source tables (FULL paths)
+tbl_iplm_prp        = "lhs_glb.eng_test.stg_omat_iplm_problem_report_part"
+tbl_omat_obprt_src  = "lhs_glb.eng_test.rpt_omat_obprtno_dtls"
+
+# Target tables (FULL paths)
+tbl_omat_obprt_tgt  = "eng_test.rpt_omat_obprtno_dtls"
+tbl_omat_log_tgt    = "eng_test.rpt_omat_log_dtls"
+
+# Control
+weekly_limit = 10
+
+
+
+#### cell 3
+
+
+
+df_iplm = spark.read.table(tbl_iplm_prp)
+df_omat_src = spark.read.table(tbl_omat_obprt_src)
+
+
+
+#### cell 4
+
+obprlst_df = (
+    df_iplm
+    .filter(F.col("part_name") != "NA")
+    .filter(F.upper("state") != "CLOSED")
+    .filter(
+        (F.upper("state").isin("CONFIRMED","IN REVIEW","IN WORK")) |
+        (F.upper("disposition").isin("CONFIRMED","DEFER"))
+    )
+    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
+    .join(
+        df_omat_src,
+        (df_iplm.name == df_omat_src.obprno) &
+        (df_iplm.part_name == df_omat_src.obprtno),
+        "left"
+    )
+    .filter(df_omat_src.obprno.isNull())
+    .select("name")
+    .distinct()
+    .withColumn("id", F.dense_rank().over(Window.orderBy("name")))
+    .limit(weekly_limit)
+    .withColumnRenamed("name", "ob_prno")
 )
 
-# ------------------------------------------------------------
-# Step 2: Join OMAT (existing related PRs)
-# ------------------------------------------------------------
-base2 = (
-    base
+obprlst_df.createOrReplaceTempView("obprlst")
+
+
+
+
+#### cell 5
+
+
+
+base_df = (
+    df_iplm
+    .select(
+        F.col("name").alias("ob_prno"),
+        F.col("part_name").alias("ob_prtno"),
+        F.col("mstae").alias("part_status"),
+        F.col("state").alias("obpr_state"),
+        F.col("disposition"),
+        F.col("reason"),
+        F.col("is_the_last_time_buy_available").alias("is_ltb_avail"),
+        F.col("ob_last_buy_date").alias("ltb_date"),
+        F.col("lrc_suppliers_date_to_zero_inventory").alias("supplier_date_to_zero")
+    )
+    .filter(F.col("ob_prtno") != "NA")
+    .filter(F.upper("obpr_state") != "CLOSED")
+    .filter(
+        (F.upper("obpr_state").isin("CONFIRMED","IN REVIEW","IN WORK")) |
+        (F.upper("disposition").isin("CONFIRMED","DEFER"))
+    )
+    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
+)
+
+b = base_df.alias("b")
+o = df_omat_src.alias("o")
+
+obprdtls_df = (
+    b
+    .join(obprlst_df.alias("l"), F.col("b.ob_prno") == F.col("l.ob_prno"), "inner")
     .join(
         o,
-        (F.col("b.ob_prtno") == F.col("o.obprtno")) &
-        (~F.upper(F.col("o.obpr_state")).isin("CLOSED", "CANCELLED")),
+        (F.col("b.ob_prno") == F.col("o.obprno")) &
+        (F.col("b.ob_prtno") == F.col("o.obprtno")),
         "left"
     )
-)
-
-# ------------------------------------------------------------
-# Step 3: Join IPLM (new related PRs)
-# ------------------------------------------------------------
-joined = (
-    base2
-    .join(
-        p,
-        (F.col("p.part_name") == F.col("b.ob_prtno")) &
-        (F.col("p.name") != F.col("b.ob_prno")) &
-        (F.upper(F.col("p.state")) != "CLOSED") &
-        (
-            (F.upper(F.col("p.state")).isin("CONFIRMED","IN REVIEW","IN WORK")) |
-            (F.upper(F.col("p.disposition")).isin("CONFIRMED","DEFER"))
-        ) &
-        (F.upper(F.col("p.reason")) == "OBSOLETE COMPONENT"),
-        "left"
-    )
-)
-
-# ------------------------------------------------------------
-# Step 4: Aggregate (no ambiguity remains)
-# ------------------------------------------------------------
-related_prs_df = (
-    joined
-    .groupBy("ob_prno", "ob_prtno")
-    .agg(
-        F.when(
-            F.count("o.obprtno") == 0,
-            F.concat_ws(",", F.collect_set("p.name"))
+    #  disambiguated NULL check
+    .filter(F.col("o.obprno").isNull())
+    #  remove right-side columns to avoid ambiguity later
+    .drop(F.col("o.obprno"))
+    .drop(F.col("o.obprtno"))
+    .withColumn(
+        "id",
+        F.row_number().over(
+            Window.partitionBy("b.ob_prno").orderBy("b.ob_prtno")
         )
-        .otherwise(F.max("o.reltd_ob_pr"))
-        .alias("reltd_ob_prs")
     )
+    .withColumn("ltb_qty", F.lit(0))
+    .withColumn("reltd_ob_prs", F.lit(None).cast("string"))
+    .withColumn("duplicate_pr_flag", F.lit("No"))
+    .withColumn("is_obprt_processed", F.lit("No"))
 )
 
-related_prs_df.createOrReplaceTempView("related_prs")
+obprdtls_df.createOrReplaceTempView("obprdtls")
+
+
+
+
+
+
