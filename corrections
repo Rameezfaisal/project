@@ -1,132 +1,67 @@
 from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-
-base_df = (
-    df_iplm
-    .select(
-        F.col("name").alias("ob_prno"),
-        F.col("part_name").alias("ob_prtno"),
-        F.col("mstae").alias("part_status"),
-        F.col("state").alias("obpr_state"),
-        F.col("disposition"),
-        F.col("reason"),
-        F.col("is_the_last_time_buy_available").alias("is_ltb_avail"),
-        F.col("ob_last_buy_date").alias("ltb_date"),
-        F.col("lrc_suppliers_date_to_zero_inventory").alias("supplier_date_to_zero")
-    )
-    .filter(F.col("ob_prtno") != "NA")
-    .filter(F.upper("obpr_state") != "CLOSED")
-    .filter(
-        (F.upper("obpr_state").isin("CONFIRMED","IN REVIEW","IN WORK")) |
-        (F.upper("disposition").isin("CONFIRMED","DEFER"))
-    )
-    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
-)
-
-b = base_df.alias("b")
-l = obprlst_df.alias("l")
-o = df_omat_src.alias("o")
-
-obprdtls_df = (
-    b
-    # join OBPR list
-    .join(l, F.col("b.ob_prno") == F.col("l.ob_prno"), "inner")
-    .drop(F.col("l.ob_prno"))          # ✅ FIX: remove duplicate key here
-
-    # left join OMAT to avoid duplicates
-    .join(
-        o,
-        (F.col("b.ob_prno") == F.col("o.obprno")) &
-        (F.col("b.ob_prtno") == F.col("o.obprtno")),
-        "left"
-    )
-    .filter(F.col("o.obprno").isNull())
-    .drop(F.col("o.obprno"))
-    .drop(F.col("o.obprtno"))
-
-    # windowing
-    .withColumn(
-        "id",
-        F.row_number().over(
-            Window.partitionBy("b.ob_prno").orderBy("b.ob_prtno")
-        )
-    )
-    .withColumn("ltb_qty", F.lit(0))
-    .withColumn("reltd_ob_prs", F.lit(None).cast("string"))
-    .withColumn("duplicate_pr_flag", F.lit("No"))
-    .withColumn("is_obprt_processed", F.lit("No"))
-)
-
-obprdtls_df.createOrReplaceTempView("obprdtls")
-
-
-
-
-
-from pyspark.sql import functions as F
 
 # ------------------------------------------------------------
-# Resolve Related PRs (SAP: RLTDPRS logic)
+# Cell 6 — Resolve Related PRs (FINAL)
 # ------------------------------------------------------------
 
-# base set (already filtered + de-duplicated)
+# Step 1: clean base (already correct from Cell 5)
 base_rel = (
     obprdtls_df
     .select("ob_prno", "ob_prtno")
     .distinct()
 )
 
-# join OMAT for existing related PRs
+# Step 2: join OMAT with explicit projection (CRITICAL FIX)
 omat_rel = (
     base_rel
     .join(
         df_omat_src.select(
-            "obprtno",
-            "reltd_ob_pr",
-            "obpr_state"
+            F.col("obprtno").alias("omat_obprtno"),
+            F.col("reltd_ob_pr").alias("omat_reltd_ob_pr"),
+            F.col("obpr_state").alias("omat_obpr_state")
         ),
-        base_rel.ob_prtno == df_omat_src.obprtno,
+        base_rel.ob_prtno == F.col("omat_obprtno"),
         "left"
     )
     .filter(
-        df_omat_src.obpr_state.isNull() |
-        (~F.upper(df_omat_src.obpr_state).isin("CLOSED", "CANCELLED"))
+        F.col("omat_obpr_state").isNull() |
+        (~F.upper(F.col("omat_obpr_state")).isin("CLOSED", "CANCELLED"))
     )
 )
 
-# join IPLM for open related PRs
+# Step 3: join IPLM (state column is different name, no conflict)
 iplm_rel = (
     omat_rel
     .join(
         df_iplm.select(
-            "name",
+            F.col("name").alias("iplm_prno"),
             "part_name",
             "state",
             "disposition",
             "reason"
         ),
-        (df_iplm.part_name == omat_rel.ob_prtno) &
-        (df_iplm.name != omat_rel.ob_prno) &
-        (F.upper(df_iplm.state) != "CLOSED") &
+        (F.col("part_name") == F.col("ob_prtno")) &
+        (F.col("iplm_prno") != F.col("ob_prno")) &
+        (F.upper(F.col("state")) != "CLOSED") &
         (
-            (F.upper(df_iplm.state).isin("CONFIRMED","IN REVIEW","IN WORK")) |
-            (F.upper(df_iplm.disposition).isin("CONFIRMED","DEFER"))
+            (F.upper(F.col("state")).isin("CONFIRMED","IN REVIEW","IN WORK")) |
+            (F.upper(F.col("disposition")).isin("CONFIRMED","DEFER"))
         ) &
-        (F.upper(df_iplm.reason) == "OBSOLETE COMPONENT"),
+        (F.upper(F.col("reason")) == "OBSOLETE COMPONENT"),
         "left"
     )
 )
 
-# aggregate
+# Step 4: aggregate (NO ambiguous columns remain)
 related_prs_df = (
     iplm_rel
     .groupBy("ob_prno", "ob_prtno")
     .agg(
         F.when(
-            F.count("obprtno") == 0,
-            F.concat_ws(",", F.collect_set("name"))
+            F.count("omat_obprtno") == 0,
+            F.concat_ws(",", F.collect_set("iplm_prno"))
         )
-        .otherwise(F.max("reltd_ob_pr"))
+        .otherwise(F.max("omat_reltd_ob_pr"))
         .alias("reltd_ob_prs")
     )
 )
