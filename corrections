@@ -51,6 +51,8 @@ FROM (
         is_obprt_processed,
         supplier_date_to_zero_cd
     FROM obprdtls
+    WHERE ob_prno IS NOT NULL      -- 🔴 REQUIRED
+      AND ob_prtno IS NOT NULL     -- 🔴 REQUIRED
 ) d
 LEFT JOIN related_prs r
   ON d.ob_prno  = r.ob_prno
