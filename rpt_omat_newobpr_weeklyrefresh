@@ -1,212 +1,46 @@
-# ================================
-# FULL TABLE PATH PARAMETERS
-# ================================
-
-# Source tables (FULL paths)
-tbl_iplm_prp        = "prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART"
-tbl_omat_obprt_src  = "prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS"
-
-# Target tables (FULL paths)
-tbl_omat_obprt_tgt  = "w_omat.omat_obprtno_dtls"
-tbl_omat_log_tgt    = "w_omat.omat_log_dtls"
-
-# Control
-weekly_limit = 10
-
-
-
-
-
-spark.sql("""
-CREATE OR REPLACE TEMP VIEW obprlst AS
-SELECT DISTINCT
-       DENSE_RANK() OVER (ORDER BY a.name) AS id,
-       a.name AS ob_prno
-FROM {tbl_iplm_prp} a
-LEFT JOIN {tbl_omat_obprt_src} b
-       ON a.name = b.obprno
-      AND a.part_name = b.obprtno
-WHERE a.part_name <> 'NA'
-  AND UPPER(a.state) <> 'CLOSED'
-  AND (
-        UPPER(a.state) IN ('CONFIRMED','IN REVIEW','IN WORK')
-        OR UPPER(a.disposition) IN ('CONFIRMED','DEFER')
-      )
-  AND UPPER(a.reason) = 'OBSOLETE COMPONENT'
-  AND b.obprno IS NULL
-ORDER BY a.name
-LIMIT {weekly_limit}
-""".format(
-    tbl_iplm_prp=tbl_iplm_prp,
-    tbl_omat_obprt_src=tbl_omat_obprt_src,
-    weekly_limit=weekly_limit
-))
-
-
-
-
-
-
-
 spark.sql("""
 CREATE OR REPLACE TEMP VIEW obprdtls AS
 SELECT
-    ROW_NUMBER() OVER (PARTITION BY a.name ORDER BY a.part_name) AS id,
-    a.name AS ob_prno,
-    a.part_name AS ob_prtno,
-    a.mstae AS part_status,
-    a.state AS obpr_state,
-    a.is_the_last_time_buy_available AS is_ltb_avail,
-    a.ob_last_buy_date AS ltb_date,
+    ROW_NUMBER() OVER (PARTITION BY ob_prno ORDER BY ob_prtno) AS id,
+    ob_prno,
+    ob_prtno,
+    part_status,
+    obpr_state,
+    is_ltb_avail,
+    ltb_date,
     0 AS ltb_qty,
     CAST(NULL AS STRING) AS reltd_ob_prs,
     'No' AS duplicate_pr_flag,
     'No' AS is_obprt_processed,
-    a.lrc_suppliers_date_to_zero_inventory AS supplier_date_to_zero
-FROM {tbl_iplm_prp} a
+    supplier_date_to_zero
+FROM (
+    SELECT
+        name        AS ob_prno,
+        part_name   AS ob_prtno,
+        mstae       AS part_status,
+        state       AS obpr_state,
+        is_the_last_time_buy_available AS is_ltb_avail,
+        ob_last_buy_date               AS ltb_date,
+        lrc_suppliers_date_to_zero_inventory AS supplier_date_to_zero
+    FROM {tbl_iplm_prp}
+) base
 JOIN obprlst o
-  ON a.name = o.ob_prno
-LEFT JOIN {tbl_omat_obprt_src} b
-  ON a.name = b.obprno
- AND a.part_name = b.obprtno
-WHERE a.part_name <> 'NA'
-  AND UPPER(a.state) <> 'CLOSED'
+  ON base.ob_prno = o.ob_prno
+LEFT JOIN {tbl_omat_obprt_src}
+  ON base.ob_prno  = obprno
+ AND base.ob_prtno = obprtno
+WHERE base.ob_prtno <> 'NA'
+  AND UPPER(base.obpr_state) <> 'CLOSED'
   AND (
-        UPPER(a.state) IN ('CONFIRMED','IN REVIEW','IN WORK')
-        OR UPPER(a.disposition) IN ('CONFIRMED','DEFER')
+        UPPER(base.obpr_state) IN ('CONFIRMED','IN REVIEW','IN WORK')
+        OR UPPER(disposition) IN ('CONFIRMED','DEFER')
       )
-  AND UPPER(a.reason) = 'OBSOLETE COMPONENT'
-  AND CONCAT(b.obprno, b.obprtno) IS NULL
+  AND UPPER(reason) = 'OBSOLETE COMPONENT'
+  AND obprno IS NULL
 """.format(
     tbl_iplm_prp=tbl_iplm_prp,
     tbl_omat_obprt_src=tbl_omat_obprt_src
 ))
 
-
-
-
-
-
-
-
-spark.sql("""
-CREATE OR REPLACE TEMP VIEW related_prs AS
-SELECT
-    d.ob_prno,
-    d.ob_prtno,
-    CASE
-        WHEN COUNT(o.obprtno) = 0 THEN
-            concat_ws(',', collect_set(p.name))
-        ELSE
-            MAX(o.reltd_ob_pr)
-    END AS reltd_ob_prs
-FROM obprdtls d
-LEFT JOIN {tbl_omat_obprt_src} o
-       ON d.ob_prtno = o.obprtno
-      AND UPPER(o.obpr_state) NOT IN ('CLOSED','CANCELLED')
-LEFT JOIN {tbl_iplm_prp} p
-       ON p.part_name = d.ob_prtno
-      AND p.name <> d.ob_prno
-      AND UPPER(p.state) <> 'CLOSED'
-      AND (
-            UPPER(p.state) IN ('CONFIRMED','IN REVIEW','IN WORK')
-            OR UPPER(p.disposition) IN ('CONFIRMED','DEFER')
-          )
-      AND UPPER(p.reason) = 'OBSOLETE COMPONENT'
-GROUP BY d.ob_prno, d.ob_prtno
-""".format(
-    tbl_omat_obprt_src=tbl_omat_obprt_src,
-    tbl_iplm_prp=tbl_iplm_prp
-))
-
-
-
-
-
-
-
-spark.sql("""
-INSERT INTO {tbl_omat_obprt_tgt}
-SELECT
-    d.ob_prno  AS obprno,
-    d.ob_prtno AS obprtno,
-    d.part_status,
-    d.obpr_state,
-    d.is_ltb_avail,
-    d.ltb_date,
-    d.ltb_qty,
-    r.reltd_ob_prs AS reltd_ob_pr,
-    CASE WHEN r.reltd_ob_prs IS NOT NULL THEN 'Yes' ELSE 'No' END AS duplicate_pr_flag,
-    '' AS business_unit,
-    '' AS pg_pm,
-    '' AS enditem,
-    d.is_obprt_processed,
-    current_timestamp() AS created_on,
-    current_timestamp() AS updated_on,
-    d.supplier_date_to_zero,
-    'A' AS is_weekly_processed
-FROM obprdtls d
-LEFT JOIN related_prs r
-  ON d.ob_prno = r.ob_prno
- AND d.ob_prtno = r.ob_prtno
-""".format(
-    tbl_omat_obprt_tgt=tbl_omat_obprt_tgt
-))
-
-
-
-
-
-
-spark.sql("""
-MERGE INTO {tbl_omat_obprt_tgt} t
-USING (
-    SELECT
-        a.part_name,
-        a.is_the_last_time_buy_available AS is_ltb_avail,
-        a.ob_last_buy_date AS ltb_date,
-        a.lrc_suppliers_date_to_zero_inventory AS supplier_date_to_zero
-    FROM {tbl_iplm_prp} a
-    INNER JOIN (
-        SELECT
-            obprtno,
-            MAX(submitted_date) AS submitted_date
-        FROM {tbl_omat_obprt_tgt}
-        WHERE reltd_ob_pr IS NOT NULL
-          AND LENGTH(reltd_ob_pr) > 0
-        GROUP BY obprtno
-    ) b
-      ON a.part_name = b.obprtno
-     AND a.submitted_date = b.submitted_date
-) s
-ON t.obprtno = s.part_name
-WHEN MATCHED THEN UPDATE SET
-    t.is_ltb_avail = s.is_ltb_avail,
-    t.ltb_date = s.ltb_date,
-    t.supplier_date_to_zero = s.supplier_date_to_zero
-""".format(
-    tbl_omat_obprt_tgt=tbl_omat_obprt_tgt,
-    tbl_iplm_prp=tbl_iplm_prp
-))
-
-
-
-
-
-
-
-spark.sql("""
-INSERT INTO {tbl_omat_log_tgt}
-SELECT
-    concat('SP_OMAT_INSERT_NEWOBPR_WklyRefresh - ', ob_prno),
-    (SELECT COUNT(*) FROM obprlst),
-    COUNT(DISTINCT ob_prtno),
-    0,
-    current_timestamp()
-FROM obprdtls
-GROUP BY ob_prno
-""".format(
-    tbl_omat_log_tgt=tbl_omat_log_tgt
-))
 
 
