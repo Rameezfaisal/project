@@ -1,36 +1,52 @@
 from pyspark.sql import functions as F
 
-# Step 1: Join and PROJECT clean columns (no aggregation yet)
+# ------------------------------------------------------------------
+# Step 0: Re-materialize a CLEAN obprdtls (this is the key fix)
+# ------------------------------------------------------------------
+clean_obprdtls = (
+    obprdtls_df
+    .select(
+        F.col("ob_prno").alias("ob_prno"),
+        F.col("ob_prtno").alias("ob_prtno")
+    )
+    .distinct()
+)
+
+# ------------------------------------------------------------------
+# Step 1: Join + project only required columns
+# ------------------------------------------------------------------
 joined_df = (
-    obprdtls_df.alias("d")
+    clean_obprdtls
     .join(
-        df_omat_src.alias("o"),
-        (F.col("d.ob_prtno") == F.col("o.obprtno")) &
-        (~F.upper(F.col("o.obpr_state")).isin("CLOSED", "CANCELLED")),
+        df_omat_src,
+        (clean_obprdtls.ob_prtno == df_omat_src.obprtno) &
+        (~F.upper(df_omat_src.obpr_state).isin("CLOSED", "CANCELLED")),
         "left"
     )
     .join(
-        df_iplm.alias("p"),
-        (F.col("p.part_name") == F.col("d.ob_prtno")) &
-        (F.col("p.name") != F.col("d.ob_prno")) &
-        (F.upper(F.col("p.state")) != "CLOSED") &
+        df_iplm,
+        (df_iplm.part_name == clean_obprdtls.ob_prtno) &
+        (df_iplm.name != clean_obprdtls.ob_prno) &
+        (F.upper(df_iplm.state) != "CLOSED") &
         (
-            (F.upper(F.col("p.state")).isin("CONFIRMED","IN REVIEW","IN WORK")) |
-            (F.upper(F.col("p.disposition")).isin("CONFIRMED","DEFER"))
+            (F.upper(df_iplm.state).isin("CONFIRMED","IN REVIEW","IN WORK")) |
+            (F.upper(df_iplm.disposition).isin("CONFIRMED","DEFER"))
         ) &
-        (F.upper(F.col("p.reason")) == "OBSOLETE COMPONENT"),
+        (F.upper(df_iplm.reason) == "OBSOLETE COMPONENT"),
         "left"
     )
     .select(
-        F.col("d.ob_prno").alias("ob_prno"),
-        F.col("d.ob_prtno").alias("ob_prtno"),
-        F.col("o.obprtno").alias("omat_obprtno"),
-        F.col("o.reltd_ob_pr").alias("omat_reltd_ob_pr"),
-        F.col("p.name").alias("iplm_prno")
+        clean_obprdtls.ob_prno.alias("ob_prno"),
+        clean_obprdtls.ob_prtno.alias("ob_prtno"),
+        df_omat_src.obprtno.alias("omat_obprtno"),
+        df_omat_src.reltd_ob_pr.alias("omat_reltd_ob_pr"),
+        df_iplm.name.alias("iplm_prno")
     )
 )
 
-# Step 2: Aggregate (now columns are unambiguous)
+# ------------------------------------------------------------------
+# Step 2: Aggregate (no ambiguity possible now)
+# ------------------------------------------------------------------
 related_prs_df = (
     joined_df
     .groupBy("ob_prno", "ob_prtno")
