@@ -55,4 +55,12 @@ related_prs_df = (
     .groupBy("ob_prno", "ob_prtno")
     .agg(
         F.when(
-            F.count("o.obprtno") ==
+            F.count("o.obprtno") == 0,
+            F.concat_ws(",", F.collect_set("p.name"))
+        )
+        .otherwise(F.max("o.reltd_ob_pr"))
+        .alias("reltd_ob_prs")
+    )
+)
+
+related_prs_df.createOrReplaceTempView("related_prs")
