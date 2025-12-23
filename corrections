@@ -1,32 +1,46 @@
+spark.sql(f"CREATE OR REPLACE TEMP VIEW iplm_prp AS SELECT * FROM {tbl_iplm_prp}")
+spark.sql(f"CREATE OR REPLACE TEMP VIEW omat_obprt_src AS SELECT * FROM {tbl_omat_obprt_src}")
+
+
+
 spark.sql("""
-CREATE OR REPLACE TEMP VIEW obprlst AS
+CREATE OR REPLACE TEMP VIEW obprdtls AS
 SELECT
-    DENSE_RANK() OVER (ORDER BY name) AS id,
-    name AS ob_prno
+    ROW_NUMBER() OVER (PARTITION BY ob_prno ORDER BY ob_prtno) AS id,
+    ob_prno,
+    ob_prtno,
+    part_status,
+    obpr_state,
+    is_ltb_avail,
+    ltb_date,
+    0 AS ltb_qty,
+    CAST(NULL AS STRING) AS reltd_ob_prs,
+    'No' AS duplicate_pr_flag,
+    'No' AS is_obprt_processed,
+    supplier_date_to_zero
 FROM (
-    SELECT DISTINCT
-           name,
-           part_name,
-           state,
-           disposition,
-           reason
-    FROM {tbl_iplm_prp}
+    SELECT
+        name        AS ob_prno,
+        part_name   AS ob_prtno,
+        mstae       AS part_status,
+        state       AS obpr_state,
+        disposition,
+        is_the_last_time_buy_available AS is_ltb_avail,
+        ob_last_buy_date               AS ltb_date,
+        lrc_suppliers_date_to_zero_inventory AS supplier_date_to_zero
+    FROM iplm_prp
 ) base
-LEFT JOIN {tbl_omat_obprt_src}
-  ON base.name = obprtno
- AND base.part_name = obprtno
-WHERE part_name <> 'NA'
-  AND UPPER(state) <> 'CLOSED'
+JOIN obprlst o
+  ON base.ob_prno = o.ob_prno
+LEFT JOIN omat_obprt_src
+  ON base.ob_prno  = obprno
+ AND base.ob_prtno = obprtno
+WHERE base.ob_prtno <> 'NA'
+  AND UPPER(base.obpr_state) <> 'CLOSED'
   AND (
-        UPPER(state) IN ('CONFIRMED','IN REVIEW','IN WORK')
+        UPPER(base.obpr_state) IN ('CONFIRMED','IN REVIEW','IN WORK')
         OR UPPER(disposition) IN ('CONFIRMED','DEFER')
       )
   AND UPPER(reason) = 'OBSOLETE COMPONENT'
-  AND obprtno IS NULL
-ORDER BY name
-LIMIT {weekly_limit}
-""".format(
-    tbl_iplm_prp=tbl_iplm_prp,
-    tbl_omat_obprt_src=tbl_omat_obprt_src,
-    weekly_limit=weekly_limit
-))
+  AND obprno IS NULL
+""")
