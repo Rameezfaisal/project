@@ -1,0 +1,24 @@
+spark.sql("""
+CREATE OR REPLACE TEMP VIEW obprlst AS
+SELECT DISTINCT
+       DENSE_RANK() OVER (ORDER BY NAME) AS id,
+       NAME AS ob_prno
+FROM {tbl_iplm_prp}
+LEFT JOIN {tbl_omat_obprt_src}
+  ON NAME = OBPRNO
+ AND PART_NAME = OBPRTNO
+WHERE PART_NAME <> 'NA'
+  AND UPPER(STATE) <> 'CLOSED'
+  AND (
+        UPPER(STATE) IN ('CONFIRMED','IN REVIEW','IN WORK')
+        OR UPPER(DISPOSITION) IN ('CONFIRMED','DEFER')
+      )
+  AND UPPER(REASON) = 'OBSOLETE COMPONENT'
+  AND OBPRNO IS NULL
+ORDER BY NAME
+LIMIT {weekly_limit}
+""".format(
+    tbl_iplm_prp=tbl_iplm_prp,
+    tbl_omat_obprt_src=tbl_omat_obprt_src,
+    weekly_limit=weekly_limit
+))
