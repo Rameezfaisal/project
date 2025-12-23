@@ -6,14 +6,12 @@ p = df_iplm.alias("p")
 
 related_prs_df = (
     d
-    # check if part already exists in OMAT (not closed / cancelled)
     .join(
         o,
         (F.col("d.ob_prtno") == F.col("o.obprtno")) &
         (~F.upper(F.col("o.obpr_state")).isin("CLOSED", "CANCELLED")),
         "left"
     )
-    # fetch related PRs from IPLM when not present in OMAT
     .join(
         p,
         (F.col("p.part_name") == F.col("d.ob_prtno")) &
@@ -26,13 +24,16 @@ related_prs_df = (
         (F.upper(F.col("p.reason")) == "OBSOLETE COMPONENT"),
         "left"
     )
-    .groupBy("d.ob_prno", "d.ob_prtno")
+    .groupBy(
+        F.col("d.ob_prno"),
+        F.col("d.ob_prtno")
+    )
     .agg(
         F.when(
-            F.count("o.obprtno") == 0,
-            F.concat_ws(",", F.collect_set("p.name"))
+            F.count(F.col("o.obprtno")) == 0,
+            F.concat_ws(",", F.collect_set(F.col("p.name")))
         )
-        .otherwise(F.max("o.reltd_ob_pr"))
+        .otherwise(F.max(F.col("o.reltd_ob_pr")))
         .alias("reltd_ob_prs")
     )
 )
