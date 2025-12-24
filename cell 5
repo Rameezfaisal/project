@@ -1,49 +1,17 @@
-
-Cell 11 computed ENDITEM (the EI-* NHAs) for the given PR and wrote it into
-OMAT_OBPRTNO_DTLS.
-It exactly matches this SAP logic:
-Copy code
-Sql
-EIDTLS = STRING_AGG(NHA WHERE NHA LIKE 'EI-%')
-UPDATE OMAT_OBPRTNO_DTLS SET ENDITEM = EIDTLS
-So now OMAT knows which End Items (EI-xxx) this component belongs to.
-
-
-
-
-
-
-
-
-
-
-# ===============================
-# 12A – Mark PR as processed
-# ===============================
-spark.sql(f"""
-UPDATE {tgt_obprt_dtls}
-SET is_obprt_processed = 'Yes'
-WHERE obprno = '{i_prno}'
-""")
-
-# ===============================
-# 12B – Insert into OMAT_LOG_DTLS
-# ===============================
-spark.sql(f"""
-INSERT INTO {tgt_log_dtls}
-(
-    executed_on,
-    obprtno_cnt,
-    obprtno_nha_cnt,
-    obpr_cnt,
-    program_name
-)
-SELECT
-    current_timestamp()                              AS executed_on,
-    COUNT(DISTINCT cmpprtno)                          AS obprtno_cnt,
-    COUNT(DISTINCT nha)                               AS obprtno_nha_cnt,
-    1                                                 AS obpr_cnt,
-    concat('SP_OMAT_INSERT_EXPLODE_NHA - ', '{i_prno}') AS program_name
-FROM {tgt_nha_dtls}
-WHERE cmpprtno = '{i_prno}'
-""")
+Column
+What it measures
+EXECUTED_ON
+When the explosion ran
+For audit, troubleshooting, SLA
+PROGRAM_NAME
+Which PR was processed
+Identifies the run (SP_OMAT_INSERT_EXPLODE_NHA - PR123)
+OBPR_CNT
+How many PRs were processed
+Usually 1 (one PR per run)
+OBPRTNO_CNT
+How many component parts were in the PR
+Shows the size of the obsolescence event
+OBPRTNO_NHA_CNT
+How many NHAs were found
+Shows the blast radius of the obsolescence
