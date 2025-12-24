@@ -4,10 +4,23 @@
 
 df_posupp = (
     df_nha.alias("a")
+
     .join(df_dmd.alias("d"), F.col("a.nha_cd") == F.col("d.nha"))
+
     .join(df_po_hist.alias("p"), F.col("p.matnr") == F.col("a.nha_cd"))
-    .join(df_ekpo.alias("e"), ["ebeln","ebelp"])
-    .join(df_lfa1.alias("l"), F.lpad(F.col("p.lifnr"),10,"0") == F.lpad(F.col("l.lifnr"),10,"0"), "left")
+
+    # Explicit join to EKPO
+    .join(
+        df_ekpo.alias("e"),
+        (F.col("p.ebeln") == F.col("e.ebeln")) &
+        (F.col("p.ebelp") == F.col("e.ebelp"))
+    )
+
+    .join(
+        df_lfa1.alias("l"),
+        F.lpad(F.col("p.lifnr"),10,"0") == F.lpad(F.col("l.lifnr"),10,"0"),
+        "left"
+    )
 
     .filter(
         (F.col("d.open_po_qty") > 0) &
@@ -19,12 +32,12 @@ df_posupp = (
         (F.col("p.aussl") != "U3") &
         (F.col("p.bsart") != "UB") &
         (F.col("p.elikz") != "X") &
-        (~F.col("e.pstyp").isin(7,9))   # FIXED
+        (~F.col("e.pstyp").isin(7,9))
     )
 
     .select(
         F.col("a.nha_cd").alias("nha"),
-        F.lpad("p.lifnr",10,"0").alias("suppcd"),
+        F.lpad(F.col("p.lifnr"),10,"0").alias("suppcd"),
         F.col("l.name1").alias("suppname")
     )
     .distinct()
