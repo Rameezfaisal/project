@@ -1,15 +1,1 @@
-4
-Build NHALIST (SAP temp table)
-Reads omat_obpn_buy_nha_dtls and creates the working list of unprocessed NHA + component part numbers (equivalent to SAP NHALIST).
-5
-Load & filter INFOREC suppliers by plant
-Reads INFOREC and filters only valid, MRP-preferred suppliers per plant (1900, 2000, 3120, 1050, 1060, 1090 + fallback plants).
-6
-Resolve preferred suppliers per NHA (broadcast joins)
-Joins NHALIST to all INFOREC plant datasets using broadcast to determine the best supplier per plant with SAP fallback logic (1000,1010,1020).
-7
-Insert new NHA supplier rows into Delta
-Writes the resolved supplier-per-plant data into zt_omat_buynha_suppliers_plants using skew-safe Delta insert (works if table is empty or not).
-8
-Back-fill missing suppliers from EORD
-For NHAs that still have no suppliers, pulls MRP preferred suppliers from EORD and updates the Delta table using MERGE with SAP fallback logic.
+PySparkTypeError: [NOT_COLUMN_OR_STR] Argument `col` should be a Column or str, got int.
