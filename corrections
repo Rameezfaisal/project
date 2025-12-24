@@ -1,32 +1,15 @@
-from pyspark.sql.functions import broadcast
-
-df_sup = (
-    df_nha.alias("a")
-
-    .join(broadcast(i1900).alias("b"), "nha_cd", "left")
-    .join(broadcast(i2000).alias("c"), "nha_cd", "left")
-    .join(broadcast(i3120).alias("d"), "nha_cd", "left")
-    .join(broadcast(i1050).alias("e"), "nha_cd", "left")
-    .join(broadcast(i1060).alias("f"), "nha_cd", "left")
-    .join(broadcast(i1090).alias("g"), "nha_cd", "left")
-    .join(broadcast(i1000).alias("h"), "nha_cd", "left")
-    .join(broadcast(i1010).alias("i"), "nha_cd", "left")
-    .join(broadcast(i1020).alias("j"), "nha_cd", "left")
-
-    .select(
-        "nha_cd",
-
-        F.coalesce("b.suppcd_1900","j.suppcd_1020").alias("suppcd_1900"),
-        F.coalesce("b.suppname_1900","j.suppname_1020").alias("suppname_1900"),
-
-        F.coalesce("c.suppcd_2000","h.suppcd_1000").alias("suppcd_2000"),
-        F.coalesce("c.suppname_2000","h.suppname_1000").alias("suppname_2000"),
-
-        F.coalesce("d.suppcd_3120","i.suppcd_1010").alias("suppcd_3120"),
-        F.coalesce("d.suppname_3120","i.suppname_1010").alias("suppname_3120"),
-
-        "e.suppcd_1050","e.suppname_1050",
-        "f.suppcd_1060","f.suppname_1060",
-        "g.suppcd_1090","g.suppname_1090"
-    )
-)
+4
+Build NHALIST (SAP temp table)
+Reads omat_obpn_buy_nha_dtls and creates the working list of unprocessed NHA + component part numbers (equivalent to SAP NHALIST).
+5
+Load & filter INFOREC suppliers by plant
+Reads INFOREC and filters only valid, MRP-preferred suppliers per plant (1900, 2000, 3120, 1050, 1060, 1090 + fallback plants).
+6
+Resolve preferred suppliers per NHA (broadcast joins)
+Joins NHALIST to all INFOREC plant datasets using broadcast to determine the best supplier per plant with SAP fallback logic (1000,1010,1020).
+7
+Insert new NHA supplier rows into Delta
+Writes the resolved supplier-per-plant data into zt_omat_buynha_suppliers_plants using skew-safe Delta insert (works if table is empty or not).
+8
+Back-fill missing suppliers from EORD
+For NHAs that still have no suppliers, pulls MRP preferred suppliers from EORD and updates the Delta table using MERGE with SAP fallback logic.
