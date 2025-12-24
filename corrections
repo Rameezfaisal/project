@@ -1,26 +1,36 @@
-from pyspark.sql.functions import rand, floor
+# ============================
+# Cell 7 – Insert suppliers (skew-safe, empty-table safe)
+# ============================
 
+# --- 1) Break NHA skew using salting before the write ---
 df_sup_skew_safe = (
     df_sup
-    .withColumn("salt_cd", floor(rand() * 20))   # 20-way split
-    .repartition(200, "salt_cd")                 # Fabric-optimized shuffle
+    .withColumn("salt_cd", F.floor(F.rand() * 20))   # 20-way shuffle split
+    .repartition(200, "salt_cd")                    # distribute across Fabric executors
     .drop("salt_cd")
 )
 
-
-
+# --- 2) Align columns exactly to Delta table schema ---
 df_insert = (
     df_sup_skew_safe
     .select(
         F.col("nha_cd").alias("nha"),
-        "suppcd_1900","suppname_1900",
-        "suppcd_2000","suppname_2000",
-        "suppcd_3120","suppname_3120",
-        "suppcd_1050","suppname_1050",
-        "suppcd_1060","suppname_1060",
-        "suppcd_1090","suppname_1090"
+
+        F.col("suppcd_1900"), F.col("suppname_1900"),
+        F.col("suppcd_2000"), F.col("suppname_2000"),
+        F.col("suppcd_3120"), F.col("suppname_3120"),
+        F.col("suppcd_1050"), F.col("suppname_1050"),
+        F.col("suppcd_1060"), F.col("suppname_1060"),
+        F.col("suppcd_1090"), F.col("suppname_1090")
     )
-    .filter(F.col("nha").isNotNull())
+    .filter(F.col("nha").isNotNull())   # Delta safety
 )
 
-df_insert.write.mode("append").format("delta").saveAsTable(tgt_suppliers)
+# --- 3) Append to Delta table (works when empty or not) ---
+(
+    df_insert
+    .write
+    .mode("append")
+    .format("delta")
+    .saveAsTable(tgt_suppliers)
+)
