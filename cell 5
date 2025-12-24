@@ -1,5 +1,5 @@
 # ============================
-# Cell 7 – Initial insert of suppliers per NHA
+# Cell 7 – Skew-free Delta insert
 # ============================
 
 df_insert = (
@@ -7,20 +7,26 @@ df_insert = (
     .select(
         F.col("nha_cd").alias("nha"),
 
-        F.col("suppcd_1900"), F.col("suppname_1900"),
-        F.col("suppcd_2000"), F.col("suppname_2000"),
-        F.col("suppcd_3120"), F.col("suppname_3120"),
-        F.col("suppcd_1050"), F.col("suppname_1050"),
-        F.col("suppcd_1060"), F.col("suppname_1060"),
-        F.col("suppcd_1090"), F.col("suppname_1090")
+        "suppcd_1900","suppname_1900",
+        "suppcd_2000","suppname_2000",
+        "suppcd_3120","suppname_3120",
+        "suppcd_1050","suppname_1050",
+        "suppcd_1060","suppname_1060",
+        "suppcd_1090","suppname_1090"
     )
-    .filter(F.col("nha").isNotNull())   # Delta safety
+    .filter(F.col("nha").isNotNull())
+)
+
+# --- Critical: range distribute before Delta write ---
+df_insert_balanced = (
+    df_insert
+    .repartitionByRange(300, "nha")   # 300 Fabric shuffle partitions
 )
 
 (
-    df_insert
+    df_insert_balanced
     .write
-    .mode("append")            # works when table is empty or populated
+    .mode("append")
     .format("delta")
     .saveAsTable(tgt_suppliers)
 )
