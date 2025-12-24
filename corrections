@@ -9,7 +9,6 @@ df_posupp = (
 
     .join(df_po_hist.alias("p"), F.col("p.matnr") == F.col("a.nha_cd"))
 
-    # Explicit join to EKPO
     .join(
         df_ekpo.alias("e"),
         (F.col("p.ebeln") == F.col("e.ebeln")) &
@@ -32,7 +31,7 @@ df_posupp = (
         (F.col("p.aussl") != "U3") &
         (F.col("p.bsart") != "UB") &
         (F.col("p.elikz") != "X") &
-        (~F.col("e.pstyp").isin(7,9))
+        (~F.col("e.pstyp").isin([7, 9]))    # 🔥 FIX
     )
 
     .select(
