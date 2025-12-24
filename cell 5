@@ -1,1 +1,106 @@
-AnalysisException: [DELTA_MERGE_UNRESOLVED_EXPRESSION] Cannot resolve s.`1090.name1` in UPDATE clause given columns t.nha, t.omat_selected_plant, t.omat_selected_supplier, t.omat_selected_suppliercd, t.suppcd_1050, t.suppcd_1060, t.suppcd_1090, t.suppcd_1900, t.suppcd_2000, t.suppcd_3120, t.suppcd_po1, t.suppcd_po2, t.suppcd_pr, t.suppname_1050, t.suppname_1060, t.suppname_1090, t.suppname_1900, t.suppname_2000, t.suppname_3120, t.suppname_po1, t.suppname_po2, t.suppname_pr, s.nha, s.suppcd_1900, s.suppname_1900, s.suppcd_2000, s.suppname_2000, s.suppcd_3120, s.suppname_3120, s.suppcd, s.name1, s.suppcd, s.name1, s.suppcd, s.name1; line 1 pos 0
+from delta.tables import DeltaTable
+
+# ------------------------------------------------
+# 1) NHAs that need EORD backfill
+# ------------------------------------------------
+df_missing = (
+    spark.read.table(tgt_suppliers)
+    .filter(
+        (F.coalesce(F.length("suppcd_1900"),F.lit(0)) == 0) &
+        (F.coalesce(F.length("suppcd_2000"),F.lit(0)) == 0) &
+        (F.coalesce(F.length("suppcd_3120"),F.lit(0)) == 0) &
+        (F.coalesce(F.length("suppcd_1050"),F.lit(0)) == 0) &
+        (F.coalesce(F.length("suppcd_1060"),F.lit(0)) == 0) &
+        (F.coalesce(F.length("suppcd_1090"),F.lit(0)) == 0)
+    )
+    .select("nha")
+)
+
+# ------------------------------------------------
+# 2) Preferred EORD suppliers with names
+# ------------------------------------------------
+df_eord_pref = (
+    df_eord
+    .filter((F.col("autet")=="1") & (F.col("flifn")=="X"))
+    .select(
+        F.trim("matnr").alias("nha"),
+        F.col("werks").alias("plant"),
+        F.lpad("lifnr",10,"0").alias("suppcd")
+    )
+    .join(
+        df_lfa1.select(F.lpad("lifnr",10,"0").alias("suppcd"), F.col("name1").alias("suppname")),
+        "suppcd",
+        "left"
+    )
+)
+
+# ------------------------------------------------
+# 3) Pivot plants into columns (as flat strings)
+# ------------------------------------------------
+df_eord_pivot = (
+    df_eord_pref
+    .groupBy("nha")
+    .pivot("plant", ["1900","2000","3120","1050","1060","1090","1000","1010","1020"])
+    .agg(
+        F.first("suppcd").alias("suppcd"),
+        F.first("suppname").alias("suppname")
+    )
+)
+
+# ------------------------------------------------
+# 4) Flatten pivot + SAP fallback logic
+# ------------------------------------------------
+df_eord_flat = (
+    df_eord_pivot
+    .select(
+        "nha",
+
+        F.coalesce(F.col("1900_suppcd"), F.col("1020_suppcd")).alias("suppcd_1900"),
+        F.coalesce(F.col("1900_suppname"), F.col("1020_suppname")).alias("suppname_1900"),
+
+        F.coalesce(F.col("2000_suppcd"), F.col("1000_suppcd")).alias("suppcd_2000"),
+        F.coalesce(F.col("2000_suppname"), F.col("1000_suppname")).alias("suppname_2000"),
+
+        F.coalesce(F.col("3120_suppcd"), F.col("1010_suppcd")).alias("suppcd_3120"),
+        F.coalesce(F.col("3120_suppname"), F.col("1010_suppname")).alias("suppname_3120"),
+
+        F.col("1050_suppcd").alias("suppcd_1050"),
+        F.col("1050_suppname").alias("suppname_1050"),
+
+        F.col("1060_suppcd").alias("suppcd_1060"),
+        F.col("1060_suppname").alias("suppname_1060"),
+
+        F.col("1090_suppcd").alias("suppcd_1090"),
+        F.col("1090_suppname").alias("suppname_1090")
+    )
+)
+
+# ------------------------------------------------
+# 5) Only update NHAs that were missing
+# ------------------------------------------------
+df_update = df_missing.join(df_eord_flat, "nha")
+
+# ------------------------------------------------
+# 6) Delta MERGE (SAP UPDATE equivalent)
+# ------------------------------------------------
+delta_tbl = DeltaTable.forName(spark, tgt_suppliers)
+
+(
+    delta_tbl.alias("t")
+    .merge(df_update.alias("s"), "t.nha = s.nha")
+    .whenMatchedUpdate(set={
+        "suppcd_1900":"s.suppcd_1900",
+        "suppname_1900":"s.suppname_1900",
+        "suppcd_2000":"s.suppcd_2000",
+        "suppname_2000":"s.suppname_2000",
+        "suppcd_3120":"s.suppcd_3120",
+        "suppname_3120":"s.suppname_3120",
+        "suppcd_1050":"s.suppcd_1050",
+        "suppname_1050":"s.suppname_1050",
+        "suppcd_1060":"s.suppcd_1060",
+        "suppname_1060":"s.suppname_1060",
+        "suppcd_1090":"s.suppcd_1090",
+        "suppname_1090":"s.suppname_1090"
+    })
+    .execute()
+)
