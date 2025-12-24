@@ -1,48 +1,73 @@
-# Assign row numbers per level (SAP ROWN0)
-w = Window.partitionBy("level").orderBy("nha", "childpn")
-df_nhalist = df_nhalist.withColumn("rowno", F.row_number().over(w))
+computed cmpqpa (Component Quantity Per Assembly) for every NHA.
+In SAP:
+CMPQPA = how many units of the component exist inside each higher-level NHA.
+Logic:
+Level 1 → cmpqpa = bomqpa
+Level 2+ →
+Copy code
 
-# Level 1 CMPQPA = BOMQPA
-df_nhalist = df_nhalist.withColumn(
-    "cmpqpa",
-    F.when(F.col("level") == 1, F.col("bomqpa")).otherwise(F.col("cmpqpa"))
+cmpqpa = bomqpa × sum(parent cmpqpa)
+This propagates the quantity up the BOM hierarchy, exactly like SAP’s nested WHILE loops.
+Now every NHA row in nhalist has the correct rolled-up quantity.
+
+
+
+
+
+
+
+
+# Prepare final NHA rows
+df_final_nha = (
+    df_nhalist
+    .filter(~F.col("nhamstae").isin("ob","os","op"))
+    .select(
+        F.col("cmpprtno").alias("cmpprtno"),
+        F.col("nha").alias("nha"),
+        F.col("level").alias("level"),
+        F.col("childpn").alias("childpn"),
+        F.col("bomitem").alias("bomitem"),
+        F.col("bomqpa").alias("bomqpa"),
+        F.col("cmpqpa").alias("cmpqpa"),
+        F.col("nhamatkl").alias("matkl"),
+        F.col("nhamstae").alias("mstae"),
+        F.col("exploded").alias("exploded"),
+        F.current_date().alias("last_modified_on"),
+        F.lit("A").alias("nha_status_inactive")
+    )
 )
 
-# Get max level safely
-row = df_nhalist.select(F.max("level").alias("maxlvl")).collect()[0]
-max_level = row["maxlvl"]
+df_final_nha.createOrReplaceTempView("df_final_nha")
 
-# Only run propagation if levels exist
-if max_level is not None and max_level >= 2:
-
-    for lvl in range(2, max_level + 1):
-
-        parent = (
-            df_nhalist
-            .filter(F.col("level") == lvl - 1)
-            .select(
-                F.col("nha").alias("parent_nha"),
-                F.col("cmpqpa").alias("parent_cmpqpa")
-            )
-        )
-
-        df_nhalist = (
-            df_nhalist.alias("x")
-            .join(
-                parent.alias("y"),
-                (F.col("x.childpn") == F.col("y.parent_nha")) &
-                (F.col("x.level") == lvl),
-                "left"
-            )
-            .withColumn(
-                "cmpqpa",
-                F.when(
-                    F.col("x.level") == lvl,
-                    F.col("x.bomqpa") * F.coalesce(F.col("y.parent_cmpqpa"), F.lit(0))
-                ).otherwise(F.col("x.cmpqpa"))
-            )
-            .select("x.*")
-        )
-
-# Refresh temp view
-df_nhalist.createOrReplaceTempView("nhalist")
+# Explicit-column INSERT (Delta-safe)
+spark.sql(f"""
+INSERT INTO {tgt_nha_dtls}
+(
+    cmpprtno,
+    nha,
+    level,
+    childpn,
+    bomitem,
+    bomqpa,
+    cmpqpa,
+    matkl,
+    mstae,
+    exploded,
+    last_modified_on,
+    nha_status_inactive
+)
+SELECT
+    cmpprtno,
+    nha,
+    level,
+    childpn,
+    bomitem,
+    bomqpa,
+    cmpqpa,
+    matkl,
+    mstae,
+    exploded,
+    last_modified_on,
+    nha_status_inactive
+FROM df_final_nha
+""")
