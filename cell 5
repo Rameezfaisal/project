@@ -1,31 +1,71 @@
-It finds all component parts for the PR that are not yet obsolete —
-these are the parts that must be exploded through the BOM to find their NHAs.
-We stored them in df_active_ob and registered it as df_active_ob.
+For every active OB part, insert the part itself as the first NHA (Level = 1), and mark it as not exploded.
 
 
 
 
+current_level = 1
 
-# Build Level-1 NHALIST rows (one per active OB part)
-df_nhalist = (
-    df_active_ob.alias("o")
-    .join(df_mara.alias("m"), F.col("o.obprtno") == F.col("m.matnr"), "inner")
-    .join(df_nha_v.alias("v"), F.col("o.obprtno") == F.col("v.cmpprtno"), "left")
-    .filter(F.col("v.cmpprtno").isNull())   # same as SAP: B.CMPPRTNO IS NULL
-    .select(
-        F.lit(0).alias("rowno"),
-        F.col("o.obprtno").alias("cmpprtno"),
-        F.col("o.obprtno").alias("nha"),
-        F.lit(1).alias("level"),
-        F.col("o.obprtno").alias("childpn"),
-        F.lit(None).cast("string").alias("bomitem"),
-        F.lit(1).alias("bomqpa"),
-        F.lit(0).alias("cmpqpa"),
-        F.col("m.matkl").alias("nhamatkl"),
-        F.col("m.mstae").alias("nhamstae"),
-        F.lit("N").alias("exploded")
+while current_level <= explode_level:
+
+    # Parts in current level that must be exploded
+    df_to_explode = (
+        df_nhalist
+        .filter(
+            (F.col("level") == current_level) &
+            (F.col("exploded") == "N") &
+            (~F.col("nhamstae").isin("ob","os","op"))
+        )
+        .select(
+            F.col("cmpprtno").alias("cmpprtno"),
+            F.col("nha").alias("parent_nha")
+        )
+        .distinct()
     )
-)
 
-# Register as temp view (SAP #NHALIST replacement)
+    if df_to_explode.count() == 0:
+        break
+
+    # Get parent NHAs from BOM
+    df_children = (
+        df_to_explode.alias("p")
+        .join(df_bom.alias("b"), F.col("b.bomcpno") == F.col("p.parent_nha"), "inner")
+        .join(df_mara.alias("m"), F.col("b.prtno") == F.col("m.matnr"), "inner")
+        .filter(
+            (F.col("b.postp") == "L") &
+            (F.col("b.bomedat") <= F.current_date()) &
+            (F.col("b.bomidat") > F.current_date())
+        )
+        .select(
+            F.lit(0).alias("rowno"),
+            F.col("p.cmpprtno").alias("cmpprtno"),
+            F.col("b.prtno").alias("nha"),
+            F.lit(current_level + 1).alias("level"),
+            F.col("b.bomcpno").alias("childpn"),
+            F.col("b.bomitem").alias("bomitem"),
+            F.col("b.bomqpa").alias("bomqpa"),
+            F.lit(0).alias("cmpqpa"),
+            F.col("m.matkl").alias("nhamatkl"),
+            F.col("m.mstae").alias("nhamstae"),
+            F.lit("N").alias("exploded")
+        )
+    )
+
+    # Append children
+    df_nhalist = df_nhalist.unionByName(df_children)
+
+    # Mark current level as exploded
+    df_nhalist = (
+        df_nhalist
+        .withColumn(
+            "exploded",
+            F.when(
+                (F.col("level") == current_level) & (F.col("exploded") == "N"),
+                "Y"
+            ).otherwise(F.col("exploded"))
+        )
+    )
+
+    current_level += 1
+
+# Refresh temp view
 df_nhalist.createOrReplaceTempView("nhalist")
