@@ -1,33 +1,80 @@
-from pyspark.sql import functions as F
-from pyspark.sql import Window
+df_nha = (
+    df_nha_src
+    .filter(F.col("isprocessed") == "N")
+    .select(
+        F.col("cmpprtno").alias("cmpprtno_cd"),
+        F.col("nha").alias("nha_cd")
+    )
+    .distinct()
+)
 
-
-
-
-# Source tables
-src_nha          = "lakehouse.cv_omat_obpn_buy_nha_dtls"
-src_inforec     = "lakehouse.cv_zt_inforec_data_sched"
-src_eord        = "lakehouse.cv_eord"
-src_lfa1        = "lakehouse.cv_lfa1"
-src_po_hist     = "lakehouse.cv_zpo_hstry"
-src_ekpo        = "lakehouse.cv_ekpo"
-src_dmd         = "lakehouse.cv_omat_dmd_consumption_dtls"
-src_pr          = "lakehouse.cv_iplm_problem_report_part"
-
-# Targets
-tgt_suppliers   = "lakehouse.zt_omat_buynha_suppliers_plants"
-tgt_nha         = "lakehouse.omat_obpn_buy_nha_dtls"
-tgt_log         = "lakehouse.omat_log_dtls"
+df_nha.createOrReplaceTempView("nha_list")
 
 
 
 
 
-df_nha_src   = spark.read.table(src_nha)
-df_inforec  = spark.read.table(src_inforec)
-df_eord     = spark.read.table(src_eord)
-df_lfa1     = spark.read.table(src_lfa1)
-df_po_hist  = spark.read.table(src_po_hist)
-df_ekpo     = spark.read.table(src_ekpo)
-df_dmd      = spark.read.table(src_dmd)
-df_pr       = spark.read.table(src_pr)
+
+def inforec_df(plant):
+    return (
+        df_inforec
+        .filter(
+            (F.col("mrp") == "1") &
+            (F.col("plant") == plant) &
+            (~F.col("supcat").isin("A05","A08","A15")) &
+            F.col("supcode").isNotNull()
+        )
+        .select(
+            F.col("material").alias("nha_cd"),
+            F.lpad("supcode",10,"0").alias(f"suppcd_{plant}"),
+            F.col("suppliername").alias(f"suppname_{plant}")
+        )
+    )
+
+i1900 = inforec_df("1900")
+i2000 = inforec_df("2000")
+i3120 = inforec_df("3120")
+i1050 = inforec_df("1050")
+i1060 = inforec_df("1060")
+i1090 = inforec_df("1090")
+i1000 = inforec_df("1000")
+i1010 = inforec_df("1010")
+i1020 = inforec_df("1020")
+
+
+
+
+
+
+
+df_sup = (
+    df_nha.alias("a")
+    .join(i1900.alias("b"), "nha_cd", "left")
+    .join(i2000.alias("c"), "nha_cd", "left")
+    .join(i3120.alias("d"), "nha_cd", "left")
+    .join(i1050.alias("e"), "nha_cd", "left")
+    .join(i1060.alias("f"), "nha_cd", "left")
+    .join(i1090.alias("g"), "nha_cd", "left")
+    .join(i1000.alias("h"), "nha_cd", "left")
+    .join(i1010.alias("i"), "nha_cd", "left")
+    .join(i1020.alias("j"), "nha_cd", "left")
+    .select(
+        "nha_cd",
+
+        F.coalesce("b.suppcd_1900","j.suppcd_1020").alias("suppcd_1900"),
+        F.coalesce("b.suppname_1900","j.suppname_1020").alias("suppname_1900"),
+
+        F.coalesce("c.suppcd_2000","h.suppcd_1000").alias("suppcd_2000"),
+        F.coalesce("c.suppname_2000","h.suppname_1000").alias("suppname_2000"),
+
+        F.coalesce("d.suppcd_3120","i.suppcd_1010").alias("suppcd_3120"),
+        F.coalesce("d.suppname_3120","i.suppname_1010").alias("suppname_3120"),
+
+        "e.suppcd_1050","e.suppname_1050",
+        "f.suppcd_1060","f.suppname_1060",
+        "g.suppcd_1090","g.suppname_1090"
+    )
+)
+
+
+
