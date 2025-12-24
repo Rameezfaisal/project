@@ -1,80 +1,80 @@
-df_nha = (
-    df_nha_src
-    .filter(F.col("isprocessed") == "N")
-    .select(
-        F.col("cmpprtno").alias("cmpprtno_cd"),
-        F.col("nha").alias("nha_cd")
-    )
-    .distinct()
+spark.sql(f"""
+INSERT INTO {tgt_suppliers}
+(
+nha,
+suppcd_1900,suppname_1900,
+suppcd_2000,suppname_2000,
+suppcd_3120,suppname_3120,
+suppcd_1050,suppname_1050,
+suppcd_1060,suppname_1060,
+suppcd_1090,suppname_1090
 )
-
-df_nha.createOrReplaceTempView("nha_list")
-
-
-
-
-
-
-def inforec_df(plant):
-    return (
-        df_inforec
-        .filter(
-            (F.col("mrp") == "1") &
-            (F.col("plant") == plant) &
-            (~F.col("supcat").isin("A05","A08","A15")) &
-            F.col("supcode").isNotNull()
-        )
-        .select(
-            F.col("material").alias("nha_cd"),
-            F.lpad("supcode",10,"0").alias(f"suppcd_{plant}"),
-            F.col("suppliername").alias(f"suppname_{plant}")
-        )
-    )
-
-i1900 = inforec_df("1900")
-i2000 = inforec_df("2000")
-i3120 = inforec_df("3120")
-i1050 = inforec_df("1050")
-i1060 = inforec_df("1060")
-i1090 = inforec_df("1090")
-i1000 = inforec_df("1000")
-i1010 = inforec_df("1010")
-i1020 = inforec_df("1020")
+SELECT * FROM df_sup
+""")
 
 
 
 
 
 
-
-df_sup = (
+df_posupp = (
     df_nha.alias("a")
-    .join(i1900.alias("b"), "nha_cd", "left")
-    .join(i2000.alias("c"), "nha_cd", "left")
-    .join(i3120.alias("d"), "nha_cd", "left")
-    .join(i1050.alias("e"), "nha_cd", "left")
-    .join(i1060.alias("f"), "nha_cd", "left")
-    .join(i1090.alias("g"), "nha_cd", "left")
-    .join(i1000.alias("h"), "nha_cd", "left")
-    .join(i1010.alias("i"), "nha_cd", "left")
-    .join(i1020.alias("j"), "nha_cd", "left")
-    .select(
-        "nha_cd",
-
-        F.coalesce("b.suppcd_1900","j.suppcd_1020").alias("suppcd_1900"),
-        F.coalesce("b.suppname_1900","j.suppname_1020").alias("suppname_1900"),
-
-        F.coalesce("c.suppcd_2000","h.suppcd_1000").alias("suppcd_2000"),
-        F.coalesce("c.suppname_2000","h.suppname_1000").alias("suppname_2000"),
-
-        F.coalesce("d.suppcd_3120","i.suppcd_1010").alias("suppcd_3120"),
-        F.coalesce("d.suppname_3120","i.suppname_1010").alias("suppname_3120"),
-
-        "e.suppcd_1050","e.suppname_1050",
-        "f.suppcd_1060","f.suppname_1060",
-        "g.suppcd_1090","g.suppname_1090"
+    .join(df_dmd.alias("d"), F.col("a.nha_cd")==F.col("d.nha"))
+    .join(df_po_hist.alias("p"), F.col("p.matnr")==F.col("a.nha_cd"))
+    .join(df_ekpo.alias("e"), ["ebeln","ebelp"])
+    .filter(F.col("d.open_po_qty") > 0)
+    .groupBy("a.nha_cd")
+    .agg(
+        F.concat_ws(",",F.collect_list("p.lifnr")).alias("posupp_cd"),
+        F.concat_ws(",",F.collect_list("p.name1")).alias("posupp_nm")
     )
 )
+
+
+
+
+
+
+df_final = spark.read.table(tgt_suppliers)
+
+df_final = df_final.withColumn(
+    "omat_selected_plant",
+    F.when(F.length("suppcd_2000")>0,"2000")
+     .when(F.length("suppcd_1900")>0,"1900")
+     .when(F.length("suppcd_3120")>0,"3120")
+     .when(F.length("suppcd_1050")>0,"1050")
+     .when(F.length("suppcd_1060")>0,"1060")
+     .when(F.length("suppcd_1090")>0,"1090")
+)
+
+df_final.write.mode("overwrite").saveAsTable(tgt_suppliers)
+
+
+
+
+
+
+
+
+spark.sql(f"""
+UPDATE {tgt_nha}
+SET isprocessed = 'Y'
+WHERE nha IN (SELECT nha_cd FROM nha_list)
+""")
+
+
+
+
+
+obprt_cnt = df_nha.select("cmpprtno_cd").distinct().count()
+nha_cnt   = df_nha.select("nha_cd").distinct().count()
+
+spark.sql(f"""
+INSERT INTO {tgt_log}
+(program_name, obprtno_cnt, obprtno_nha_cnt, obpr_cnt, executed_on)
+VALUES
+('sp_omat_insert_suppliers_byplant - finished',1,{obprt_cnt},{nha_cnt},current_timestamp())
+""")
 
 
 
