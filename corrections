@@ -1,1 +1,38 @@
-PySparkTypeError: [NOT_COLUMN_OR_STR] Argument `col` should be a Column or str, got int.
+# ============================
+# Cell 9 – Build POSUPP (Open PO suppliers)
+# ============================
+
+df_posupp = (
+    df_nha.alias("a")
+    .join(df_dmd.alias("d"), F.col("a.nha_cd") == F.col("d.nha"))
+    .join(df_po_hist.alias("p"), F.col("p.matnr") == F.col("a.nha_cd"))
+    .join(df_ekpo.alias("e"), ["ebeln","ebelp"])
+    .join(df_lfa1.alias("l"), F.lpad(F.col("p.lifnr"),10,"0") == F.lpad(F.col("l.lifnr"),10,"0"), "left")
+
+    .filter(
+        (F.col("d.open_po_qty") > 0) &
+        (~F.right("p.due_dt",5).isin("04-01","12-31")) &
+        (F.col("p.status") != "INACT") &
+        (F.trim("p.matnr") != "") &
+        (F.trim("p.loekz") == "") &
+        (F.col("p.discrd") != "X") &
+        (F.col("p.aussl") != "U3") &
+        (F.col("p.bsart") != "UB") &
+        (F.col("p.elikz") != "X") &
+        (~F.col("e.pstyp").isin(7,9))   # FIXED
+    )
+
+    .select(
+        F.col("a.nha_cd").alias("nha"),
+        F.lpad("p.lifnr",10,"0").alias("suppcd"),
+        F.col("l.name1").alias("suppname")
+    )
+    .distinct()
+    .groupBy("nha")
+    .agg(
+        F.concat_ws(",", F.collect_list("suppcd")).alias("posupp_cd"),
+        F.concat_ws(",", F.collect_list("suppname")).alias("posupp_name")
+    )
+)
+
+df_posupp.createOrReplaceTempView("posupp")
