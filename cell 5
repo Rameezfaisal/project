@@ -1,40 +1,31 @@
-# OB parts that still need explosion (not obsolete)
-df_active_ob = (
-    df_obprt
-    .filter(
-        (F.col("obprno") == i_prno) &
-        (~F.col("part_status").isin("ob", "os", "op"))
-    )
+It finds all component parts for the PR that are not yet obsolete —
+these are the parts that must be exploded through the BOM to find their NHAs.
+We stored them in df_active_ob and registered it as df_active_ob.
+
+
+
+
+
+# Build Level-1 NHALIST rows (one per active OB part)
+df_nhalist = (
+    df_active_ob.alias("o")
+    .join(df_mara.alias("m"), F.col("o.obprtno") == F.col("m.matnr"), "inner")
+    .join(df_nha_v.alias("v"), F.col("o.obprtno") == F.col("v.cmpprtno"), "left")
+    .filter(F.col("v.cmpprtno").isNull())   # same as SAP: B.CMPPRTNO IS NULL
     .select(
-        F.col("obprtno").alias("obprtno")
+        F.lit(0).alias("rowno"),
+        F.col("o.obprtno").alias("cmpprtno"),
+        F.col("o.obprtno").alias("nha"),
+        F.lit(1).alias("level"),
+        F.col("o.obprtno").alias("childpn"),
+        F.lit(None).cast("string").alias("bomitem"),
+        F.lit(1).alias("bomqpa"),
+        F.lit(0).alias("cmpqpa"),
+        F.col("m.matkl").alias("nhamatkl"),
+        F.col("m.mstae").alias("nhamstae"),
+        F.lit("N").alias("exploded")
     )
-    .distinct()
 )
 
-# Safety check – no nulls (Delta NOT NULL guard)
-df_active_ob = df_active_ob.filter(F.col("obprtno").isNotNull())
-
-# Register for later looping
-df_active_ob.createOrReplaceTempView("df_active_ob")
-
-
-
-
-
-
-
-
-Cell 4 handles this SAP logic:
-“If the OB part is already Obsolete (OB / OS / OP), don’t explode it — just insert the part itself as its own NHA.”
-In simple words:
-For the given i_prno:
-Find component parts that are already obsolete
-For each such part:
-Treat the part as its own NHA
-Insert one row into OMAT_OBPN_NHA_DTLS
-Set:
-level = 1
-cmpprtno = nha = childpn = part
-bomqpa = cmpqpa = 1
-Insert only if it does not already exist in NHA table
-This matches the first SAP loop exactly.
+# Register as temp view (SAP #NHALIST replacement)
+df_nhalist.createOrReplaceTempView("nhalist")
