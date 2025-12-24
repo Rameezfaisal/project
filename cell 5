@@ -1,3 +1,22 @@
+
+Cell 11 computed ENDITEM (the EI-* NHAs) for the given PR and wrote it into
+OMAT_OBPRTNO_DTLS.
+It exactly matches this SAP logic:
+Copy code
+Sql
+EIDTLS = STRING_AGG(NHA WHERE NHA LIKE 'EI-%')
+UPDATE OMAT_OBPRTNO_DTLS SET ENDITEM = EIDTLS
+So now OMAT knows which End Items (EI-xxx) this component belongs to.
+
+
+
+
+
+
+
+
+
+
 # ===============================
 # 12A – Mark PR as processed
 # ===============================
