@@ -1,71 +1,77 @@
-For every active OB part, insert the part itself as the first NHA (Level = 1), and mark it as not exploded.
+Cell 7 performed the multi-level BOM explosion, which is the heart of the SAP procedure.
+In SAP:
+For every part in the current level that is not obsolete and not yet exploded,
+find its parent assemblies from BOMREC and add them as the next level NHAs.
+What we now have in nhalist:
+Copy code
+
+CMP Part
+   ↓
+Level 1 → itself
+Level 2 → its immediate parents (NHAs)
+Level 3 → parents of those NHAs
+...
+up to 15 levels
+Every row tracks:
+which OB part (cmpprtno)
+which NHA
+which child it came from
+BOM quantity
+material status & type
+whether it has already been exploded
+This is a graph traversal of the BOM, implemented in Spark.
 
 
 
 
-current_level = 1
 
-while current_level <= explode_level:
 
-    # Parts in current level that must be exploded
-    df_to_explode = (
+
+
+
+# Assign row numbers per level (SAP ROWN0)
+w = Window.partitionBy("level").orderBy("nha", "childpn")
+
+df_nhalist = df_nhalist.withColumn("rowno", F.row_number().over(w))
+
+# Level 1 CMPQPA = BOMQPA
+df_nhalist = df_nhalist.withColumn(
+    "cmpqpa",
+    F.when(F.col("level") == 1, F.col("bomqpa")).otherwise(F.col("cmpqpa"))
+)
+
+# Find max level
+max_level = df_nhalist.select(F.max("level")).collect()[0][0]
+
+# Propagate CMPQPA up the BOM
+for lvl in range(2, max_level + 1):
+
+    parent = (
         df_nhalist
-        .filter(
-            (F.col("level") == current_level) &
-            (F.col("exploded") == "N") &
-            (~F.col("nhamstae").isin("ob","os","op"))
-        )
+        .filter(F.col("level") == lvl - 1)
         .select(
-            F.col("cmpprtno").alias("cmpprtno"),
-            F.col("nha").alias("parent_nha")
-        )
-        .distinct()
-    )
-
-    if df_to_explode.count() == 0:
-        break
-
-    # Get parent NHAs from BOM
-    df_children = (
-        df_to_explode.alias("p")
-        .join(df_bom.alias("b"), F.col("b.bomcpno") == F.col("p.parent_nha"), "inner")
-        .join(df_mara.alias("m"), F.col("b.prtno") == F.col("m.matnr"), "inner")
-        .filter(
-            (F.col("b.postp") == "L") &
-            (F.col("b.bomedat") <= F.current_date()) &
-            (F.col("b.bomidat") > F.current_date())
-        )
-        .select(
-            F.lit(0).alias("rowno"),
-            F.col("p.cmpprtno").alias("cmpprtno"),
-            F.col("b.prtno").alias("nha"),
-            F.lit(current_level + 1).alias("level"),
-            F.col("b.bomcpno").alias("childpn"),
-            F.col("b.bomitem").alias("bomitem"),
-            F.col("b.bomqpa").alias("bomqpa"),
-            F.lit(0).alias("cmpqpa"),
-            F.col("m.matkl").alias("nhamatkl"),
-            F.col("m.mstae").alias("nhamstae"),
-            F.lit("N").alias("exploded")
+            F.col("nha").alias("parent_nha"),
+            F.col("cmpqpa").alias("parent_cmpqpa")
         )
     )
 
-    # Append children
-    df_nhalist = df_nhalist.unionByName(df_children)
-
-    # Mark current level as exploded
     df_nhalist = (
-        df_nhalist
-        .withColumn(
-            "exploded",
-            F.when(
-                (F.col("level") == current_level) & (F.col("exploded") == "N"),
-                "Y"
-            ).otherwise(F.col("exploded"))
+        df_nhalist.alias("x")
+        .join(
+            parent.alias("y"),
+            (F.col("x.childpn") == F.col("y.parent_nha")) &
+            (F.col("x.level") == lvl),
+            "left"
         )
+        .withColumn(
+            "cmpqpa",
+            F.when(
+                F.col("x.level") == lvl,
+                F.col("x.bomqpa") * F.coalesce(F.col("y.parent_cmpqpa"), F.lit(0))
+            ).otherwise(F.col("x.cmpqpa"))
+        )
+        .select("x.*")
     )
-
-    current_level += 1
 
 # Refresh temp view
 df_nhalist.createOrReplaceTempView("nhalist")
