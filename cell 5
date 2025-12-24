@@ -1,1 +1,30 @@
-DataFrame[num_affected_rows: bigint, num_updated_rows: bigint, num_deleted_rows: bigint, num_inserted_rows: bigint]
+# ===============================
+# 12A – Mark PR as processed
+# ===============================
+spark.sql(f"""
+UPDATE {tgt_obprt_dtls}
+SET is_obprt_processed = 'Yes'
+WHERE obprno = '{i_prno}'
+""")
+
+# ===============================
+# 12B – Logging
+# ===============================
+spark.sql(f"""
+INSERT INTO {tgt_log_dtls}
+(
+    process_name,
+    run_status,
+    part_count,
+    nha_count,
+    run_ts
+)
+SELECT
+    concat('SP_OMAT_INSERT_EXPLODE_NHA - ', '{i_prno}')       AS process_name,
+    1                                                      AS run_status,
+    COUNT(DISTINCT cmpprtno)                               AS part_count,
+    COUNT(DISTINCT nha)                                   AS nha_count,
+    current_timestamp()                                   AS run_ts
+FROM {tgt_nha_dtls}
+WHERE cmpprtno = '{i_prno}'
+""")
