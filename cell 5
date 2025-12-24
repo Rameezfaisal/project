@@ -1,72 +1,40 @@
-# Filter OB parts that are already obsolete
-df_obsolete = (
+# OB parts that still need explosion (not obsolete)
+df_active_ob = (
     df_obprt
     .filter(
         (F.col("obprno") == i_prno) &
-        (F.col("part_status").isin("ob","os","op")) &
-        (F.col("is_obprt_processed") != "Yes")
+        (~F.col("part_status").isin("ob", "os", "op"))
     )
     .select(
-        F.col("obprtno").alias("obprtno"),
-        F.col("part_status").alias("part_status")
+        F.col("obprtno").alias("obprtno")
     )
     .distinct()
 )
 
-# Level-1 self-NHA rows
-df_lvl1 = (
-    df_obsolete.alias("c")
-    .join(df_mara.alias("a"), F.col("c.obprtno") == F.col("a.matnr"), "inner")
-    .join(df_nha_v.alias("b"), F.col("a.matnr") == F.col("b.cmpprtno"), "left")
-    .filter(F.col("b.cmpprtno").isNull())
-    .select(
-        F.col("c.obprtno").alias("cmpprtno"),
-        F.col("c.obprtno").alias("nha"),
-        F.lit(1).alias("level"),
-        F.col("c.obprtno").alias("childpn"),
-        F.lit(None).cast("string").alias("bomitem"),
-        F.lit(1).alias("bomqpa"),
-        F.lit(1).alias("cmpqpa"),
-        F.col("a.matkl").alias("matkl"),
-        F.col("c.part_status").alias("mstae"),
-        F.lit("N").alias("exploded"),
-        F.current_date().alias("last_modified_on"),
-        F.lit("A").alias("nha_status_inactive")
-    )
-)
+# Safety check – no nulls (Delta NOT NULL guard)
+df_active_ob = df_active_ob.filter(F.col("obprtno").isNotNull())
 
-# Register temp view
-df_lvl1.createOrReplaceTempView("df_lvl1")
+# Register for later looping
+df_active_ob.createOrReplaceTempView("df_active_ob")
 
-# Explicit-column INSERT (Delta-safe, ANSI-safe)
-spark.sql(f"""
-INSERT INTO {tgt_nha_dtls}
-(
-    cmpprtno,
-    nha,
-    level,
-    childpn,
-    bomitem,
-    bomqpa,
-    cmpqpa,
-    matkl,
-    mstae,
-    exploded,
-    last_modified_on,
-    nha_status_inactive
-)
-SELECT
-    cmpprtno,
-    nha,
-    level,
-    childpn,
-    bomitem,
-    bomqpa,
-    cmpqpa,
-    matkl,
-    mstae,
-    exploded,
-    last_modified_on,
-    nha_status_inactive
-FROM df_lvl1
-""")
+
+
+
+
+
+
+
+Cell 4 handles this SAP logic:
+“If the OB part is already Obsolete (OB / OS / OP), don’t explode it — just insert the part itself as its own NHA.”
+In simple words:
+For the given i_prno:
+Find component parts that are already obsolete
+For each such part:
+Treat the part as its own NHA
+Insert one row into OMAT_OBPN_NHA_DTLS
+Set:
+level = 1
+cmpprtno = nha = childpn = part
+bomqpa = cmpqpa = 1
+Insert only if it does not already exist in NHA table
+This matches the first SAP loop exactly.
