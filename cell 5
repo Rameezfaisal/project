@@ -1,16 +1,27 @@
-spark.sql(f"""
-INSERT INTO {tgt_suppliers}
-(
-nha,
-suppcd_1900,suppname_1900,
-suppcd_2000,suppname_2000,
-suppcd_3120,suppname_3120,
-suppcd_1050,suppname_1050,
-suppcd_1060,suppname_1060,
-suppcd_1090,suppname_1090
+# --- Cell 7 : Initial insert into ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS (safe for empty table) ---
+
+df_insert = (
+    df_sup
+    .select(
+        F.col("nha_cd").alias("nha"),
+
+        "suppcd_1900","suppname_1900",
+        "suppcd_2000","suppname_2000",
+        "suppcd_3120","suppname_3120",
+        "suppcd_1050","suppname_1050",
+        "suppcd_1060","suppname_1060",
+        "suppcd_1090","suppname_1090"
+    )
+    .filter(F.col("nha").isNotNull())   # delta safety
 )
-SELECT * FROM df_sup
-""")
+
+(
+    df_insert
+    .write
+    .mode("append")           # works even when table is empty
+    .format("delta")
+    .saveAsTable(tgt_suppliers)
+)
 
 
 
