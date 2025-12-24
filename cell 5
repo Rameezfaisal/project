@@ -1,73 +1,111 @@
-computed cmpqpa (Component Quantity Per Assembly) for every NHA.
-In SAP:
-CMPQPA = how many units of the component exist inside each higher-level NHA.
-Logic:
-Level 1 → cmpqpa = bomqpa
-Level 2+ →
-Copy code
-
-cmpqpa = bomqpa × sum(parent cmpqpa)
-This propagates the quantity up the BOM hierarchy, exactly like SAP’s nested WHILE loops.
-Now every NHA row in nhalist has the correct rolled-up quantity.
+Cell 9 took the fully-exploded and quantity-calculated nhalist and loaded it into the official OMAT table.
+It:
+Removed obsolete NHAs (OB / OS / OP)
+Renamed SAP temp columns → OMAT columns
+Added last_modified_on and nha_status_inactive
+Inserted using explicit column mapping (Delta-safe)
 
 
 
 
-
-
-
-
-# Prepare final NHA rows
-df_final_nha = (
-    df_nhalist
-    .filter(~F.col("nhamstae").isin("ob","os","op"))
-    .select(
-        F.col("cmpprtno").alias("cmpprtno"),
-        F.col("nha").alias("nha"),
-        F.col("level").alias("level"),
-        F.col("childpn").alias("childpn"),
-        F.col("bomitem").alias("bomitem"),
-        F.col("bomqpa").alias("bomqpa"),
-        F.col("cmpqpa").alias("cmpqpa"),
-        F.col("nhamatkl").alias("matkl"),
-        F.col("nhamstae").alias("mstae"),
-        F.col("exploded").alias("exploded"),
-        F.current_date().alias("last_modified_on"),
-        F.lit("A").alias("nha_status_inactive")
+# ===============================
+# 10A – Self-NHA rows (CMPPRTNO = NHA)
+# ===============================
+df_self_buy = (
+    df_nha_v.alias("a")
+    .join(df_buy_v.alias("b"),
+          (F.col("a.cmpprtno") == F.col("b.cmpprtno")) &
+          (F.col("a.nha") == F.col("b.nha")),
+          "left")
+    .filter(
+        (F.col("a.cmpprtno") == F.col("a.nha")) &
+        (F.col("b.cmpprtno").isNull())
     )
 )
 
-df_final_nha.createOrReplaceTempView("df_final_nha")
+df_self_buy = (
+    df_self_buy
+    .groupBy("a.cmpprtno","a.nha","a.level","a.matkl","a.mstae")
+    .agg(F.sum("a.cmpqpa").alias("cmpqpa"))
+    .withColumn("last_modified_on", F.current_date())
+    .withColumn("isprocessed", F.lit("N"))
+)
 
-# Explicit-column INSERT (Delta-safe)
+df_self_buy.createOrReplaceTempView("df_self_buy")
+
 spark.sql(f"""
-INSERT INTO {tgt_nha_dtls}
+INSERT INTO {tgt_buy_nha_dtls}
 (
     cmpprtno,
     nha,
     level,
-    childpn,
-    bomitem,
-    bomqpa,
     cmpqpa,
     matkl,
     mstae,
-    exploded,
     last_modified_on,
-    nha_status_inactive
+    isprocessed
 )
 SELECT
     cmpprtno,
     nha,
     level,
-    childpn,
-    bomitem,
-    bomqpa,
     cmpqpa,
     matkl,
     mstae,
-    exploded,
     last_modified_on,
-    nha_status_inactive
-FROM df_final_nha
+    isprocessed
+FROM df_self_buy
+""")
+
+# ===============================
+# 10B – BUY NHAs (P-type only)
+# ===============================
+df_buy = (
+    df_nha_v.alias("a")
+    .join(df_buy_v.alias("b"),
+          (F.col("a.cmpprtno") == F.col("b.cmpprtno")) &
+          (F.col("a.nha") == F.col("b.nha")),
+          "left")
+    .filter(
+        (F.col("a.cmpprtno") != F.col("a.nha")) &
+        (~F.col("a.nha").like("%DELTA%")) &
+        (F.col("a.matkl").like("P%")) &
+        (F.length(F.trim(F.col("a.matkl"))) == 2) &
+        (~F.col("a.mstae").isin("ob","os","op")) &
+        (F.col("b.cmpprtno").isNull())
+    )
+)
+
+df_buy = (
+    df_buy
+    .groupBy("a.cmpprtno","a.nha","a.level","a.matkl","a.mstae")
+    .agg(F.sum("a.cmpqpa").alias("cmpqpa"))
+    .withColumn("last_modified_on", F.current_date())
+    .withColumn("isprocessed", F.lit("N"))
+)
+
+df_buy.createOrReplaceTempView("df_buy")
+
+spark.sql(f"""
+INSERT INTO {tgt_buy_nha_dtls}
+(
+    cmpprtno,
+    nha,
+    level,
+    cmpqpa,
+    matkl,
+    mstae,
+    last_modified_on,
+    isprocessed
+)
+SELECT
+    cmpprtno,
+    nha,
+    level,
+    cmpqpa,
+    matkl,
+    mstae,
+    last_modified_on,
+    isprocessed
+FROM df_buy
 """)
