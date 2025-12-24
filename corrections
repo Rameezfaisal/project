@@ -1,1 +1,43 @@
-AnalysisException: [DELTA_UNSUPPORTED_SUBQUERY] Subqueries are not supported in the UPDATE (condition = (spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk.rpt_omat_obpn_buy_nha_dtls.nha IN (listquery()))).
+from delta.tables import DeltaTable
+
+# ------------------------------------------------
+# 1) Mark NHAs as processed using MERGE (Delta-safe)
+# ------------------------------------------------
+df_to_mark = df_nha.select(F.col("nha_cd").alias("nha")).distinct()
+
+delta_nha = DeltaTable.forName(spark, tgt_nha)
+
+(
+    delta_nha.alias("t")
+    .merge(df_to_mark.alias("s"), "t.nha = s.nha")
+    .whenMatchedUpdate(set={"isprocessed": F.lit("Y")})
+    .execute()
+)
+
+# ------------------------------------------------
+# 2) Compute counts for logging
+# ------------------------------------------------
+obprt_cnt = df_nha.select("cmpprtno_cd").distinct().count()
+nha_cnt   = df_nha.select("nha_cd").distinct().count()
+
+# ------------------------------------------------
+# 3) Insert into OMAT_LOG_DTLS
+# ------------------------------------------------
+spark.sql(f"""
+INSERT INTO {tgt_log}
+(
+  program_name,
+  obprtno_cnt,
+  obprtno_nha_cnt,
+  obpr_cnt,
+  executed_on
+)
+VALUES
+(
+  'sp_omat_insert_suppliers_byplant - finished',
+  1,
+  {obprt_cnt},
+  {nha_cnt},
+  current_timestamp()
+)
+""")
