@@ -1,91 +1,26 @@
-# --- Cell 7 : Initial insert into ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS (safe for empty table) ---
+# ============================
+# Cell 7 – Initial insert of suppliers per NHA
+# ============================
 
 df_insert = (
     df_sup
     .select(
         F.col("nha_cd").alias("nha"),
 
-        "suppcd_1900","suppname_1900",
-        "suppcd_2000","suppname_2000",
-        "suppcd_3120","suppname_3120",
-        "suppcd_1050","suppname_1050",
-        "suppcd_1060","suppname_1060",
-        "suppcd_1090","suppname_1090"
+        F.col("suppcd_1900"), F.col("suppname_1900"),
+        F.col("suppcd_2000"), F.col("suppname_2000"),
+        F.col("suppcd_3120"), F.col("suppname_3120"),
+        F.col("suppcd_1050"), F.col("suppname_1050"),
+        F.col("suppcd_1060"), F.col("suppname_1060"),
+        F.col("suppcd_1090"), F.col("suppname_1090")
     )
-    .filter(F.col("nha").isNotNull())   # delta safety
+    .filter(F.col("nha").isNotNull())   # Delta safety
 )
 
 (
     df_insert
     .write
-    .mode("append")           # works even when table is empty
+    .mode("append")            # works when table is empty or populated
     .format("delta")
     .saveAsTable(tgt_suppliers)
 )
-
-
-
-
-
-
-df_posupp = (
-    df_nha.alias("a")
-    .join(df_dmd.alias("d"), F.col("a.nha_cd")==F.col("d.nha"))
-    .join(df_po_hist.alias("p"), F.col("p.matnr")==F.col("a.nha_cd"))
-    .join(df_ekpo.alias("e"), ["ebeln","ebelp"])
-    .filter(F.col("d.open_po_qty") > 0)
-    .groupBy("a.nha_cd")
-    .agg(
-        F.concat_ws(",",F.collect_list("p.lifnr")).alias("posupp_cd"),
-        F.concat_ws(",",F.collect_list("p.name1")).alias("posupp_nm")
-    )
-)
-
-
-
-
-
-
-df_final = spark.read.table(tgt_suppliers)
-
-df_final = df_final.withColumn(
-    "omat_selected_plant",
-    F.when(F.length("suppcd_2000")>0,"2000")
-     .when(F.length("suppcd_1900")>0,"1900")
-     .when(F.length("suppcd_3120")>0,"3120")
-     .when(F.length("suppcd_1050")>0,"1050")
-     .when(F.length("suppcd_1060")>0,"1060")
-     .when(F.length("suppcd_1090")>0,"1090")
-)
-
-df_final.write.mode("overwrite").saveAsTable(tgt_suppliers)
-
-
-
-
-
-
-
-
-spark.sql(f"""
-UPDATE {tgt_nha}
-SET isprocessed = 'Y'
-WHERE nha IN (SELECT nha_cd FROM nha_list)
-""")
-
-
-
-
-
-obprt_cnt = df_nha.select("cmpprtno_cd").distinct().count()
-nha_cnt   = df_nha.select("nha_cd").distinct().count()
-
-spark.sql(f"""
-INSERT INTO {tgt_log}
-(program_name, obprtno_cnt, obprtno_nha_cnt, obpr_cnt, executed_on)
-VALUES
-('sp_omat_insert_suppliers_byplant - finished',1,{obprt_cnt},{nha_cnt},current_timestamp())
-""")
-
-
-
