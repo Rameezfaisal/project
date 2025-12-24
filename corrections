@@ -1,70 +1,36 @@
-from delta.tables import DeltaTable
+# ------------------------------------------------
+# 1) Mark NHAs as processed
+# ------------------------------------------------
+spark.sql(f"""
+UPDATE {tgt_nha}
+SET isprocessed = 'Y'
+WHERE nha IN (SELECT nha_cd FROM nha_list)
+""")
 
-df_sel = (
-    spark.read.table(tgt_suppliers)
-    .select(
-        "nha",
+# ------------------------------------------------
+# 2) Compute counts for logging
+# ------------------------------------------------
+obprt_cnt = df_nha.select("cmpprtno_cd").distinct().count()
+nha_cnt   = df_nha.select("nha_cd").distinct().count()
 
-        "suppcd_2000","suppname_2000",
-        "suppcd_1900","suppname_1900",
-        "suppcd_3120","suppname_3120",
-        "suppcd_1050","suppname_1050",
-        "suppcd_1060","suppname_1060",
-        "suppcd_1090","suppname_1090",
-        "suppcd_po1","suppname_po1",
-        "suppcd_po2","suppname_po2",
-        "suppcd_pr","suppname_pr"
-    )
-)
-
-df_choice = (
-    df_sel
-    .withColumn(
-        "omat_selected_plant",
-        F.when(F.length("suppcd_2000")>0,"2000")
-         .when(F.length("suppcd_1900")>0,"1900")
-         .when(F.length("suppcd_3120")>0,"3120")
-         .when(F.length("suppcd_1050")>0,"1050")
-         .when(F.length("suppcd_1060")>0,"1060")
-         .when(F.length("suppcd_1090")>0,"1090")
-         .when(F.length("suppcd_po1")==10,"2000")
-         .when(F.length("suppcd_pr")>0,"2000")
-    )
-    .withColumn(
-        "omat_selected_suppliercd",
-        F.when(F.length("suppcd_2000")>0, F.col("suppcd_2000"))
-         .when(F.length("suppcd_1900")>0, F.col("suppcd_1900"))
-         .when(F.length("suppcd_3120")>0, F.col("suppcd_3120"))
-         .when(F.length("suppcd_1050")>0, F.col("suppcd_1050"))
-         .when(F.length("suppcd_1060")>0, F.col("suppcd_1060"))
-         .when(F.length("suppcd_1090")>0, F.col("suppcd_1090"))
-         .when(F.length("suppcd_po1")==10, F.col("suppcd_po1"))
-         .when(F.length("suppcd_po2")==10, F.substring("suppcd_po2",1,10))
-         .when(F.length("suppcd_pr")>0, F.col("suppcd_pr"))
-    )
-    .withColumn(
-        "omat_selected_supplier",
-        F.when(F.length("suppcd_2000")>0, F.col("suppname_2000"))
-         .when(F.length("suppcd_1900")>0, F.col("suppname_1900"))
-         .when(F.length("suppcd_3120")>0, F.col("suppname_3120"))
-         .when(F.length("suppcd_1050")>0, F.col("suppname_1050"))
-         .when(F.length("suppcd_1060")>0, F.col("suppname_1060"))
-         .when(F.length("suppcd_1090")>0, F.col("suppname_1090"))
-         .when(F.length("suppcd_po1")==10, F.col("suppname_po1"))
-         .when(F.length("suppcd_po2")==10, F.col("suppname_po2"))
-         .when(F.length("suppcd_pr")>0, F.col("suppname_pr"))
-    )
-)
-
-delta_tbl = DeltaTable.forName(spark, tgt_suppliers)
-
+# ------------------------------------------------
+# 3) Insert into OMAT_LOG_DTLS
+# ------------------------------------------------
+spark.sql(f"""
+INSERT INTO {tgt_log}
 (
-    delta_tbl.alias("t")
-    .merge(df_choice.alias("s"), "t.nha = s.nha")
-    .whenMatchedUpdate(set={
-        "omat_selected_plant":"s.omat_selected_plant",
-        "omat_selected_suppliercd":"s.omat_selected_suppliercd",
-        "omat_selected_supplier":"s.omat_selected_supplier"
-    })
-    .execute()
+  program_name,
+  obprtno_cnt,
+  obprtno_nha_cnt,
+  obpr_cnt,
+  executed_on
 )
+VALUES
+(
+  'sp_omat_insert_suppliers_byplant - finished',
+  1,
+  {obprt_cnt},
+  {nha_cnt},
+  current_timestamp()
+)
+""")
