@@ -1,69 +1,70 @@
 from delta.tables import DeltaTable
 
-# ------------------------------------------------
-# 1) Split PO suppliers into PO1 and PO2
-# ------------------------------------------------
-df_po_split = (
-    df_posupp
-    .withColumn("suppcd_po1", F.split("posupp_cd", ",")[0])
-    .withColumn("suppcd_po2", F.split("posupp_cd", ",")[1])
-    .withColumn("suppname_po1", F.split("posupp_name", ",")[0])
-    .withColumn("suppname_po2", F.split("posupp_name", ",")[1])
+df_sel = (
+    spark.read.table(tgt_suppliers)
     .select(
         "nha",
+
+        "suppcd_2000","suppname_2000",
+        "suppcd_1900","suppname_1900",
+        "suppcd_3120","suppname_3120",
+        "suppcd_1050","suppname_1050",
+        "suppcd_1060","suppname_1060",
+        "suppcd_1090","suppname_1090",
         "suppcd_po1","suppname_po1",
-        "suppcd_po2","suppname_po2"
+        "suppcd_po2","suppname_po2",
+        "suppcd_pr","suppname_pr"
     )
 )
 
-# ------------------------------------------------
-# 2) PR (IPLM) supplier
-# ------------------------------------------------
-df_pr_supp = (
-    df_pr
-    .filter(
-        (F.col("part_name") != "NA") &
-        (~F.upper("state").isin("CLOSED")) &
-        (
-            F.upper("state").isin("CONFIRMED","IN REVIEW","IN WORK") |
-            F.upper("disposition").isin("CONFIRMED","DEFER")
-        ) &
-        (F.upper("reason") == "OBSOLETE COMPONENT")
+df_choice = (
+    df_sel
+    .withColumn(
+        "omat_selected_plant",
+        F.when(F.length("suppcd_2000")>0,"2000")
+         .when(F.length("suppcd_1900")>0,"1900")
+         .when(F.length("suppcd_3120")>0,"3120")
+         .when(F.length("suppcd_1050")>0,"1050")
+         .when(F.length("suppcd_1060")>0,"1060")
+         .when(F.length("suppcd_1090")>0,"1090")
+         .when(F.length("suppcd_po1")==10,"2000")
+         .when(F.length("suppcd_pr")>0,"2000")
     )
-    .select(
-        F.col("part_name").alias("nha"),
-        F.lpad("supplier_code",10,"0").alias("suppcd_pr")
+    .withColumn(
+        "omat_selected_suppliercd",
+        F.when(F.length("suppcd_2000")>0, F.col("suppcd_2000"))
+         .when(F.length("suppcd_1900")>0, F.col("suppcd_1900"))
+         .when(F.length("suppcd_3120")>0, F.col("suppcd_3120"))
+         .when(F.length("suppcd_1050")>0, F.col("suppcd_1050"))
+         .when(F.length("suppcd_1060")>0, F.col("suppcd_1060"))
+         .when(F.length("suppcd_1090")>0, F.col("suppcd_1090"))
+         .when(F.length("suppcd_po1")==10, F.col("suppcd_po1"))
+         .when(F.length("suppcd_po2")==10, F.substring("suppcd_po2",1,10))
+         .when(F.length("suppcd_pr")>0, F.col("suppcd_pr"))
     )
-    .join(
-        df_lfa1.select(F.lpad("lifnr",10,"0").alias("suppcd_pr"), F.col("name1").alias("suppname_pr")),
-        "suppcd_pr",
-        "left"
+    .withColumn(
+        "omat_selected_supplier",
+        F.when(F.length("suppcd_2000")>0, F.col("suppname_2000"))
+         .when(F.length("suppcd_1900")>0, F.col("suppname_1900"))
+         .when(F.length("suppcd_3120")>0, F.col("suppname_3120"))
+         .when(F.length("suppcd_1050")>0, F.col("suppname_1050"))
+         .when(F.length("suppcd_1060")>0, F.col("suppname_1060"))
+         .when(F.length("suppcd_1090")>0, F.col("suppname_1090"))
+         .when(F.length("suppcd_po1")==10, F.col("suppname_po1"))
+         .when(F.length("suppcd_po2")==10, F.col("suppname_po2"))
+         .when(F.length("suppcd_pr")>0, F.col("suppname_pr"))
     )
 )
 
-# ------------------------------------------------
-# 3) Combine PO and PR suppliers
-# ------------------------------------------------
-df_po_pr = (
-    df_po_split
-    .join(df_pr_supp, "nha", "left")
-)
-
-# ------------------------------------------------
-# 4) Delta MERGE into target
-# ------------------------------------------------
 delta_tbl = DeltaTable.forName(spark, tgt_suppliers)
 
 (
     delta_tbl.alias("t")
-    .merge(df_po_pr.alias("s"), "t.nha = s.nha")
+    .merge(df_choice.alias("s"), "t.nha = s.nha")
     .whenMatchedUpdate(set={
-        "suppcd_po1":"s.suppcd_po1",
-        "suppname_po1":"s.suppname_po1",
-        "suppcd_po2":"s.suppcd_po2",
-        "suppname_po2":"s.suppname_po2",
-        "suppcd_pr":"s.suppcd_pr",
-        "suppname_pr":"s.suppname_pr"
+        "omat_selected_plant":"s.omat_selected_plant",
+        "omat_selected_suppliercd":"s.omat_selected_suppliercd",
+        "omat_selected_supplier":"s.omat_selected_supplier"
     })
     .execute()
 )
