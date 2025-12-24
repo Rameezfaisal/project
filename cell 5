@@ -1,1 +1,11 @@
 AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `process_name` cannot be resolved. Did you mean one of the following? [`executed_on`, `obprtno_cnt`, `obprtno_nha_cnt`, `obpr_cnt`, `program_name`].; line 2 pos 0
+
+
+
+
+COLUMN_NAME	DATA_TYPE_NAME	LENGTH	SCALE	IS_NULLABLE
+EXECUTED_ON	SECONDDATE	19	0	TRUE
+OBPRTNO_CNT	INTEGER	10	0	TRUE
+OBPRTNO_NHA_CNT	INTEGER	10	0	TRUE
+OBPR_CNT	INTEGER	10	0	TRUE
+PROGRAM_NAME	VARCHAR	50	?	TRUE
