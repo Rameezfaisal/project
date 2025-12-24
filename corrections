@@ -1,36 +1,32 @@
-# ============================
-# Cell 7 – Insert suppliers (skew-safe, empty-table safe)
-# ============================
+from pyspark.sql.functions import broadcast
 
-# --- 1) Break NHA skew using salting before the write ---
-df_sup_skew_safe = (
-    df_sup
-    .withColumn("salt_cd", F.floor(F.rand() * 20))   # 20-way shuffle split
-    .repartition(200, "salt_cd")                    # distribute across Fabric executors
-    .drop("salt_cd")
-)
+df_sup = (
+    df_nha.alias("a")
 
-# --- 2) Align columns exactly to Delta table schema ---
-df_insert = (
-    df_sup_skew_safe
+    .join(broadcast(i1900).alias("b"), "nha_cd", "left")
+    .join(broadcast(i2000).alias("c"), "nha_cd", "left")
+    .join(broadcast(i3120).alias("d"), "nha_cd", "left")
+    .join(broadcast(i1050).alias("e"), "nha_cd", "left")
+    .join(broadcast(i1060).alias("f"), "nha_cd", "left")
+    .join(broadcast(i1090).alias("g"), "nha_cd", "left")
+    .join(broadcast(i1000).alias("h"), "nha_cd", "left")
+    .join(broadcast(i1010).alias("i"), "nha_cd", "left")
+    .join(broadcast(i1020).alias("j"), "nha_cd", "left")
+
     .select(
-        F.col("nha_cd").alias("nha"),
+        "nha_cd",
 
-        F.col("suppcd_1900"), F.col("suppname_1900"),
-        F.col("suppcd_2000"), F.col("suppname_2000"),
-        F.col("suppcd_3120"), F.col("suppname_3120"),
-        F.col("suppcd_1050"), F.col("suppname_1050"),
-        F.col("suppcd_1060"), F.col("suppname_1060"),
-        F.col("suppcd_1090"), F.col("suppname_1090")
+        F.coalesce("b.suppcd_1900","j.suppcd_1020").alias("suppcd_1900"),
+        F.coalesce("b.suppname_1900","j.suppname_1020").alias("suppname_1900"),
+
+        F.coalesce("c.suppcd_2000","h.suppcd_1000").alias("suppcd_2000"),
+        F.coalesce("c.suppname_2000","h.suppname_1000").alias("suppname_2000"),
+
+        F.coalesce("d.suppcd_3120","i.suppcd_1010").alias("suppcd_3120"),
+        F.coalesce("d.suppname_3120","i.suppname_1010").alias("suppname_3120"),
+
+        "e.suppcd_1050","e.suppname_1050",
+        "f.suppcd_1060","f.suppname_1060",
+        "g.suppcd_1090","g.suppname_1090"
     )
-    .filter(F.col("nha").isNotNull())   # Delta safety
-)
-
-# --- 3) Append to Delta table (works when empty or not) ---
-(
-    df_insert
-    .write
-    .mode("append")
-    .format("delta")
-    .saveAsTable(tgt_suppliers)
 )
