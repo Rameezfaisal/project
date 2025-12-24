@@ -1,51 +1,5 @@
-Cell 10 populated OMAT_OBPN_BUY_NHA_DTLS, which is the table used by OMAT to decide what should be bought.
-It did two things (just like SAP):
-1️⃣ Self-NHA rows
-If a component is itself a valid buyable part (MATKL = F, E, etc):
-Insert (CMPPRTNO = NHA)
-Aggregate CMPQPA
-Avoid duplicates
-2️⃣ True Buy NHAs
-For higher-level assemblies:
-Only MATKL like 'P%'
-Exclude DELTA parts
-Exclude obsolete (OB/OS/OP)
-Avoid duplicates
-Aggregate quantities
-This matches the two SAP INSERT blocks 103689 & 106536.
-
-
-
-
-
-
-
-
 # ===============================
-# 11A – Get PG_PM & Business Unit
-# ===============================
-df_pgpm = (
-    df_nha_v.alias("a")
-    .join(df_appr.alias("b"),
-          (F.col("a.nha") == F.col("b.productenditem")) &
-          (F.col("b.businessfunction") == "Product Management"),
-          "inner")
-    .filter(
-        (F.col("a.cmpprtno") == i_prno) &
-        (F.col("a.nha").like("ei-%"))
-    )
-    .select(
-        F.col("a.cmpprtno").alias("cmpprtno"),
-        F.col("b.approvername").alias("pg_pm"),
-        F.col("b.businessunit").alias("business_unit")
-    )
-    .limit(1)
-)
-
-df_pgpm.createOrReplaceTempView("df_pgpm")
-
-# ===============================
-# 11B – Get End Items (EI-*)
+# 11A – Build End Item list (EI-*)
 # ===============================
 df_ei = (
     df_nha_v
@@ -60,23 +14,12 @@ df_ei = (
 df_ei.createOrReplaceTempView("df_ei")
 
 # ===============================
-# 11C – Merge into OBPRT table
+# 11B – Update OMAT_OBPRTNO_DTLS
 # ===============================
 spark.sql(f"""
 MERGE INTO {tgt_obprt_dtls} t
-USING (
-    SELECT
-        p.cmpprtno,
-        p.pg_pm,
-        p.business_unit,
-        e.enditem
-    FROM df_pgpm p
-    LEFT JOIN df_ei e
-      ON p.cmpprtno = e.cmpprtno
-) s
+USING df_ei s
 ON t.obprtno = s.cmpprtno
 WHEN MATCHED THEN UPDATE SET
-    t.pg_pm = s.pg_pm,
-    t.enditem = s.enditem,
-    t.business_unit = s.business_unit
+    t.enditem = s.enditem
 """)
