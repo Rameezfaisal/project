@@ -1,111 +1,82 @@
-Cell 9 took the fully-exploded and quantity-calculated nhalist and loaded it into the official OMAT table.
-It:
-Removed obsolete NHAs (OB / OS / OP)
-Renamed SAP temp columns → OMAT columns
-Added last_modified_on and nha_status_inactive
-Inserted using explicit column mapping (Delta-safe)
+Cell 10 populated OMAT_OBPN_BUY_NHA_DTLS, which is the table used by OMAT to decide what should be bought.
+It did two things (just like SAP):
+1️⃣ Self-NHA rows
+If a component is itself a valid buyable part (MATKL = F, E, etc):
+Insert (CMPPRTNO = NHA)
+Aggregate CMPQPA
+Avoid duplicates
+2️⃣ True Buy NHAs
+For higher-level assemblies:
+Only MATKL like 'P%'
+Exclude DELTA parts
+Exclude obsolete (OB/OS/OP)
+Avoid duplicates
+Aggregate quantities
+This matches the two SAP INSERT blocks 103689 & 106536.
+
+
+
+
 
 
 
 
 # ===============================
-# 10A – Self-NHA rows (CMPPRTNO = NHA)
+# 11A – Get PG_PM & Business Unit
 # ===============================
-df_self_buy = (
+df_pgpm = (
     df_nha_v.alias("a")
-    .join(df_buy_v.alias("b"),
-          (F.col("a.cmpprtno") == F.col("b.cmpprtno")) &
-          (F.col("a.nha") == F.col("b.nha")),
-          "left")
+    .join(df_appr.alias("b"),
+          (F.col("a.nha") == F.col("b.productenditem")) &
+          (F.col("b.businessfunction") == "Product Management"),
+          "inner")
     .filter(
-        (F.col("a.cmpprtno") == F.col("a.nha")) &
-        (F.col("b.cmpprtno").isNull())
+        (F.col("a.cmpprtno") == i_prno) &
+        (F.col("a.nha").like("ei-%"))
     )
+    .select(
+        F.col("a.cmpprtno").alias("cmpprtno"),
+        F.col("b.approvername").alias("pg_pm"),
+        F.col("b.businessunit").alias("business_unit")
+    )
+    .limit(1)
 )
 
-df_self_buy = (
-    df_self_buy
-    .groupBy("a.cmpprtno","a.nha","a.level","a.matkl","a.mstae")
-    .agg(F.sum("a.cmpqpa").alias("cmpqpa"))
-    .withColumn("last_modified_on", F.current_date())
-    .withColumn("isprocessed", F.lit("N"))
-)
-
-df_self_buy.createOrReplaceTempView("df_self_buy")
-
-spark.sql(f"""
-INSERT INTO {tgt_buy_nha_dtls}
-(
-    cmpprtno,
-    nha,
-    level,
-    cmpqpa,
-    matkl,
-    mstae,
-    last_modified_on,
-    isprocessed
-)
-SELECT
-    cmpprtno,
-    nha,
-    level,
-    cmpqpa,
-    matkl,
-    mstae,
-    last_modified_on,
-    isprocessed
-FROM df_self_buy
-""")
+df_pgpm.createOrReplaceTempView("df_pgpm")
 
 # ===============================
-# 10B – BUY NHAs (P-type only)
+# 11B – Get End Items (EI-*)
 # ===============================
-df_buy = (
-    df_nha_v.alias("a")
-    .join(df_buy_v.alias("b"),
-          (F.col("a.cmpprtno") == F.col("b.cmpprtno")) &
-          (F.col("a.nha") == F.col("b.nha")),
-          "left")
+df_ei = (
+    df_nha_v
     .filter(
-        (F.col("a.cmpprtno") != F.col("a.nha")) &
-        (~F.col("a.nha").like("%DELTA%")) &
-        (F.col("a.matkl").like("P%")) &
-        (F.length(F.trim(F.col("a.matkl"))) == 2) &
-        (~F.col("a.mstae").isin("ob","os","op")) &
-        (F.col("b.cmpprtno").isNull())
+        (F.col("cmpprtno") == i_prno) &
+        (F.col("nha").like("ei-%"))
     )
+    .groupBy("cmpprtno")
+    .agg(F.concat_ws(",", F.collect_set("nha")).alias("enditem"))
 )
 
-df_buy = (
-    df_buy
-    .groupBy("a.cmpprtno","a.nha","a.level","a.matkl","a.mstae")
-    .agg(F.sum("a.cmpqpa").alias("cmpqpa"))
-    .withColumn("last_modified_on", F.current_date())
-    .withColumn("isprocessed", F.lit("N"))
-)
+df_ei.createOrReplaceTempView("df_ei")
 
-df_buy.createOrReplaceTempView("df_buy")
-
+# ===============================
+# 11C – Merge into OBPRT table
+# ===============================
 spark.sql(f"""
-INSERT INTO {tgt_buy_nha_dtls}
-(
-    cmpprtno,
-    nha,
-    level,
-    cmpqpa,
-    matkl,
-    mstae,
-    last_modified_on,
-    isprocessed
-)
-SELECT
-    cmpprtno,
-    nha,
-    level,
-    cmpqpa,
-    matkl,
-    mstae,
-    last_modified_on,
-    isprocessed
-FROM df_buy
+MERGE INTO {tgt_obprt_dtls} t
+USING (
+    SELECT
+        p.cmpprtno,
+        p.pg_pm,
+        p.business_unit,
+        e.enditem
+    FROM df_pgpm p
+    LEFT JOIN df_ei e
+      ON p.cmpprtno = e.cmpprtno
+) s
+ON t.obprtno = s.cmpprtno
+WHEN MATCHED THEN UPDATE SET
+    t.pg_pm = s.pg_pm,
+    t.enditem = s.enditem,
+    t.business_unit = s.business_unit
 """)
