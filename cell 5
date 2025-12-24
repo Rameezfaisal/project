@@ -1,106 +1,55 @@
-from delta.tables import DeltaTable
+What it does
+Some NHAs do not get suppliers from INFOREC (Cell 6).
+SAP then looks in EORD (MRP preferred supplier) and fills the missing ones.
+Cell 8:
+Finds NHAs where all plant suppliers are blank
+Reads EORD + LFA1
+Applies SAP fallback rules
+1900 ← 1020
+2000 ← 1000
+3120 ← 1010
+Updates zt_omat_buynha_suppliers_plants using Delta MERGE
 
-# ------------------------------------------------
-# 1) NHAs that need EORD backfill
-# ------------------------------------------------
-df_missing = (
-    spark.read.table(tgt_suppliers)
+
+
+
+
+
+# ============================
+# Cell 9 – Build POSUPP (Open PO suppliers)
+# ============================
+
+df_posupp = (
+    df_nha.alias("a")
+    .join(df_dmd.alias("d"), F.col("a.nha_cd") == F.col("d.nha"))
+    .join(df_po_hist.alias("p"), F.col("p.matnr") == F.col("a.nha_cd"))
+    .join(df_ekpo.alias("e"), ["ebeln","ebelp"])
+    .join(df_lfa1.alias("l"), F.col("l.lifnr") == F.lpad(F.col("p.lifnr"),10,"0"), "left")
+
     .filter(
-        (F.coalesce(F.length("suppcd_1900"),F.lit(0)) == 0) &
-        (F.coalesce(F.length("suppcd_2000"),F.lit(0)) == 0) &
-        (F.coalesce(F.length("suppcd_3120"),F.lit(0)) == 0) &
-        (F.coalesce(F.length("suppcd_1050"),F.lit(0)) == 0) &
-        (F.coalesce(F.length("suppcd_1060"),F.lit(0)) == 0) &
-        (F.coalesce(F.length("suppcd_1090"),F.lit(0)) == 0)
+        (F.col("d.open_po_qty") > 0) &
+        (~F.right("p.due_dt",5).isin("04-01","12-31")) &
+        (F.col("p.status") != "INACT") &
+        (F.trim("p.matnr") != "") &
+        (F.trim("p.loekz") == "") &
+        (F.col("p.discrd") != "X") &
+        (F.col("p.aussl") != "U3") &
+        (F.col("p.bsart") != "UB") &
+        (F.col("p.elikz") != "X") &
+        (~F.col("e.pstyp").isin("7","9"))
     )
-    .select("nha")
-)
 
-# ------------------------------------------------
-# 2) Preferred EORD suppliers with names
-# ------------------------------------------------
-df_eord_pref = (
-    df_eord
-    .filter((F.col("autet")=="1") & (F.col("flifn")=="X"))
     .select(
-        F.trim("matnr").alias("nha"),
-        F.col("werks").alias("plant"),
-        F.lpad("lifnr",10,"0").alias("suppcd")
+        F.col("a.nha_cd").alias("nha"),
+        F.lpad("p.lifnr",10,"0").alias("suppcd"),
+        F.col("l.name1").alias("suppname")
     )
-    .join(
-        df_lfa1.select(F.lpad("lifnr",10,"0").alias("suppcd"), F.col("name1").alias("suppname")),
-        "suppcd",
-        "left"
-    )
-)
-
-# ------------------------------------------------
-# 3) Pivot plants into columns (as flat strings)
-# ------------------------------------------------
-df_eord_pivot = (
-    df_eord_pref
+    .distinct()
     .groupBy("nha")
-    .pivot("plant", ["1900","2000","3120","1050","1060","1090","1000","1010","1020"])
     .agg(
-        F.first("suppcd").alias("suppcd"),
-        F.first("suppname").alias("suppname")
+        F.concat_ws(",", F.collect_list("suppcd")).alias("posupp_cd"),
+        F.concat_ws(",", F.collect_list("suppname")).alias("posupp_name")
     )
 )
 
-# ------------------------------------------------
-# 4) Flatten pivot + SAP fallback logic
-# ------------------------------------------------
-df_eord_flat = (
-    df_eord_pivot
-    .select(
-        "nha",
-
-        F.coalesce(F.col("1900_suppcd"), F.col("1020_suppcd")).alias("suppcd_1900"),
-        F.coalesce(F.col("1900_suppname"), F.col("1020_suppname")).alias("suppname_1900"),
-
-        F.coalesce(F.col("2000_suppcd"), F.col("1000_suppcd")).alias("suppcd_2000"),
-        F.coalesce(F.col("2000_suppname"), F.col("1000_suppname")).alias("suppname_2000"),
-
-        F.coalesce(F.col("3120_suppcd"), F.col("1010_suppcd")).alias("suppcd_3120"),
-        F.coalesce(F.col("3120_suppname"), F.col("1010_suppname")).alias("suppname_3120"),
-
-        F.col("1050_suppcd").alias("suppcd_1050"),
-        F.col("1050_suppname").alias("suppname_1050"),
-
-        F.col("1060_suppcd").alias("suppcd_1060"),
-        F.col("1060_suppname").alias("suppname_1060"),
-
-        F.col("1090_suppcd").alias("suppcd_1090"),
-        F.col("1090_suppname").alias("suppname_1090")
-    )
-)
-
-# ------------------------------------------------
-# 5) Only update NHAs that were missing
-# ------------------------------------------------
-df_update = df_missing.join(df_eord_flat, "nha")
-
-# ------------------------------------------------
-# 6) Delta MERGE (SAP UPDATE equivalent)
-# ------------------------------------------------
-delta_tbl = DeltaTable.forName(spark, tgt_suppliers)
-
-(
-    delta_tbl.alias("t")
-    .merge(df_update.alias("s"), "t.nha = s.nha")
-    .whenMatchedUpdate(set={
-        "suppcd_1900":"s.suppcd_1900",
-        "suppname_1900":"s.suppname_1900",
-        "suppcd_2000":"s.suppcd_2000",
-        "suppname_2000":"s.suppname_2000",
-        "suppcd_3120":"s.suppcd_3120",
-        "suppname_3120":"s.suppname_3120",
-        "suppcd_1050":"s.suppcd_1050",
-        "suppname_1050":"s.suppname_1050",
-        "suppcd_1060":"s.suppcd_1060",
-        "suppname_1060":"s.suppname_1060",
-        "suppcd_1090":"s.suppcd_1090",
-        "suppname_1090":"s.suppname_1090"
-    })
-    .execute()
-)
+df_posupp.createOrReplaceTempView("posupp")
