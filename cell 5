@@ -1,2 +1,72 @@
-AnalysisException: [DATATYPE_MISMATCH.CAST_WITH_FUNC_SUGGESTION] Cannot resolve "cmpqpa" due to data type mismatch: cannot cast "INT" to "DATE".
-To convert values from "INT" to "DATE", you can use the functions `DATE_FROM_UNIX_DATE` instead.;
+# Filter OB parts that are already obsolete
+df_obsolete = (
+    df_obprt
+    .filter(
+        (F.col("obprno") == i_prno) &
+        (F.col("part_status").isin("ob","os","op")) &
+        (F.col("is_obprt_processed") != "Yes")
+    )
+    .select(
+        F.col("obprtno").alias("obprtno"),
+        F.col("part_status").alias("part_status")
+    )
+    .distinct()
+)
+
+# Level-1 self-NHA rows
+df_lvl1 = (
+    df_obsolete.alias("c")
+    .join(df_mara.alias("a"), F.col("c.obprtno") == F.col("a.matnr"), "inner")
+    .join(df_nha_v.alias("b"), F.col("a.matnr") == F.col("b.cmpprtno"), "left")
+    .filter(F.col("b.cmpprtno").isNull())
+    .select(
+        F.col("c.obprtno").alias("cmpprtno"),
+        F.col("c.obprtno").alias("nha"),
+        F.lit(1).alias("level"),
+        F.col("c.obprtno").alias("childpn"),
+        F.lit(None).cast("string").alias("bomitem"),
+        F.lit(1).alias("bomqpa"),
+        F.lit(1).alias("cmpqpa"),
+        F.col("a.matkl").alias("matkl"),
+        F.col("c.part_status").alias("mstae"),
+        F.lit("N").alias("exploded"),
+        F.current_date().alias("last_modified_on"),
+        F.lit("A").alias("nha_status_inactive")
+    )
+)
+
+# Register temp view
+df_lvl1.createOrReplaceTempView("df_lvl1")
+
+# Explicit-column INSERT (Delta-safe, ANSI-safe)
+spark.sql(f"""
+INSERT INTO {tgt_nha_dtls}
+(
+    cmpprtno,
+    nha,
+    level,
+    childpn,
+    bomitem,
+    bomqpa,
+    cmpqpa,
+    matkl,
+    mstae,
+    exploded,
+    last_modified_on,
+    nha_status_inactive
+)
+SELECT
+    cmpprtno,
+    nha,
+    level,
+    childpn,
+    bomitem,
+    bomqpa,
+    cmpqpa,
+    matkl,
+    mstae,
+    exploded,
+    last_modified_on,
+    nha_status_inactive
+FROM df_lvl1
+""")
