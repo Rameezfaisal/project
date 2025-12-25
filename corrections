@@ -1,43 +1,46 @@
-from delta.tables import DeltaTable
+Finds all NHAs that have open purchase orders
+Applies all SAP PO validity rules
+(status, due date, deletion flags, PO type, item type, etc.)
+Collects all suppliers per NHA
+Produces one row per NHA with
+posupp_cd = "0000001234,0000009876"
+posupp_name = "BOSCH,SIEMENS"
 
-# ------------------------------------------------
-# 1) Mark NHAs as processed using MERGE (Delta-safe)
-# ------------------------------------------------
-df_to_mark = df_nha.select(F.col("nha_cd").alias("nha")).distinct()
 
-delta_nha = DeltaTable.forName(spark, tgt_nha)
 
-(
-    delta_nha.alias("t")
-    .merge(df_to_mark.alias("s"), "t.nha = s.nha")
-    .whenMatchedUpdate(set={"isprocessed": F.lit("Y")})
-    .execute()
-)
 
-# ------------------------------------------------
-# 2) Compute counts for logging
-# ------------------------------------------------
-obprt_cnt = df_nha.select("cmpprtno_cd").distinct().count()
-nha_cnt   = df_nha.select("nha_cd").distinct().count()
+Cell 10 – Update PO1, PO2 & PR supplier
 
-# ------------------------------------------------
-# 3) Insert into OMAT_LOG_DTLS
-# ------------------------------------------------
-spark.sql(f"""
-INSERT INTO {tgt_log}
-(
-  program_name,
-  obprtno_cnt,
-  obprtno_nha_cnt,
-  obpr_cnt,
-  executed_on
-)
-VALUES
-(
-  'sp_omat_insert_suppliers_byplant - finished',
-  1,
-  {obprt_cnt},
-  {nha_cnt},
-  current_timestamp()
-)
-""")
+
+Splits the aggregated POSUPP string into
+PO1 and PO2
+Pulls PR supplier from IPLM
+Adds supplier names from LFA1
+Updates the Delta table using MERGE
+Now every NHA has:
+Plant suppliers
+Open PO suppliers
+PR (problem report) supplier
+
+
+
+Cell 11 – OMAT selected supplier logic
+
+
+It applies exact SAP priority:
+2000
+1900
+3120
+1050
+1060
+1090
+Open PO supplier
+Second PO supplier
+PR (IPLM) supplier
+This gives OMAT one final supplier per NHA, exactly as SAP uses downstream.
+
+
+Cell 12 – Mark processed & write OMAT log
+
+
+Cell 12 marks all NHAs from the current run as processed using a Delta MERGE and then writes a log record to omat_log_dtls with the OB PR count, NHA count, and execution timestamp—exactly replicating the final SAP audit step.
