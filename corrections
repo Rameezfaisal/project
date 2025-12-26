@@ -1,47 +1,37 @@
-CELL 7 — OPENPOSUPPL (Derive PO1 & PO2 suppliers)
+CELL 8 — OBPRSUPPL (IPLM Problem-Report Suppliers)
 Purpose:
-From the comma-separated PO supplier list, this step extracts:
-First open PO supplier (PO1)
-Second open PO supplier (PO2)
-It then looks up their supplier names from the vendor master (LFA1).
-This matches the SAP logic that splits POSuppCode and joins back to LFA1.
+This step finds suppliers coming from IPLM Obsolescence Problem Reports.
+It answers:
+“If this part is obsolete and under investigation, which supplier is responsible?”
 
 
 
 
 
-openposuppl = (
-    posupp
-    .withColumn(
-        "suppcd_po1",
-        F.when(
-            F.instr("posuppcode_cd", ",") > 0,
-            F.substring_index("posuppcode_cd", ",", 1)
-        ).otherwise(F.substring("posuppcode_cd", 1, 10))
+obpr = (
+    nhalist
+    .join(problem_pt, problem_pt.part_name == nhalist.nha_cd)
+    .filter(
+        (problem_pt.part_name != "NA") &
+        (F.upper(problem_pt.state) != "CLOSED") &
+        (
+            F.upper(problem_pt.state).isin("CONFIRMED", "IN REVIEW", "IN WORK") |
+            F.upper(problem_pt.disposition).isin("CONFIRMED", "DEFER")
+        ) &
+        (F.upper(problem_pt.reason) == "OBSOLETE COMPONENT")
     )
-    .withColumn(
-        "suppcd_po2",
-        F.when(
-            (F.instr("posuppcode_cd", ",") > 0) & (F.length("posuppcode_cd") <= 21),
-            F.substring_index("posuppcode_cd", ",", -1)
-        ).otherwise(F.substring("posuppcode_cd", 12, 10))
-    )
+    .withColumn("suppcd_pr", F.lpad(problem_pt.supplier_code, 10, "0"))
     .join(
         lfa1.select(
-            F.col("lifnr").alias("suppcd_po1"),
-            F.col("name1").alias("suppname_po1")
+            F.col("lifnr").alias("suppcd_pr"),
+            F.col("name1").alias("suppname_pr")
         ),
-        "suppcd_po1",
+        "suppcd_pr",
         "left"
     )
-    .join(
-        lfa1.select(
-            F.col("lifnr").alias("suppcd_po2"),
-            F.col("name1").alias("suppname_po2")
-        ),
-        "suppcd_po2",
-        "left"
+    .select(
+        nhalist.nha_cd.alias("nha_cd"),
+        "suppcd_pr",
+        "suppname_pr"
     )
 )
-
-
