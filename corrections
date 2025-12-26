@@ -1,34 +1,47 @@
-po_base = (
-    nhalist
-    .join(rscxd_cons.select("nha", "open_po_qty"), nhalist.nha_cd == rscxd_cons.nha)
-    .join(po_hstry, po_hstry.matnr == nhalist.nha_cd)
-    .join(ekpo, (po_hstry.ebeln == ekpo.ebeln) & (po_hstry.ebelp == ekpo.ebelp))
-    .join(lfa1, lfa1.lifnr == po_hstry.lifnr)
-    .filter(
-        (rscxd_cons.open_po_qty > 0) &
-        (~F.substring(po_hstry.due_dt, -5, 5).isin("04-01", "12-31")) &
-        (po_hstry.status != "INACT") &
-        (F.trim(po_hstry.matnr) != "") &
-        (F.trim(po_hstry.loekz) == "") &
-        (po_hstry.discrd != "X") &
-        (po_hstry.aussl != "U3") &
-        (po_hstry.bsart != "UB") &
-        (po_hstry.elikz != "X") &
-        (~ekpo.pstyp.isin("7", "9"))
+CELL 7 — OPENPOSUPPL (Derive PO1 & PO2 suppliers)
+Purpose:
+From the comma-separated PO supplier list, this step extracts:
+First open PO supplier (PO1)
+Second open PO supplier (PO2)
+It then looks up their supplier names from the vendor master (LFA1).
+This matches the SAP logic that splits POSuppCode and joins back to LFA1.
+
+
+
+
+
+openposuppl = (
+    posupp
+    .withColumn(
+        "suppcd_po1",
+        F.when(
+            F.instr("posuppcode_cd", ",") > 0,
+            F.substring_index("posuppcode_cd", ",", 1)
+        ).otherwise(F.substring("posuppcode_cd", 1, 10))
     )
-    .select(
-        nhalist.nha_cd.alias("nha_cd"),
-        po_hstry.lifnr.alias("lifnr_cd"),
-        lfa1.name1.alias("name1_cd")
+    .withColumn(
+        "suppcd_po2",
+        F.when(
+            (F.instr("posuppcode_cd", ",") > 0) & (F.length("posuppcode_cd") <= 21),
+            F.substring_index("posuppcode_cd", ",", -1)
+        ).otherwise(F.substring("posuppcode_cd", 12, 10))
     )
-    .distinct()
+    .join(
+        lfa1.select(
+            F.col("lifnr").alias("suppcd_po1"),
+            F.col("name1").alias("suppname_po1")
+        ),
+        "suppcd_po1",
+        "left"
+    )
+    .join(
+        lfa1.select(
+            F.col("lifnr").alias("suppcd_po2"),
+            F.col("name1").alias("suppname_po2")
+        ),
+        "suppcd_po2",
+        "left"
+    )
 )
 
-posupp = (
-    po_base
-    .groupBy("nha_cd")
-    .agg(
-        F.concat_ws(",", F.collect_list("lifnr_cd")).alias("posuppcode_cd"),
-        F.concat_ws(",", F.collect_list("name1_cd")).alias("posuppname_cd")
-    )
-)
+
