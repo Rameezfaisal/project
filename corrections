@@ -1,11 +1,10 @@
-AnalysisException                         Traceback (most recent call last)
-Cell In[43], line 3
-      1 nhalist = (
-      2     rscxd_dtls.select(F.col("nha").alias("nha_cd"))
-----> 3     .join(rscxd_cons.select("nha","type"), F.col("nha_cd")==F.col("nha"), "inner")
-      4     .filter(F.col("type").isin("R","S"))
-      5     .select("nha_cd")
-      6     .distinct()
-      7 )
-
-AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `type` cannot be resolved. Did you mean one of the following? [`nha`, `lamqoh`, `cmpprtno`, `sprs_dmd`, `sprs_cons`].;
+nhalist = (
+    rscxd_dtls
+    .select(
+        F.col("nha").alias("nha_cd"),
+        F.col("type").alias("type_cd")
+    )
+    .filter(F.col("type_cd").isin("R", "S"))
+    .select("nha_cd")
+    .distinct()
+)
