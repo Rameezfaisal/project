@@ -1,11 +1,1 @@
-spark.sql(f"""
-MERGE INTO {tgt_rscxd_dtls} AS a
-USING {tgt_supplier_plants} AS b
-ON a.nha = b.nha
-WHEN MATCHED THEN
-  UPDATE SET
-    a.vencode = b.omat_selected_suppliercd,
-    a.venname = b.omat_selected_supplier,
-    a.po_supplier_code = b.suppcd_po1,
-    a.po_supplier = b.suppname_po1
-""")
+Step 11 updates the main OMAT part table so that each NHA now shows the final chosen supplier, supplier code, and the first open-PO supplier, ensuring all reports and users see the correct vendor information.
