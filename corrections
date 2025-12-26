@@ -1,10 +1,22 @@
-nhalist = (
-    rscxd_dtls
-    .select(
-        F.col("nha").alias("nha_cd"),
-        F.col("type").alias("type_cd")
+
+CELL 5 — SUPPLINFO (Master Supplier Mapping)
+Purpose:
+This step attaches GLIS master supplier information to every R/S NHA.
+It answers:
+“Does this NHA already have a known buy supplier in the ML master?”
+
+
+
+
+supplinfo = (
+    nhalist
+    .join(
+        ml_part.select(
+            F.col("material").alias("nha_cd"),
+            F.col("supplier_code").alias("supplierid_cd"),
+            F.col("supplier_name").alias("supplier_nm")
+        ),
+        "nha_cd",
+        "left"
     )
-    .filter(F.col("type_cd").isin("R", "S"))
-    .select("nha_cd")
-    .distinct()
 )
