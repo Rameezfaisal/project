@@ -1,22 +1,43 @@
-
-CELL 5 — SUPPLINFO (Master Supplier Mapping)
+CELL 6 — POSUPP (Open PO Supplier Discovery)
 Purpose:
-This step attaches GLIS master supplier information to every R/S NHA.
+This step finds all valid open purchase order suppliers for each R/S NHA from ECC and aggregates them.
 It answers:
-“Does this NHA already have a known buy supplier in the ML master?”
+“Which suppliers are currently supplying this NHA on open POs?”
 
 
 
 
-supplinfo = (
+po_base = (
     nhalist
-    .join(
-        ml_part.select(
-            F.col("material").alias("nha_cd"),
-            F.col("supplier_code").alias("supplierid_cd"),
-            F.col("supplier_name").alias("supplier_nm")
-        ),
-        "nha_cd",
-        "left"
+    .join(rscxd_cons.select("nha", "open_po_qty"), nhalist.nha_cd == rscxd_cons.nha)
+    .join(po_hstry, po_hstry.matnr == nhalist.nha_cd)
+    .join(ekpo, (po_hstry.ebeln == ekpo.ebeln) & (po_hstry.ebelp == ekpo.ebelp))
+    .join(lfa1, lfa1.lifnr == po_hstry.lifnr)
+    .filter(
+        (rscxd_cons.open_po_qty > 0) &
+        (~F.right(po_hstry.due_dt, 5).isin("04-01", "12-31")) &
+        (po_hstry.status != "INACT") &
+        (F.trim(po_hstry.matnr) != "") &
+        (F.trim(po_hstry.loekz) == "") &
+        (po_hstry.discrd != "X") &
+        (po_hstry.aussl != "U3") &
+        (po_hstry.bsart != "UB") &
+        (po_hstry.elikz != "X") &
+        (~ekpo.pstyp.isin("7", "9"))
+    )
+    .select(
+        nhalist.nha_cd.alias("nha_cd"),
+        po_hstry.lifnr.alias("lifnr_cd"),
+        lfa1.name1.alias("name1_cd")
+    )
+    .distinct()
+)
+
+posupp = (
+    po_base
+    .groupBy("nha_cd")
+    .agg(
+        F.concat_ws(",", F.collect_list("lifnr_cd")).alias("posuppcode_cd"),
+        F.concat_ws(",", F.collect_list("name1_cd")).alias("posuppname_cd")
     )
 )
