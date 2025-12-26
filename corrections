@@ -1,46 +1,52 @@
-Finds all NHAs that have open purchase orders
-Applies all SAP PO validity rules
-(status, due date, deletion flags, PO type, item type, etc.)
-Collects all suppliers per NHA
-Produces one row per NHA with
-posupp_cd = "0000001234,0000009876"
-posupp_name = "BOSCH,SIEMENS"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_buynha_suppliers_plants (
+  nha                      STRING,
+  omat_selected_plant      STRING,
+  omat_selected_supplier   STRING,
+  omat_selected_suppliercd STRING,
+  suppcd_1050              STRING,
+  suppcd_1060              STRING,
+  suppcd_1090              STRING,
+  suppcd_1900              STRING,
+  suppcd_2000              STRING,
+  suppcd_3120              STRING,
+  suppcd_po1               STRING,
+  suppcd_po2               STRING,
+  suppcd_pr                STRING,
+  suppname_1050            STRING,
+  suppname_1060            STRING,
+  suppname_1090            STRING,
+  suppname_1900            STRING,
+  suppname_2000            STRING,
+  suppname_3120            STRING,
+  suppname_po1             STRING,
+  suppname_po2             STRING,
+  suppname_pr              STRING
+)
+USING DELTA;"
 
 
 
-
-Cell 10 – Update PO1, PO2 & PR supplier
-
-
-Splits the aggregated POSUPP string into
-PO1 and PO2
-Pulls PR supplier from IPLM
-Adds supplier names from LFA1
-Updates the Delta table using MERGE
-Now every NHA has:
-Plant suppliers
-Open PO suppliers
-PR (problem report) supplier
-
-
-
-Cell 11 – OMAT selected supplier logic
-
-
-It applies exact SAP priority:
-2000
-1900
-3120
-1050
-1060
-1090
-Open PO supplier
-Second PO supplier
-PR (IPLM) supplier
-This gives OMAT one final supplier per NHA, exactly as SAP uses downstream.
-
-
-Cell 12 – Mark processed & write OMAT log
-
-
-Cell 12 marks all NHAs from the current run as processed using a Delta MERGE and then writes a log record to omat_log_dtls with the OB PR count, NHA count, and execution timestamp—exactly replicating the final SAP audit step.
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_rscxd_dtls (
+  ce               STRING,
+  cmpprtno         STRING,
+  cmpqpa           STRING,
+  commodity        STRING,
+  critical         STRING,
+  curr_cost        STRING,
+  dash             STRING,
+  description      STRING,
+  lead_time        INT,
+  matkl            STRING,
+  mstae            STRING,
+  nha              STRING,
+  po_supplier      STRING,
+  po_supplier_code STRING,
+  sbm              STRING,
+  smg_group        STRING,
+  smg_head         STRING,
+  std_cost         STRING,
+  type             STRING,
+  vencode          STRING,
+  venname          STRING
+)
+USING DELTA;"
