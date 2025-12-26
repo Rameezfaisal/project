@@ -1,19 +1,56 @@
-🧩 CELL 11 — Update rpt_omat_rscxd_dtls with selected supplier
-Purpose:
-This applies the OMAT-selected supplier back into the operational OMAT table so that
-buyers, reports, and dashboards see the correct vendor.
-This is the Fabric equivalent of the SAP UPDATE … FROM statement.
+ParseException                            Traceback (most recent call last)
+Cell In[70], line 1
+----> 1 spark.sql(f"""
+      2 UPDATE {tgt_rscxd_dtls} AS a
+      3 SET
+      4   vencode = b.omat_selected_suppliercd,
+      5   venname = b.omat_selected_supplier,
+      6   po_supplier_code = b.suppcd_po1,
+      7   po_supplier = b.suppname_po1
+      8 FROM {tgt_supplier_plants} AS b
+      9 WHERE a.nha = b.nha
+     10 """)
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1631, in SparkSession.sql(self, sqlQuery, args, **kwargs)
+   1627         assert self._jvm is not None
+   1628         litArgs = self._jvm.PythonUtils.toArray(
+   1629             [_to_java_column(lit(v)) for v in (args or [])]
+   1630         )
+-> 1631     return DataFrame(self._jsparkSession.sql(sqlQuery, litArgs), self)
+   1632 finally:
+   1633     if len(kwargs) > 0:
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-spark.sql(f"""
-UPDATE {tgt_rscxd_dtls} AS a
+ParseException: 
+[PARSE_SYNTAX_ERROR] Syntax error at or near 'FROM'.(line 8, pos 0)
+
+== SQL ==
+
+UPDATE eng_test.rpt_omat_rscxd_dtls AS a
 SET
   vencode = b.omat_selected_suppliercd,
   venname = b.omat_selected_supplier,
   po_supplier_code = b.suppcd_po1,
   po_supplier = b.suppname_po1
-FROM {tgt_supplier_plants} AS b
+FROM eng_test.rpt_omat_buynha_suppliers_plants AS b
+^^^
 WHERE a.nha = b.nha
-""")
