@@ -1,113 +1,116 @@
-Here is a clean, professional, first-cell Markdown you can paste at the top of your Fabric notebook.
-📘 OMAT – R,S Buy-NHA Supplier Resolution (Fabric Implementation)
-1️⃣ Purpose of this Notebook
-This notebook is the Microsoft Fabric (Spark + Delta) implementation of the SAP HANA stored procedure:
-SP_OMAT_INSERT_RS_SUPPLIER
-Its purpose is to identify, prioritize, and store supplier information for all R and S type NHA (Next Higher Assembly) parts used in the OMAT obsolescence program.
-For every R/S NHA, it determines:
-Who the best supplier is
-From which business source (ML master, open PO, or IPLM problem report)
-And which plant (2000) that supplier applies to
-It then updates downstream OMAT reporting tables so that:
-Procurement
-Obsolescence
-Costing
-can all use a single, consistent supplier source of truth.
-2️⃣ What This Notebook Does (End-to-End Flow)
-This notebook performs the following steps:
-Step
-What it does
-1
-Identifies all R and S type NHAs from OMAT demand & details tables
-2
-Reads Master Supplier from GLIS (ML_PART)
-3
-Finds Open Purchase Order suppliers from ECC (ZPO_HSTRY, EKPO, LFA1)
-4
-Finds Problem Report suppliers from IPLM
-5
-Applies business priority rules to select the best supplier
-6
-Writes the resolved suppliers into a Delta table
-7
-Updates OMAT RSCXD details with the selected supplier
-This exactly mirrors the SAP HANA logic — but implemented in a Fabric-safe, Spark-native, Delta-compliant way.
-3️⃣ Business Logic: How the Supplier is Chosen
-For each NHA, the supplier is selected using this strict priority:
-🥇 Priority 1 – ML Master (GLIS)
-If the NHA has a SupplierID in CV_ML_PART
-→ This is the primary supplier
-🥈 Priority 2 – Open Purchase Orders
-If there are active open POs for the NHA:
-First PO supplier (PO1)
-Then second PO supplier (PO2)
-Only valid POs are considered:
-Not cancelled
-Not inactive
-Not stock transfer
-Not delivery completed
-Not year-end / April-1 placeholder dates
-🥉 Priority 3 – IPLM Obsolescence Problem Report
-If the part is:
-Obsolete
-In confirmed / review / work state
-then the IPLM supplier is used.
-4️⃣ Final Selection Fields Created
-For every NHA, the notebook derives:
-Column
-Meaning
-omat_selected_plant
-Plant where the selected supplier applies (always 2000)
-omat_selected_suppliercd
-Final chosen supplier code
-omat_selected_supplier
-Final chosen supplier name
-suppcd_po1
-First open PO supplier
-suppcd_po2
-Second open PO supplier
-suppcd_pr
-IPLM problem report supplier
-5️⃣ Target Tables This Notebook Populates
-📌 1. eng_test.rpt_omat_buynha_suppliers_plants
-This is the core supplier resolution table.
-It stores, per NHA, all supplier sources and the final OMAT decision.
-It acts as the single source of truth for:
-Which supplier OMAT should use
-From which source (ML / PO / PR)
-For which plant
-It contains:
-Supplier codes for each plant (1900, 2000, 3120, etc.)
-Open PO suppliers
-Problem report suppliers
-Final OMAT-selected supplier
-This replaces SAP table:
-ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS
-📌 2. eng_test.rpt_omat_rscxd_dtls
-This is the operational OMAT reporting table used by:
-Buyers
-Engineers
-Obsolescence teams
-This notebook updates it so that for every R/S NHA:
-Column
-What gets filled
-vencode
-Final OMAT selected supplier code
-venname
-Final OMAT selected supplier name
-po_supplier_code
-First open PO supplier
-po_supplier
-First open PO supplier name
-This ensures that OMAT dashboards and reports always show the correct supplier.
-6️⃣ Why This Matters
-This notebook ensures that:
-R & S parts always have a valid buy supplier
-Buyers don’t chase wrong vendors
-Obsolete parts are still traceable to accountable suppliers
-OMAT data is consistent across ECC, IPLM, and GLIS
-It is a mission-critical data product for:
-Procurement + Obsolescence + Supply Chain Analytics
-If you want, next I can also give you:
-A data-flow diagram
-Or a column-level lineage table for interviews or design reviews.
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+
+
+
+
+# ---- Source tables ----
+src_rscxd_dtls          = "prd.gops.omat.cv_omat_rscxd_dtls"
+src_rscxd_dmd_cons      = "prd.gops.omat.cv_omat_rscxd_dmd_cons"
+src_ml_part             = "prd.gops.glis.cv_ml_part"
+src_po_hstry            = "prd.global.ecc.cv_zpo_hstry"
+src_ekpo                = "prd.global.ecc.cv_ekpo"
+src_lfa1                = "prd.global.ecc.cv_lfa1"
+src_problem_part        = "prd.iplm.cv_iplm_problem_report_part"
+
+# ---- Targets ----
+tgt_supplier_plants = "eng_test.rpt_omat_buynha_suppliers_plants"
+tgt_rscxd_dtls      = "eng_test.rpt_omat_rscxd_dtls"
+
+
+
+
+
+rscxd_dtls   = spark.read.table(src_rscxd_dtls)
+rscxd_cons   = spark.read.table(src_rscxd_dmd_cons)
+ml_part     = spark.read.table(src_ml_part)
+po_hstry    = spark.read.table(src_po_hstry)
+ekpo        = spark.read.table(src_ekpo)
+lfa1        = spark.read.table(src_lfa1)
+problem_pt  = spark.read.table(src_problem_part)
+
+
+
+
+
+nhalist = (
+    rscxd_dtls.select(F.col("nha").alias("nha_cd"))
+    .join(rscxd_cons.select("nha","type"), F.col("nha_cd")==F.col("nha"), "inner")
+    .filter(F.col("type").isin("R","S"))
+    .select("nha_cd")
+    .distinct()
+)
+
+
+
+
+
+supplinfo = (
+    nhalist
+    .join(ml_part.select(
+        F.col("part").alias("nha_cd"),
+        F.col("supplierid").alias("supplierid_cd"),
+        F.col("supplier").alias("supplier_nm")
+    ), "nha_cd", "left")
+)
+
+
+
+
+
+
+
+po_base = (
+    nhalist
+    .join(rscxd_cons.select("nha","open_po_qty"), nhalist.nha_cd==rscxd_cons.nha)
+    .join(po_hstry, po_hstry.matnr == nhalist.nha_cd)
+    .join(ekpo, (po_hstry.ebeln==ekpo.ebeln) & (po_hstry.ebelp==ekpo.ebelp))
+    .join(lfa1, lfa1.lifnr == po_hstry.lifnr)
+    .filter(
+        (rscxd_cons.open_po_qty > 0) &
+        (~F.right(po_hstry.due_dt,5).isin("04-01","12-31")) &
+        (po_hstry.status != "INACT") &
+        (F.trim(po_hstry.matnr) != "") &
+        (F.trim(po_hstry.loekz) == "") &
+        (po_hstry.discrd != "X") &
+        (po_hstry.aussl != "U3") &
+        (po_hstry.bsart != "UB") &
+        (po_hstry.elikz != "X") &
+        (~ekpo.pstyp.isin("7","9"))
+    )
+    .select(nhalist.nha_cd, po_hstry.lifnr, lfa1.name1)
+    .distinct()
+)
+
+posupp = (
+    po_base
+    .groupBy("nha_cd")
+    .agg(
+        F.concat_ws(",", F.collect_list("lifnr")).alias("posuppcode_cd"),
+        F.concat_ws(",", F.collect_list("name1")).alias("posuppname_cd")
+    )
+)
+
+
+
+
+
+
+openposuppl = (
+    posupp
+    .withColumn("suppcd_po1",
+        F.when(F.instr("posuppcode_cd",",")>0, F.substring_index("posuppcode_cd",",",1))
+         .otherwise(F.substring("posuppcode_cd",1,10))
+    )
+    .withColumn("suppcd_po2",
+        F.when((F.instr("posuppcode_cd",",")>0) & (F.length("posuppcode_cd")<=21),
+               F.substring_index("posuppcode_cd",",",-1))
+         .otherwise(F.substring("posuppcode_cd",12,10))
+    )
+    .join(lfa1.select(F.col("lifnr").alias("suppcd_po1"), F.col("name1").alias("suppname_po1")),
+          "suppcd_po1","left")
+    .join(lfa1.select(F.col("lifnr").alias("suppcd_po2"), F.col("name1").alias("suppname_po2")),
+          "suppcd_po2","left")
+)
+
