@@ -1,40 +1,19 @@
-CELL 10 — Insert into rpt_omat_buynha_suppliers_plants
+🧩 CELL 11 — Update rpt_omat_rscxd_dtls with selected supplier
 Purpose:
-This writes the resolved supplier dataset into the Delta table that replaces
-ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS from SAP.
-It stores:
-All supplier sources
-And the final OMAT-selected supplier per NHA
-This replaces the SAP MERGE … WHEN NOT MATCHED THEN INSERT logic.
+This applies the OMAT-selected supplier back into the operational OMAT table so that
+buyers, reports, and dashboards see the correct vendor.
+This is the Fabric equivalent of the SAP UPDATE … FROM statement.
 
 
 
 
-final_df.select(
-    F.col("nha_cd").alias("nha"),
-    "omat_selected_plant",
-    "omat_selected_supplier",
-    "omat_selected_suppliercd",
-
-    F.lit(None).cast("string").alias("suppcd_1050"),
-    F.lit(None).cast("string").alias("suppcd_1060"),
-    F.lit(None).cast("string").alias("suppcd_1090"),
-    F.lit(None).cast("string").alias("suppcd_1900"),
-    F.col("supplierid_cd").alias("suppcd_2000"),
-    F.lit(None).cast("string").alias("suppcd_3120"),
-
-    F.col("suppcd_po1"),
-    F.col("suppcd_po2"),
-    F.col("suppcd_pr"),
-
-    F.lit(None).cast("string").alias("suppname_1050"),
-    F.lit(None).cast("string").alias("suppname_1060"),
-    F.lit(None).cast("string").alias("suppname_1090"),
-    F.lit(None).cast("string").alias("suppname_1900"),
-    F.col("supplier_nm").alias("suppname_2000"),
-    F.lit(None).cast("string").alias("suppname_3120"),
-
-    F.col("suppname_po1"),
-    F.col("suppname_po2"),
-    F.col("suppname_pr")
-).write.mode("append").saveAsTable(tgt_supplier_plants)
+spark.sql(f"""
+UPDATE {tgt_rscxd_dtls} AS a
+SET
+  vencode = b.omat_selected_suppliercd,
+  venname = b.omat_selected_supplier,
+  po_supplier_code = b.suppcd_po1,
+  po_supplier = b.suppname_po1
+FROM {tgt_supplier_plants} AS b
+WHERE a.nha = b.nha
+""")
