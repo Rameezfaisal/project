@@ -1,37 +1,44 @@
-CELL 8 — OBPRSUPPL (IPLM Problem-Report Suppliers)
+CELL 9 — Final Supplier Selection (OMAT Logic)
 Purpose:
-This step finds suppliers coming from IPLM Obsolescence Problem Reports.
-It answers:
-“If this part is obsolete and under investigation, which supplier is responsible?”
+This step combines:
+ML master supplier
+Open PO suppliers
+IPLM problem-report suppliers
+and applies the same priority logic as SAP to decide:
+The OMAT selected plant
+The OMAT selected supplier code
+The OMAT selected supplier name
+Priority order:
+ML master
+Open PO (PO1 → PO2)
+IPLM Problem Report
 
 
 
 
 
-obpr = (
-    nhalist
-    .join(problem_pt, problem_pt.part_name == nhalist.nha_cd)
-    .filter(
-        (problem_pt.part_name != "NA") &
-        (F.upper(problem_pt.state) != "CLOSED") &
-        (
-            F.upper(problem_pt.state).isin("CONFIRMED", "IN REVIEW", "IN WORK") |
-            F.upper(problem_pt.disposition).isin("CONFIRMED", "DEFER")
-        ) &
-        (F.upper(problem_pt.reason) == "OBSOLETE COMPONENT")
+final_df = (
+    supplinfo
+    .join(openposuppl, "nha_cd", "left")
+    .join(obpr, "nha_cd", "left")
+    .withColumn(
+        "omat_selected_plant",
+        F.when(F.length("supplierid_cd") > 0, F.lit("2000"))
+         .when(F.length("suppcd_po1") == 10, F.lit("2000"))
+         .when(F.length("suppcd_pr") > 0, F.lit("2000"))
     )
-    .withColumn("suppcd_pr", F.lpad(problem_pt.supplier_code, 10, "0"))
-    .join(
-        lfa1.select(
-            F.col("lifnr").alias("suppcd_pr"),
-            F.col("name1").alias("suppname_pr")
-        ),
-        "suppcd_pr",
-        "left"
+    .withColumn(
+        "omat_selected_suppliercd",
+        F.when(F.length("supplierid_cd") > 0, F.col("supplierid_cd"))
+         .when(F.length("suppcd_po1") == 10, F.col("suppcd_po1"))
+         .when(F.length("suppcd_po2") == 10, F.substring("suppcd_po2", 1, 10))
+         .when(F.length("suppcd_pr") > 0, F.col("suppcd_pr"))
     )
-    .select(
-        nhalist.nha_cd.alias("nha_cd"),
-        "suppcd_pr",
-        "suppname_pr"
+    .withColumn(
+        "omat_selected_supplier",
+        F.when(F.length("supplierid_cd") > 0, F.col("supplier_nm"))
+         .when(F.length("suppcd_po1") == 10, F.col("suppname_po1"))
+         .when(F.length("suppcd_po2") == 10, F.col("suppname_po2"))
+         .when(F.length("suppcd_pr") > 0, F.col("suppname_pr"))
     )
 )
