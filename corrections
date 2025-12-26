@@ -1,76 +1,34 @@
-PySparkTypeError                          Traceback (most recent call last)
-Cell In[52], line 9
-      1 po_base = (
-      2     nhalist
-      3     .join(rscxd_cons.select("nha", "open_po_qty"), nhalist.nha_cd == rscxd_cons.nha)
-      4     .join(po_hstry, po_hstry.matnr == nhalist.nha_cd)
-      5     .join(ekpo, (po_hstry.ebeln == ekpo.ebeln) & (po_hstry.ebelp == ekpo.ebelp))
-      6     .join(lfa1, lfa1.lifnr == po_hstry.lifnr)
-      7     .filter(
-      8         (rscxd_cons.open_po_qty > 0) &
-----> 9         (~F.right(po_hstry.due_dt, 5).isin("04-01", "12-31")) &
-     10         (po_hstry.status != "INACT") &
-     11         (F.trim(po_hstry.matnr) != "") &
-     12         (F.trim(po_hstry.loekz) == "") &
-     13         (po_hstry.discrd != "X") &
-     14         (po_hstry.aussl != "U3") &
-     15         (po_hstry.bsart != "UB") &
-     16         (po_hstry.elikz != "X") &
-     17         (~ekpo.pstyp.isin("7", "9"))
-     18     )
-     19     .select(
-     20         nhalist.nha_cd.alias("nha_cd"),
-     21         po_hstry.lifnr.alias("lifnr_cd"),
-     22         lfa1.name1.alias("name1_cd")
-     23     )
-     24     .distinct()
-     25 )
-     27 posupp = (
-     28     po_base
-     29     .groupBy("nha_cd")
-   (...)
-     33     )
-     34 )
+po_base = (
+    nhalist
+    .join(rscxd_cons.select("nha", "open_po_qty"), nhalist.nha_cd == rscxd_cons.nha)
+    .join(po_hstry, po_hstry.matnr == nhalist.nha_cd)
+    .join(ekpo, (po_hstry.ebeln == ekpo.ebeln) & (po_hstry.ebelp == ekpo.ebelp))
+    .join(lfa1, lfa1.lifnr == po_hstry.lifnr)
+    .filter(
+        (rscxd_cons.open_po_qty > 0) &
+        (~F.substring(po_hstry.due_dt, -5, 5).isin("04-01", "12-31")) &
+        (po_hstry.status != "INACT") &
+        (F.trim(po_hstry.matnr) != "") &
+        (F.trim(po_hstry.loekz) == "") &
+        (po_hstry.discrd != "X") &
+        (po_hstry.aussl != "U3") &
+        (po_hstry.bsart != "UB") &
+        (po_hstry.elikz != "X") &
+        (~ekpo.pstyp.isin("7", "9"))
+    )
+    .select(
+        nhalist.nha_cd.alias("nha_cd"),
+        po_hstry.lifnr.alias("lifnr_cd"),
+        lfa1.name1.alias("name1_cd")
+    )
+    .distinct()
+)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/utils.py:174, in try_remote_functions.<locals>.wrapped(*args, **kwargs)
-    172     return getattr(functions, f.__name__)(*args, **kwargs)
-    173 else:
---> 174     return f(*args, **kwargs)
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/functions.py:10938, in right(str, len)
-  10917 @try_remote_functions
-  10918 def right(str: "ColumnOrName", len: "ColumnOrName") -> Column:
-  10919     """
-  10920     Returns the rightmost `len`(`len` can be string type) characters from the string `str`,
-  10921     if `len` is less or equal than 0 the result is an empty string.
-   (...)
-  10936     [Row(r='SQL')]
-  10937     """
-> 10938     return _invoke_function_over_columns("right", str, len)
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/functions.py:105, in _invoke_function_over_columns(name, *cols)
-    100 def _invoke_function_over_columns(name: str, *cols: "ColumnOrName") -> Column:
-    101     """
-    102     Invokes n-ary JVM function identified by name
-    103     and wraps the result with :class:`~pyspark.sql.Column`.
-    104     """
---> 105     return _invoke_function(name, *(_to_java_column(col) for col in cols))
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/functions.py:105, in <genexpr>(.0)
-    100 def _invoke_function_over_columns(name: str, *cols: "ColumnOrName") -> Column:
-    101     """
-    102     Invokes n-ary JVM function identified by name
-    103     and wraps the result with :class:`~pyspark.sql.Column`.
-    104     """
---> 105     return _invoke_function(name, *(_to_java_column(col) for col in cols))
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/column.py:65, in _to_java_column(col)
-     63     jcol = _create_column_from_name(col)
-     64 else:
----> 65     raise PySparkTypeError(
-     66         error_class="NOT_COLUMN_OR_STR",
-     67         message_parameters={"arg_name": "col", "arg_type": type(col).__name__},
-     68     )
-     69 return jcol
-
-PySparkTypeError: [NOT_COLUMN_OR_STR] Argument `col` should be a Column or str, got int.
+posupp = (
+    po_base
+    .groupBy("nha_cd")
+    .agg(
+        F.concat_ws(",", F.collect_list("lifnr_cd")).alias("posuppcode_cd"),
+        F.concat_ws(",", F.collect_list("name1_cd")).alias("posuppname_cd")
+    )
+)
