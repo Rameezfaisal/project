@@ -1,44 +1,40 @@
-CELL 9 — Final Supplier Selection (OMAT Logic)
+CELL 10 — Insert into rpt_omat_buynha_suppliers_plants
 Purpose:
-This step combines:
-ML master supplier
-Open PO suppliers
-IPLM problem-report suppliers
-and applies the same priority logic as SAP to decide:
-The OMAT selected plant
-The OMAT selected supplier code
-The OMAT selected supplier name
-Priority order:
-ML master
-Open PO (PO1 → PO2)
-IPLM Problem Report
+This writes the resolved supplier dataset into the Delta table that replaces
+ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS from SAP.
+It stores:
+All supplier sources
+And the final OMAT-selected supplier per NHA
+This replaces the SAP MERGE … WHEN NOT MATCHED THEN INSERT logic.
 
 
 
 
+final_df.select(
+    F.col("nha_cd").alias("nha"),
+    "omat_selected_plant",
+    "omat_selected_supplier",
+    "omat_selected_suppliercd",
 
-final_df = (
-    supplinfo
-    .join(openposuppl, "nha_cd", "left")
-    .join(obpr, "nha_cd", "left")
-    .withColumn(
-        "omat_selected_plant",
-        F.when(F.length("supplierid_cd") > 0, F.lit("2000"))
-         .when(F.length("suppcd_po1") == 10, F.lit("2000"))
-         .when(F.length("suppcd_pr") > 0, F.lit("2000"))
-    )
-    .withColumn(
-        "omat_selected_suppliercd",
-        F.when(F.length("supplierid_cd") > 0, F.col("supplierid_cd"))
-         .when(F.length("suppcd_po1") == 10, F.col("suppcd_po1"))
-         .when(F.length("suppcd_po2") == 10, F.substring("suppcd_po2", 1, 10))
-         .when(F.length("suppcd_pr") > 0, F.col("suppcd_pr"))
-    )
-    .withColumn(
-        "omat_selected_supplier",
-        F.when(F.length("supplierid_cd") > 0, F.col("supplier_nm"))
-         .when(F.length("suppcd_po1") == 10, F.col("suppname_po1"))
-         .when(F.length("suppcd_po2") == 10, F.col("suppname_po2"))
-         .when(F.length("suppcd_pr") > 0, F.col("suppname_pr"))
-    )
-)
+    F.lit(None).cast("string").alias("suppcd_1050"),
+    F.lit(None).cast("string").alias("suppcd_1060"),
+    F.lit(None).cast("string").alias("suppcd_1090"),
+    F.lit(None).cast("string").alias("suppcd_1900"),
+    F.col("supplierid_cd").alias("suppcd_2000"),
+    F.lit(None).cast("string").alias("suppcd_3120"),
+
+    F.col("suppcd_po1"),
+    F.col("suppcd_po2"),
+    F.col("suppcd_pr"),
+
+    F.lit(None).cast("string").alias("suppname_1050"),
+    F.lit(None).cast("string").alias("suppname_1060"),
+    F.lit(None).cast("string").alias("suppname_1090"),
+    F.lit(None).cast("string").alias("suppname_1900"),
+    F.col("supplier_nm").alias("suppname_2000"),
+    F.lit(None).cast("string").alias("suppname_3120"),
+
+    F.col("suppname_po1"),
+    F.col("suppname_po2"),
+    F.col("suppname_pr")
+).write.mode("append").saveAsTable(tgt_supplier_plants)
