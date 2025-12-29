@@ -1,117 +1,53 @@
-AnalysisException                         Traceback (most recent call last)
-Cell In[61], line 38
-     22 odrbom_dmd = (
-     23     nha_forecast
-     24     .join(marc, "matnr", "inner")
-   (...)
-     34     .dropDuplicates()
-     35 )
-     37 # 4. Overwrite SAP OMAT_ODRBOM_DMD_DTLS equivalent
----> 38 odrbom_dmd.write.mode("overwrite").saveAsTable(tgt_odrbom_dmd)
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/readwriter.py:1586, in DataFrameWriter.saveAsTable(self, name, format, mode, partitionBy, **options)
-   1584 if format is not None:
-   1585     self.format(format)
--> 1586 self._jwrite.saveAsTable(name)
-
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
-
-AnalysisException: [_LEGACY_ERROR_TEMP_DELTA_0007] A schema mismatch detected when writing to the Delta table (Table ID: 9731f71f-c32c-43cb-9efa-015681ec3f03).
-To enable schema migration using DataFrameWriter or DataStreamWriter, please set:
-'.option("mergeSchema", "true")'.
-For other operations, set the session configuration
-spark.databricks.delta.schema.autoMerge.enabled to "true". See the documentation
-specific to the operation for details.
-
-Table schema:
-root
--- dmd1: decimal(13,3) (nullable = true)
--- dmd10: decimal(13,3) (nullable = true)
--- dmd11: decimal(13,3) (nullable = true)
--- dmd12: decimal(13,3) (nullable = true)
--- dmd13: decimal(13,3) (nullable = true)
--- dmd14: decimal(13,3) (nullable = true)
--- dmd15: decimal(13,3) (nullable = true)
--- dmd16: decimal(13,3) (nullable = true)
--- dmd17: decimal(13,3) (nullable = true)
--- dmd18: decimal(13,3) (nullable = true)
--- dmd19: decimal(13,3) (nullable = true)
--- dmd2: decimal(13,3) (nullable = true)
--- dmd20: decimal(13,3) (nullable = true)
--- dmd21: decimal(13,3) (nullable = true)
--- dmd22: decimal(13,3) (nullable = true)
--- dmd23: decimal(13,3) (nullable = true)
--- dmd24: decimal(13,3) (nullable = true)
--- dmd25: decimal(13,3) (nullable = true)
--- dmd26: decimal(13,3) (nullable = true)
--- dmd3: decimal(13,3) (nullable = true)
--- dmd4: decimal(13,3) (nullable = true)
--- dmd5: decimal(13,3) (nullable = true)
--- dmd6: decimal(13,3) (nullable = true)
--- dmd7: decimal(13,3) (nullable = true)
--- dmd8: decimal(13,3) (nullable = true)
--- dmd9: decimal(13,3) (nullable = true)
--- dmdpd: decimal(13,3) (nullable = true)
--- nha: string (nullable = true)
--- odrbom: string (nullable = true)
--- rowtype: string (nullable = true)
+For each Order BOM belonging to 571 NHAs, how much forecasted demand exists for the next 26 periods?”
+This table is the base for all demand math that follows.
 
 
-Data schema:
-root
--- odrbom: string (nullable = true)
--- stdpd: string (nullable = true)
--- rowtype: string (nullable = true)
--- dmdpd: decimal(13,3) (nullable = true)
--- dmd1: decimal(13,3) (nullable = true)
--- dmd2: decimal(13,3) (nullable = true)
--- dmd3: decimal(13,3) (nullable = true)
--- dmd4: decimal(13,3) (nullable = true)
--- dmd5: decimal(13,3) (nullable = true)
--- dmd6: decimal(13,3) (nullable = true)
--- dmd7: decimal(13,3) (nullable = true)
--- dmd8: decimal(13,3) (nullable = true)
--- dmd9: decimal(13,3) (nullable = true)
--- dmd10: decimal(13,3) (nullable = true)
--- dmd11: decimal(13,3) (nullable = true)
--- dmd12: decimal(13,3) (nullable = true)
--- dmd13: decimal(13,3) (nullable = true)
--- dmd14: decimal(13,3) (nullable = true)
--- dmd15: decimal(13,3) (nullable = true)
--- dmd16: decimal(13,3) (nullable = true)
--- dmd17: decimal(13,3) (nullable = true)
--- dmd18: decimal(13,3) (nullable = true)
--- dmd19: decimal(13,3) (nullable = true)
--- dmd20: decimal(13,3) (nullable = true)
--- dmd21: decimal(13,3) (nullable = true)
--- dmd22: decimal(13,3) (nullable = true)
--- dmd23: decimal(13,3) (nullable = true)
--- dmd24: decimal(13,3) (nullable = true)
--- dmd25: decimal(13,3) (nullable = true)
--- dmd26: decimal(13,3) (nullable = true)
 
-         
-To overwrite your schema or change partitioning, please set:
-'.option("overwriteSchema", "true")'.
 
-Note that the schema can't be overwritten when using
-'replaceWhere'.
-         
+
+
+
+# 1. Filter forecast to SAP conditions
+forecast_f = (
+    forecast
+    .filter(
+        (F.col("rowtype") == "6") &
+        (F.col("werks") == "COMB")
+    )
+)
+
+# 2. Join NHALIST2 to forecast using substring logic
+nha_forecast = (
+    nhalist2
+    .withColumn("nha_key", F.substring("nha", 1, 11))
+    .join(
+        forecast_f.withColumn("matnr_key", F.substring("matnr", 1, 11)),
+        F.col("nha_key") == F.col("matnr_key"),
+        "inner"
+    )
+)
+
+# 3. Join MARC only for filtering (do NOT keep stdpd)
+odrbom_dmd = (
+    nha_forecast
+    .join(marc, "matnr", "inner")
+    .filter(F.trim(F.col("stdpd")) != "")
+    .select(
+        F.col("matnr").alias("odrbom"),
+        F.col("nha"),
+        F.col("rowtype"),
+        "dmdpd","dmd1","dmd2","dmd3","dmd4","dmd5","dmd6","dmd7","dmd8","dmd9",
+        "dmd10","dmd11","dmd12","dmd13","dmd14","dmd15","dmd16","dmd17",
+        "dmd18","dmd19","dmd20","dmd21","dmd22","dmd23","dmd24","dmd25","dmd26"
+    )
+    .dropDuplicates()
+)
+
+# 4. Overwrite rpt_omat_odrbom_dmd_dtls safely
+(
+    odrbom_dmd
+    .write
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .saveAsTable(tgt_odrbom_dmd)
+)
