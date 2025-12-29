@@ -1,53 +1,9 @@
-For each Order BOM belonging to 571 NHAs, how much forecasted demand exists for the next 26 periods?”
-This table is the base for all demand math that follows.
+“Which Order BOMs belong to which 571-series NHA?”
+Every downstream step (consumption, QOH, PO, demand rollups) uses this mapping.
 
 
-
-
-
-
-
-# 1. Filter forecast to SAP conditions
-forecast_f = (
-    forecast
-    .filter(
-        (F.col("rowtype") == "6") &
-        (F.col("werks") == "COMB")
-    )
-)
-
-# 2. Join NHALIST2 to forecast using substring logic
-nha_forecast = (
-    nhalist2
-    .withColumn("nha_key", F.substring("nha", 1, 11))
-    .join(
-        forecast_f.withColumn("matnr_key", F.substring("matnr", 1, 11)),
-        F.col("nha_key") == F.col("matnr_key"),
-        "inner"
-    )
-)
-
-# 3. Join MARC only for filtering (do NOT keep stdpd)
-odrbom_dmd = (
-    nha_forecast
-    .join(marc, "matnr", "inner")
-    .filter(F.trim(F.col("stdpd")) != "")
-    .select(
-        F.col("matnr").alias("odrbom"),
-        F.col("nha"),
-        F.col("rowtype"),
-        "dmdpd","dmd1","dmd2","dmd3","dmd4","dmd5","dmd6","dmd7","dmd8","dmd9",
-        "dmd10","dmd11","dmd12","dmd13","dmd14","dmd15","dmd16","dmd17",
-        "dmd18","dmd19","dmd20","dmd21","dmd22","dmd23","dmd24","dmd25","dmd26"
-    )
+newlist = (
+    spark.table(tgt_odrbom_dmd)
+    .select("odrbom", "nha")
     .dropDuplicates()
-)
-
-# 4. Overwrite rpt_omat_odrbom_dmd_dtls safely
-(
-    odrbom_dmd
-    .write
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .saveAsTable(tgt_odrbom_dmd)
 )
