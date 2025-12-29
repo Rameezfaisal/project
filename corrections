@@ -1,34 +1,33 @@
-CELL 12 — Finaldata (SAP’s :Finaldata)
+CELL 13 — MERGE into omat_dmd_consumption_dtls
 
-Combine Demand, Consumption, Stock, and Supply for each 571 NHA, and keep only the ones that have any activity.
-This is the dataset that gets MERGEd into the master table.
-
-
-
+If a CMPPRTNO + NHA already exists, add today’s values to it.
+Otherwise, insert a new row.
+This makes the table cumulative across runs.
 
 
 
 
-finaldata = (
-    nhalist2
-    .join(mfg_dmd, "nha", "left")
-    .join(mfg_5yr, "nha", "left")
-    .join(mfg_1yr, "nha", "left")
-    .join(qoh, "nha", "left")
-    .join(poqty, "nha", "left")
-    .select(
-        "cmpprtno",
-        "nha",
-        "mfg_dmd",
-        "mfg_5yrs_cons",
-        "mfg_1yrs_cons",
-        "lamqoh",
-        "open_po_qty",
-        "restricted_all_stock"
-    )
-    .filter(
-        (F.abs(F.coalesce("mfg_5yrs_cons", F.lit(0))) +
-         F.abs(F.coalesce("mfg_dmd", F.lit(0))) +
-         F.abs(F.coalesce("mfg_1yrs_cons", F.lit(0)))) > 0
-    )
-)
+delta = DeltaTable.forName(spark, tgt_dmd_cons)
+
+delta.alias("a").merge(
+    finaldata.alias("b"),
+    "a.nha = b.nha AND a.cmpprtno = b.cmpprtno"
+).whenMatchedUpdate(set={
+    "mfg_dmd": F.coalesce("a.mfg_dmd", F.lit(0)) + F.coalesce("b.mfg_dmd", F.lit(0)),
+    "mfg_12mnths_consumption": F.coalesce("a.mfg_12mnths_consumption", F.lit(0)) + F.coalesce("b.mfg_1yrs_cons", F.lit(0)),
+    "mfg_5yrs_consumption": F.coalesce("a.mfg_5yrs_consumption", F.lit(0)) + F.coalesce("b.mfg_5yrs_cons", F.lit(0)),
+    "lamqoh": F.coalesce("a.lamqoh", F.lit(0)) + F.coalesce("b.lamqoh", F.lit(0)),
+    "open_po_qty": F.coalesce("a.open_po_qty", F.lit(0)) + F.coalesce("b.open_po_qty", F.lit(0)),
+    "restricted_all_stock": F.coalesce("a.restricted_all_stock", F.lit(0)) + F.coalesce("b.restricted_all_stock", F.lit(0)),
+    "last_modified_on": today
+}).whenNotMatchedInsert(values={
+    "cmpprtno": "b.cmpprtno",
+    "nha": "b.nha",
+    "mfg_dmd": "b.mfg_dmd",
+    "mfg_12mnths_consumption": "b.mfg_1yrs_cons",
+    "mfg_5yrs_consumption": "b.mfg_5yrs_cons",
+    "lamqoh": "b.lamqoh",
+    "open_po_qty": "b.open_po_qty",
+    "restricted_all_stock": "b.restricted_all_stock",
+    "last_modified_on": today
+}).execute()
