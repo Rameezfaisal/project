@@ -1,41 +1,34 @@
-# Flatten PO history (avoid ambiguous columns)
-po_hist_f = po_hist.select(
-    F.col("ebeln"),
-    F.col("ebelp"),
-    F.col("matnr").alias("po_matnr"),
-    F.col("menge"),
-    F.col("wemng"),
-    F.col("due_dt"),
-    F.col("status").alias("po_status"),
-    F.col("loekz"),
-    F.col("aussl"),
-    F.col("bsart"),
-    F.col("elikz")
-)
+CELL 12 — Finaldata (SAP’s :Finaldata)
 
-# Flatten EKPO
-ekpo_f = ekpo.select(
-    F.col("ebeln"),
-    F.col("ebelp"),
-    F.col("pstyp")
-)
+Combine Demand, Consumption, Stock, and Supply for each 571 NHA, and keep only the ones that have any activity.
+This is the dataset that gets MERGEd into the master table.
 
-poqty = (
-    po_hist_f
-    .join(ekpo_f, ["ebeln", "ebelp"], "inner")
-    .join(newlist, po_hist_f.po_matnr == newlist.odrbom, "inner")
-    .filter(
-        (~F.substring("due_dt", -5, 5).isin("04-01", "12-31")) &
-        (F.col("po_status") != "INACT") &
-        (F.trim("po_matnr") != "") &
-        (F.trim("loekz") == "") &
-        (F.col("aussl") != "U3") &
-        (F.col("bsart") != "UB") &
-        (F.col("elikz") != "X") &
-        (~F.col("pstyp").isin("7", "9"))
+
+
+
+
+
+
+finaldata = (
+    nhalist2
+    .join(mfg_dmd, "nha", "left")
+    .join(mfg_5yr, "nha", "left")
+    .join(mfg_1yr, "nha", "left")
+    .join(qoh, "nha", "left")
+    .join(poqty, "nha", "left")
+    .select(
+        "cmpprtno",
+        "nha",
+        "mfg_dmd",
+        "mfg_5yrs_cons",
+        "mfg_1yrs_cons",
+        "lamqoh",
+        "open_po_qty",
+        "restricted_all_stock"
     )
-    .groupBy("nha")
-    .agg(
-        F.sum(F.col("menge") - F.col("wemng")).cast("int").alias("open_po_qty")
+    .filter(
+        (F.abs(F.coalesce("mfg_5yrs_cons", F.lit(0))) +
+         F.abs(F.coalesce("mfg_dmd", F.lit(0))) +
+         F.abs(F.coalesce("mfg_1yrs_cons", F.lit(0)))) > 0
     )
 )
