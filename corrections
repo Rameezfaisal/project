@@ -1,121 +1,26 @@
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-from delta.tables import DeltaTable
+# =========================
+# Source CV tables
+# =========================
+cv_buy_nha_dtls = "prd.gops.OMAT.CV_OMAT_OBPN_BUY_NHA_DTLS"
+cv_forecast    = "prd.global.ecc.CV_ZMMFORECAST"
+cv_marc        = "prd.global.ecc.CV_MARC"
+cv_mseg        = "prd.global.ecc.CV_MSEG"
+cv_makt        = "prd.global.ecc.CV_MAKT"
+cv_mkpf        = "prd.global.ecc.CV_MKPF"
+cv_mard        = "prd.global.ecc.CV_MARD"
+cv_po_hstry    = "prd.global.ecc.CV_ZPO_HSTRY"
+cv_ekpo        = "prd.global.ecc.CV_EKPO"
 
+# =========================
+# Target Delta tables (SAP → Fabric)
+# =========================
+tgt_odrbom_dmd  = "eng_test.rpt_omat_odrbom_dmd_dtls"      # W_OMAT.OMAT_ODRBOM_DMD_DTLS
+tgt_odrbom_cons = "eng_test.rpt_omat_odrbom_cons_dtls"    # W_OMAT.OMAT_ODRBOM_CONS_DTLS
+tgt_dmd_cons   = "eng_test.omat_dmd_consumption_dtls"    # W_OMAT.OMAT_DMD_CONSUMPTION_DTLS
 
-
-
-
-# ---------- Source tables ----------
-cv_buy_nha_dtls   = "prd.gops.OMAT.CV_OMAT_OBPN_BUY_NHA_DTLS"
-cv_forecast      = "prd.global.ecc.CV_ZMMFORECAST"
-cv_marc          = "prd.global.ecc.CV_MARC"
-cv_mseg          = "prd.global.ecc.CV_MSEG"
-cv_makt          = "prd.global.ecc.CV_MAKT"
-cv_mkpf          = "prd.global.ecc.CV_MKPF"
-cv_mard          = "prd.global.ecc.CV_MARD"
-cv_po_hstry      = "prd.global.ecc.CV_ZPO_HSTRY"
-cv_ekpo          = "prd.global.ecc.CV_EKPO"
-
-# ---------- Target tables ----------
-tgt_odrbom_cons   = "eng_test.rpt_omat_odrbom_cons_dtls"
-tgt_dmd_cons     = "eng_test.omat_dmd_consumption_dtls"
-
-# ---------- Control ----------
+# =========================
+# Date controls (SAP ADD_DAYS equivalent)
+# =========================
 today = F.current_date()
 five_years_ago = F.date_add(today, -365 * 5)
 one_year_ago   = F.date_add(today, -365)
-
-
-
-
-
-
-
-
-
-buy_nha = spark.table(cv_buy_nha_dtls).select(
-    F.col("cmpprtno").alias("cmpprtno"),
-    F.col("nha").alias("nha")
-)
-
-forecast = spark.table(cv_forecast)
-marc     = spark.table(cv_marc)
-mseg     = spark.table(cv_mseg)
-makt     = spark.table(cv_makt)
-mkpf     = spark.table(cv_mkpf)
-mard     = spark.table(cv_mard)
-po_hist  = spark.table(cv_po_hstry)
-ekpo     = spark.table(cv_ekpo)
-
-
-
-
-
-
-nhalist2 = (
-    buy_nha
-    .filter(F.col("nha").startswith("571"))
-    .dropDuplicates()
-)
-
-
-
-
-
-forecast_f = forecast.filter((F.col("rowtype") == "6") & (F.col("werks") == "COMB"))
-
-dmd = (
-    nhalist2
-    .withColumn("nha_key", F.substring("nha", 1, 11))
-    .join(
-        forecast_f.withColumn("matnr_key", F.substring("matnr", 1, 11)),
-        F.col("nha_key") == F.col("matnr_key"),
-        "inner"
-    )
-    .join(marc, "matnr", "inner")
-    .filter(F.col("stdpd").isNotNull())
-)
-
-
-
-
-
-
-
-newlist = dmd.select(
-    F.col("matnr").alias("odrbom"),
-    F.col("nha")
-).dropDuplicates()
-
-
-
-
-
-
-cons = (
-    newlist
-    .join(mseg, mseg.matnr == newlist.odrbom)
-    .join(mkpf, "mblnr")
-    .filter(
-        (F.col("bwart").isin("261", "262")) &
-        (F.col("bldat") > five_years_ago) &
-        (F.col("bldat") < today) &
-        (F.col("cpudt_mkpf") > five_years_ago)
-    )
-    .withColumn(
-        "menge",
-        F.when(F.col("shkzg") == "S", -F.col("menge")).otherwise(F.col("menge"))
-    )
-    .select(
-        F.col("bldat").alias("cons_date"),
-        F.col("menge").cast("decimal(13,3)").alias("menge"),
-        F.col("nha"),
-        F.col("odrbom")
-    )
-    .filter(F.col("menge").isNotNull())
-)
-
-cons.write.mode("overwrite").saveAsTable(tgt_odrbom_cons)
-
-
