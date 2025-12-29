@@ -1,33 +1,4 @@
-CELL 13 — MERGE into omat_dmd_consumption_dtls
-
-If a CMPPRTNO + NHA already exists, add today’s values to it.
-Otherwise, insert a new row.
-This makes the table cumulative across runs.
-
-
-
-
-delta = DeltaTable.forName(spark, tgt_dmd_cons)
-
-delta.alias("a").merge(
-    finaldata.alias("b"),
-    "a.nha = b.nha AND a.cmpprtno = b.cmpprtno"
-).whenMatchedUpdate(set={
-    "mfg_dmd": F.coalesce("a.mfg_dmd", F.lit(0)) + F.coalesce("b.mfg_dmd", F.lit(0)),
-    "mfg_12mnths_consumption": F.coalesce("a.mfg_12mnths_consumption", F.lit(0)) + F.coalesce("b.mfg_1yrs_cons", F.lit(0)),
-    "mfg_5yrs_consumption": F.coalesce("a.mfg_5yrs_consumption", F.lit(0)) + F.coalesce("b.mfg_5yrs_cons", F.lit(0)),
-    "lamqoh": F.coalesce("a.lamqoh", F.lit(0)) + F.coalesce("b.lamqoh", F.lit(0)),
-    "open_po_qty": F.coalesce("a.open_po_qty", F.lit(0)) + F.coalesce("b.open_po_qty", F.lit(0)),
-    "restricted_all_stock": F.coalesce("a.restricted_all_stock", F.lit(0)) + F.coalesce("b.restricted_all_stock", F.lit(0)),
-    "last_modified_on": today
-}).whenNotMatchedInsert(values={
-    "cmpprtno": "b.cmpprtno",
-    "nha": "b.nha",
-    "mfg_dmd": "b.mfg_dmd",
-    "mfg_12mnths_consumption": "b.mfg_1yrs_cons",
-    "mfg_5yrs_consumption": "b.mfg_5yrs_cons",
-    "lamqoh": "b.lamqoh",
-    "open_po_qty": "b.open_po_qty",
-    "restricted_all_stock": "b.restricted_all_stock",
-    "last_modified_on": today
-}).execute()
+select *
+from eng_test.omat_dmd_consumption_dtls
+order by last_modified_on desc
+limit 20;
