@@ -1,41 +1,11 @@
-# Buy NHA
-buy_nha = spark.table(cv_buy_nha_dtls)
+It identifies all 571-series NHAs that drive the entire BOM demand & consumption logic.
 
-# Forecast (no renames needed yet)
-forecast = spark.table(cv_forecast)
 
-# MARC
-marc = spark.table(cv_marc)
 
-# MSEG (rename matnr to avoid join ambiguity later)
-mseg = spark.table(cv_mseg).select(
-    "matnr",
-    "mblnr",
-    "bwart",
-    "shkzg",
-    "menge",
-    "cpudt_mkpf"
+
+nhalist2 = (
+    buy_nha
+    .filter(F.col("nha").startswith("571"))
+    .select("cmpprtno", "nha")
+    .dropDuplicates()
 )
-
-# MKPF
-mkpf = spark.table(cv_mkpf).select(
-    "mblnr",
-    "bldat"
-)
-
-# MARD (rename matnr)
-mard = spark.table(cv_mard).select(
-    "matnr",
-    "labst",
-    "klabs",
-    "insme",
-    "umlme",
-    "einme",
-    "speme"
-)
-
-# PO History
-po_hist = spark.table(cv_po_hstry)
-
-# EKPO
-ekpo = spark.table(cv_ekpo)
