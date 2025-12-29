@@ -1,1 +1,51 @@
-Step 11 updates the main OMAT part table so that each NHA now shows the final chosen supplier, supplier code, and the first open-PO supplier, ensuring all reports and users see the correct vendor information.
+CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_buynha_suppliers_plants (
+  nha                      STRING,
+  omat_selected_plant      STRING,
+  omat_selected_supplier   STRING,
+  omat_selected_suppliercd STRING,
+  suppcd_1050              STRING,
+  suppcd_1060              STRING,
+  suppcd_1090              STRING,
+  suppcd_1900              STRING,
+  suppcd_2000              STRING,
+  suppcd_3120              STRING,
+  suppcd_po1               STRING,
+  suppcd_po2               STRING,
+  suppcd_pr                STRING,
+  suppname_1050            STRING,
+  suppname_1060            STRING,
+  suppname_1090            STRING,
+  suppname_1900            STRING,
+  suppname_2000            STRING,
+  suppname_3120            STRING,
+  suppname_po1             STRING,
+  suppname_po2             STRING,
+  suppname_pr              STRING
+)
+USING DELTA;
+
+
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_odrbom_cons_dtls (
+  cons_date DATE,
+  menge     DECIMAL(13,3) NOT NULL,
+  nha       STRING,
+  odrbom    STRING
+)
+USING DELTA;"
+
+
+
+CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_makenha_dmdconsumption_dtls (
+  cmpprtno                STRING,
+  last_modified_on        DATE,
+  mfg_12mnths_consumption INT,
+  mfg_5yrs_consumption    INT,
+  mfg_dmd                 INT,
+  nha                     STRING,
+  sprs_5yrs_consumption   INT,
+  sprs_dmd                INT
+)
+USING DELTA;
+
+
+USING DELTA;"
