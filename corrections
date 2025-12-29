@@ -1,43 +1,42 @@
-CELL 7 — Build rpt_omat_odrbom_cons_dtls
+AnalysisException                         Traceback (most recent call last)
+Cell In[73], line 35
+     15 cons = (
+     16     cons_raw
+     17     .withColumn(
+   (...)
+     27     .filter(F.col("menge").isNotNull())   # protect NOT NULL constraint
+     28 )
+     30 # Overwrite rpt_omat_odrbom_cons_dtls
+     31 (
+     32     cons
+     33     .write
+     34     .mode("overwrite")
+---> 35     .saveAsTable(tgt_odrbom_cons)
+     36 )
 
-For every Order BOM, pull all goods issue & reversal transactions (261/262) from SAP, convert them into positive or negative consumption, and store them with posting date.
-This creates a 5-year transaction-level consumption history.
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/readwriter.py:1586, in DataFrameWriter.saveAsTable(self, name, format, mode, partitionBy, **options)
+   1584 if format is not None:
+   1585     self.format(format)
+-> 1586 self._jwrite.saveAsTable(name)
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-# Join BOM list to material movements
-cons_raw = (
-    newlist
-    .join(mseg, newlist.odrbom == mseg.matnr, "inner")
-    .join(mkpf, "mblnr", "inner")
-    .filter(
-        (F.col("bwart").isin("261", "262")) &
-        (F.col("bldat") > five_years_ago) &
-        (F.col("bldat") < today) &
-        (F.col("cpudt_mkpf") > five_years_ago)
-    )
-)
-
-# Apply SAP sign logic (261 positive, 262 negative)
-cons = (
-    cons_raw
-    .withColumn(
-        "menge_signed",
-        F.when(F.col("shkzg") == "S", -F.col("menge")).otherwise(F.col("menge"))
-    )
-    .select(
-        F.col("bldat").alias("cons_date"),
-        F.col("menge_signed").cast("decimal(13,3)").alias("menge"),
-        F.col("nha"),
-        F.col("odrbom")
-    )
-    .filter(F.col("menge").isNotNull())   # protect NOT NULL constraint
-)
-
-# Overwrite rpt_omat_odrbom_cons_dtls
-(
-    cons
-    .write
-    .mode("overwrite")
-    .saveAsTable(tgt_odrbom_cons)
-)
+AnalysisException: [DELTA_FAILED_TO_MERGE_FIELDS] Failed to merge fields 'cons_date' and 'cons_date'
