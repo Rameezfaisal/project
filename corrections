@@ -1,26 +1,101 @@
-# =========================
-# Source CV tables
-# =========================
-cv_buy_nha_dtls = "prd.gops.OMAT.CV_OMAT_OBPN_BUY_NHA_DTLS"
-cv_forecast    = "prd.global.ecc.CV_ZMMFORECAST"
-cv_marc        = "prd.global.ecc.CV_MARC"
-cv_mseg        = "prd.global.ecc.CV_MSEG"
-cv_makt        = "prd.global.ecc.CV_MAKT"
-cv_mkpf        = "prd.global.ecc.CV_MKPF"
-cv_mard        = "prd.global.ecc.CV_MARD"
-cv_po_hstry    = "prd.global.ecc.CV_ZPO_HSTRY"
-cv_ekpo        = "prd.global.ecc.CV_EKPO"
+This is the Fabric equivalent of SAP’s _SYS_BIC views.
+We load them once, select + rename columns to lowercase, and freeze schemas so Spark never throws ambiguity errors later.
 
-# =========================
-# Target Delta tables (SAP → Fabric)
-# =========================
-tgt_odrbom_dmd  = "eng_test.rpt_omat_odrbom_dmd_dtls"      # W_OMAT.OMAT_ODRBOM_DMD_DTLS
-tgt_odrbom_cons = "eng_test.rpt_omat_odrbom_cons_dtls"    # W_OMAT.OMAT_ODRBOM_CONS_DTLS
-tgt_dmd_cons   = "eng_test.omat_dmd_consumption_dtls"    # W_OMAT.OMAT_DMD_CONSUMPTION_DTLS
 
-# =========================
-# Date controls (SAP ADD_DAYS equivalent)
-# =========================
-today = F.current_date()
-five_years_ago = F.date_add(today, -365 * 5)
-one_year_ago   = F.date_add(today, -365)
+
+
+
+# Buy NHA
+buy_nha = spark.table(cv_buy_nha_dtls).select(
+    F.col("cmpprtno").alias("cmpprtno"),
+    F.col("nha").alias("nha")
+)
+
+# Forecast
+forecast = spark.table(cv_forecast).select(
+    F.col("matnr").alias("matnr"),
+    F.col("rowtype").alias("rowtype"),
+    F.col("werks").alias("werks"),
+    F.col("dmdpd").cast("int").alias("dmdpd"),
+    F.col("dmd1").cast("int").alias("dmd1"),
+    F.col("dmd2").cast("int").alias("dmd2"),
+    F.col("dmd3").cast("int").alias("dmd3"),
+    F.col("dmd4").cast("int").alias("dmd4"),
+    F.col("dmd5").cast("int").alias("dmd5"),
+    F.col("dmd6").cast("int").alias("dmd6"),
+    F.col("dmd7").cast("int").alias("dmd7"),
+    F.col("dmd8").cast("int").alias("dmd8"),
+    F.col("dmd9").cast("int").alias("dmd9"),
+    F.col("dmd10").cast("int").alias("dmd10"),
+    F.col("dmd11").cast("int").alias("dmd11"),
+    F.col("dmd12").cast("int").alias("dmd12"),
+    F.col("dmd13").cast("int").alias("dmd13"),
+    F.col("dmd14").cast("int").alias("dmd14"),
+    F.col("dmd15").cast("int").alias("dmd15"),
+    F.col("dmd16").cast("int").alias("dmd16"),
+    F.col("dmd17").cast("int").alias("dmd17"),
+    F.col("dmd18").cast("int").alias("dmd18"),
+    F.col("dmd19").cast("int").alias("dmd19"),
+    F.col("dmd20").cast("int").alias("dmd20"),
+    F.col("dmd21").cast("int").alias("dmd21"),
+    F.col("dmd22").cast("int").alias("dmd22"),
+    F.col("dmd23").cast("int").alias("dmd23"),
+    F.col("dmd24").cast("int").alias("dmd24"),
+    F.col("dmd25").cast("int").alias("dmd25"),
+    F.col("dmd26").cast("int").alias("dmd26")
+)
+
+# MARC
+marc = spark.table(cv_marc).select(
+    F.col("matnr").alias("matnr"),
+    F.col("stdpd").alias("stdpd")
+)
+
+# MSEG
+mseg = spark.table(cv_mseg).select(
+    F.col("matnr").alias("mseg_matnr"),
+    F.col("mblnr").alias("mblnr"),
+    F.col("bwart").alias("bwart"),
+    F.col("shkzg").alias("shkzg"),
+    F.col("menge").cast("decimal(13,3)").alias("menge"),
+    F.col("cpudt_mkpf").alias("cpudt_mkpf")
+)
+
+# MKPF
+mkpf = spark.table(cv_mkpf).select(
+    F.col("mblnr").alias("mblnr"),
+    F.col("bldat").alias("bldat")
+)
+
+# MARD
+mard = spark.table(cv_mard).select(
+    F.col("matnr").alias("mard_matnr"),
+    F.col("labst").cast("int").alias("labst"),
+    F.col("klabs").cast("int").alias("klabs"),
+    F.col("insme").cast("int").alias("insme"),
+    F.col("umlme").cast("int").alias("umlme"),
+    F.col("einme").cast("int").alias("einme"),
+    F.col("speme").cast("int").alias("speme")
+)
+
+# PO history
+po_hist = spark.table(cv_po_hstry).select(
+    F.col("ebeln").alias("ebeln"),
+    F.col("ebelp").alias("ebelp"),
+    F.col("matnr").alias("po_matnr"),
+    F.col("menge").cast("int").alias("po_menge"),
+    F.col("wemng").cast("int").alias("po_wemng"),
+    F.col("due_dt").alias("due_dt"),
+    F.col("status").alias("status"),
+    F.col("loekz").alias("loekz"),
+    F.col("aussl").alias("aussl"),
+    F.col("bsart").alias("bsart"),
+    F.col("elikz").alias("elikz")
+)
+
+# EKPO
+ekpo = spark.table(cv_ekpo).select(
+    F.col("ebeln").alias("ebeln"),
+    F.col("ebelp").alias("ebelp"),
+    F.col("pstyp").alias("pstyp")
+)
