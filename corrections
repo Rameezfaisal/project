@@ -1,11 +1,51 @@
-It identifies all 571-series NHAs that drive the entire BOM demand & consumption logic.
+rpt_omat_odrbom_dmd_dtls
+
+
+This produces order-BOM level demand buckets.
 
 
 
 
-nhalist2 = (
-    buy_nha
-    .filter(F.col("nha").startswith("571"))
-    .select("cmpprtno", "nha")
+
+
+
+
+
+# 1. Filter forecast to SAP conditions
+forecast_f = (
+    forecast
+    .filter(
+        (F.col("rowtype") == "6") &
+        (F.col("werks") == "COMB")
+    )
+)
+
+# 2. Join NHALIST2 to forecast using substring logic
+nha_forecast = (
+    nhalist2
+    .withColumn("nha_key", F.substring("nha", 1, 11))
+    .join(
+        forecast_f.withColumn("matnr_key", F.substring("matnr", 1, 11)),
+        F.col("nha_key") == F.col("matnr_key"),
+        "inner"
+    )
+)
+
+# 3. Join MARC and filter STDPD
+odrbom_dmd = (
+    nha_forecast
+    .join(marc, "matnr", "inner")
+    .filter(F.trim(F.col("stdpd")) != "")
+    .select(
+        F.col("matnr").alias("odrbom"),
+        F.col("stdpd"),
+        F.col("rowtype"),
+        "dmdpd","dmd1","dmd2","dmd3","dmd4","dmd5","dmd6","dmd7","dmd8","dmd9",
+        "dmd10","dmd11","dmd12","dmd13","dmd14","dmd15","dmd16","dmd17",
+        "dmd18","dmd19","dmd20","dmd21","dmd22","dmd23","dmd24","dmd25","dmd26"
+    )
     .dropDuplicates()
 )
+
+# 4. Overwrite SAP OMAT_ODRBOM_DMD_DTLS equivalent
+odrbom_dmd.write.mode("overwrite").saveAsTable(tgt_odrbom_dmd)
