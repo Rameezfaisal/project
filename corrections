@@ -1,53 +1,41 @@
-AnalysisException                         Traceback (most recent call last)
-Cell In[94], line 5
-      1 poqty = (
-      2     po_hist
-      3     .join(ekpo, ["ebeln", "ebelp"], "inner")
-      4     .join(newlist, po_hist.matnr == newlist.odrbom, "inner")
-----> 5     .filter(
-      6         (~F.substring("due_dt", -5, 5).isin("04-01", "12-31")) &
-      7         (F.col("status") != "INACT") &
-      8         (F.trim("matnr") != "") &
-      9         (F.trim("loekz") == "") &
-     10         (F.col("aussl") != "U3") &
-     11         (F.col("bsart") != "UB") &
-     12         (F.col("elikz") != "X") &
-     13         (~F.col("pstyp").isin("7", "9"))
-     14     )
-     15     .groupBy("nha")
-     16     .agg(
-     17         F.sum(F.col("menge") - F.col("wemng")).cast("int").alias("open_po_qty")
-     18     )
-     19 )
+# Flatten PO history (avoid ambiguous columns)
+po_hist_f = po_hist.select(
+    F.col("ebeln"),
+    F.col("ebelp"),
+    F.col("matnr").alias("po_matnr"),
+    F.col("menge"),
+    F.col("wemng"),
+    F.col("due_dt"),
+    F.col("status").alias("po_status"),
+    F.col("loekz"),
+    F.col("aussl"),
+    F.col("bsart"),
+    F.col("elikz")
+)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3331, in DataFrame.filter(self, condition)
-   3329     jdf = self._jdf.filter(condition)
-   3330 elif isinstance(condition, Column):
--> 3331     jdf = self._jdf.filter(condition._jc)
-   3332 else:
-   3333     raise PySparkTypeError(
-   3334         error_class="NOT_COLUMN_OR_STR",
-   3335         message_parameters={"arg_name": "condition", "arg_type": type(condition).__name__},
-   3336     )
+# Flatten EKPO
+ekpo_f = ekpo.select(
+    F.col("ebeln"),
+    F.col("ebelp"),
+    F.col("pstyp")
+)
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
-
-AnalysisException: [AMBIGUOUS_REFERENCE] Reference `status` is ambiguous, could be: [`spark_catalog`.`chimcobldhq2atrjcpfn6qbcddfmer32bti62nr4clr2ar38edfmer324lim6oo`.`ekpo`.`status`, `spark_catalog`.`chimcobldhq2atrjcpfn6qbcddfmer32bti62nr4clr2ar38edfmer324lim6oo`.`zpo_hstry`.`status`].
+poqty = (
+    po_hist_f
+    .join(ekpo_f, ["ebeln", "ebelp"], "inner")
+    .join(newlist, po_hist_f.po_matnr == newlist.odrbom, "inner")
+    .filter(
+        (~F.substring("due_dt", -5, 5).isin("04-01", "12-31")) &
+        (F.col("po_status") != "INACT") &
+        (F.trim("po_matnr") != "") &
+        (F.trim("loekz") == "") &
+        (F.col("aussl") != "U3") &
+        (F.col("bsart") != "UB") &
+        (F.col("elikz") != "X") &
+        (~F.col("pstyp").isin("7", "9"))
+    )
+    .groupBy("nha")
+    .agg(
+        F.sum(F.col("menge") - F.col("wemng")).cast("int").alias("open_po_qty")
+    )
+)
