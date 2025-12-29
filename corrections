@@ -1,47 +1,58 @@
-This becomes the foundation for:
-5-year consumption
-1-year consumption
-All rolling sums
+CELL 8 — Demand roll-up (NEW_DMD → MFG_DMD)
+In business terms:
+Take the 26 demand buckets for each Order BOM, sum them into one number, and then roll that up to the NHA level to get total manufacturing demand.
+This produces the MFG_DMD metric used in the final merge.
 
 
 
 
 
 
-# Join BOM list to material movements
-cons_raw = (
-    newlist
-    .join(mseg, newlist.odrbom == mseg.matnr, "inner")
-    .join(mkpf, "mblnr", "inner")
-    .filter(
-        (F.col("bwart").isin("261", "262")) &
-        (F.col("bldat") > five_years_ago) &
-        (F.col("bldat") < today) &
-        (F.col("cpudt_mkpf") > five_years_ago)
-    )
-)
 
-# Apply SAP sign logic and CAST date correctly
-cons = (
-    cons_raw
+# 1. Read order-BOM demand
+odrbom_dmd_tbl = spark.table(tgt_odrbom_dmd)
+
+# 2. Compute total demand per ODRBOM (sum of 26 buckets)
+new_dmd = (
+    odrbom_dmd_tbl
     .withColumn(
-        "menge_signed",
-        F.when(F.col("shkzg") == "S", -F.col("menge")).otherwise(F.col("menge"))
+        "dmd",
+        F.coalesce("dmdpd", F.lit(0)) +
+        F.coalesce("dmd1", F.lit(0)) +
+        F.coalesce("dmd2", F.lit(0)) +
+        F.coalesce("dmd3", F.lit(0)) +
+        F.coalesce("dmd4", F.lit(0)) +
+        F.coalesce("dmd5", F.lit(0)) +
+        F.coalesce("dmd6", F.lit(0)) +
+        F.coalesce("dmd7", F.lit(0)) +
+        F.coalesce("dmd8", F.lit(0)) +
+        F.coalesce("dmd9", F.lit(0)) +
+        F.coalesce("dmd10", F.lit(0)) +
+        F.coalesce("dmd11", F.lit(0)) +
+        F.coalesce("dmd12", F.lit(0)) +
+        F.coalesce("dmd13", F.lit(0)) +
+        F.coalesce("dmd14", F.lit(0)) +
+        F.coalesce("dmd15", F.lit(0)) +
+        F.coalesce("dmd16", F.lit(0)) +
+        F.coalesce("dmd17", F.lit(0)) +
+        F.coalesce("dmd18", F.lit(0)) +
+        F.coalesce("dmd19", F.lit(0)) +
+        F.coalesce("dmd20", F.lit(0)) +
+        F.coalesce("dmd21", F.lit(0)) +
+        F.coalesce("dmd22", F.lit(0)) +
+        F.coalesce("dmd23", F.lit(0)) +
+        F.coalesce("dmd24", F.lit(0)) +
+        F.coalesce("dmd25", F.lit(0)) +
+        F.coalesce("dmd26", F.lit(0))
     )
-    .select(
-        F.to_date("bldat").alias("cons_date"),   # critical cast
-        F.col("menge_signed").cast("decimal(13,3)").alias("menge"),
-        F.col("nha"),
-        F.col("odrbom")
-    )
-    .filter(F.col("menge").isNotNull())   # protect NOT NULL constraint
+    .select("nha", "odrbom", "rowtype", "dmd")
 )
 
-# Overwrite rpt_omat_odrbom_cons_dtls safely
-(
-    cons
-    .write
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .saveAsTable(tgt_odrbom_cons)
+# 3. Aggregate to NHA level (MFG_DMD)
+mfg_dmd = (
+    newlist
+    .join(new_dmd, ["nha", "odrbom"], "left")
+    .filter(F.col("rowtype") == "6")
+    .groupBy("nha")
+    .agg(F.sum("dmd").cast("int").alias("mfg_dmd"))
 )
