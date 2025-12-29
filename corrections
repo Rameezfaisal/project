@@ -1,9 +1,43 @@
-“Which Order BOMs belong to which 571-series NHA?”
-Every downstream step (consumption, QOH, PO, demand rollups) uses this mapping.
+CELL 7 — Build rpt_omat_odrbom_cons_dtls
+
+For every Order BOM, pull all goods issue & reversal transactions (261/262) from SAP, convert them into positive or negative consumption, and store them with posting date.
+This creates a 5-year transaction-level consumption history.
 
 
-newlist = (
-    spark.table(tgt_odrbom_dmd)
-    .select("odrbom", "nha")
-    .dropDuplicates()
+
+# Join BOM list to material movements
+cons_raw = (
+    newlist
+    .join(mseg, newlist.odrbom == mseg.matnr, "inner")
+    .join(mkpf, "mblnr", "inner")
+    .filter(
+        (F.col("bwart").isin("261", "262")) &
+        (F.col("bldat") > five_years_ago) &
+        (F.col("bldat") < today) &
+        (F.col("cpudt_mkpf") > five_years_ago)
+    )
+)
+
+# Apply SAP sign logic (261 positive, 262 negative)
+cons = (
+    cons_raw
+    .withColumn(
+        "menge_signed",
+        F.when(F.col("shkzg") == "S", -F.col("menge")).otherwise(F.col("menge"))
+    )
+    .select(
+        F.col("bldat").alias("cons_date"),
+        F.col("menge_signed").cast("decimal(13,3)").alias("menge"),
+        F.col("nha"),
+        F.col("odrbom")
+    )
+    .filter(F.col("menge").isNotNull())   # protect NOT NULL constraint
+)
+
+# Overwrite rpt_omat_odrbom_cons_dtls
+(
+    cons
+    .write
+    .mode("overwrite")
+    .saveAsTable(tgt_odrbom_cons)
 )
