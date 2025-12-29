@@ -1,28 +1,23 @@
-— 5-Year & 1-Year Consumption Rollups
+CELL 10 — QOH (LAMQOH & Restricted Stock)
 
 
-From the transaction history, calculate how much each NHA has consumed in the last 5 years and the last 1 year.
-These numbers are later used to judge usage vs forecast vs stock.
+In business terms:
+For every NHA, calculate:
+LAMQOH → usable stock (free + quality inspection)
+Restricted_All_Stock → blocked, in-transit, or restricted inventory
+This tells the business how much inventory is really available vs demand.
 
 
 
-# Read consumption table
-cons_tbl = spark.table(tgt_odrbom_cons)
 
-# 5-year consumption (already filtered to 5 years when created)
-mfg_5yr = (
-    cons_tbl
+
+
+qoh = (
+    newlist
+    .join(mard, newlist.odrbom == mard.matnr, "inner")
     .groupBy("nha")
-    .agg(F.sum("menge").cast("int").alias("mfg_5yrs_cons"))
-)
-
-# 1-year consumption
-mfg_1yr = (
-    cons_tbl
-    .filter(
-        (F.col("cons_date") > one_year_ago) &
-        (F.col("cons_date") < today)
+    .agg(
+        F.sum(F.col("labst") + F.col("klabs")).cast("int").alias("lamqoh"),
+        F.sum(F.col("insme") + F.col("umlme") + F.col("einme") + F.col("speme")).cast("int").alias("restricted_all_stock")
     )
-    .groupBy("nha")
-    .agg(F.sum("menge").cast("int").alias("mfg_1yrs_cons"))
 )
