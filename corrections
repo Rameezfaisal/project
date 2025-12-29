@@ -1,23 +1,30 @@
-CELL 10 — QOH (LAMQOH & Restricted Stock)
+Open PO Quantity (OPEN_PO_QTY)
 
-
-In business terms:
-For every NHA, calculate:
-LAMQOH → usable stock (free + quality inspection)
-Restricted_All_Stock → blocked, in-transit, or restricted inventory
-This tells the business how much inventory is really available vs demand.
+Calculate how much material is still on order (ordered − received) for each NHA, after removing cancelled, completed, or irrelevant PO lines.
+This gives the future inbound supply.
 
 
 
 
 
 
-qoh = (
-    newlist
-    .join(mard, newlist.odrbom == mard.matnr, "inner")
+
+poqty = (
+    po_hist
+    .join(ekpo, ["ebeln", "ebelp"], "inner")
+    .join(newlist, po_hist.matnr == newlist.odrbom, "inner")
+    .filter(
+        (~F.right("due_dt", 5).isin("04-01", "12-31")) &
+        (F.col("status") != "INACT") &
+        (F.trim("matnr") != "") &
+        (F.trim("loekz") == "") &
+        (F.col("aussl") != "U3") &
+        (F.col("bsart") != "UB") &
+        (F.col("elikz") != "X") &
+        (~F.col("pstyp").isin("7", "9"))
+    )
     .groupBy("nha")
     .agg(
-        F.sum(F.col("labst") + F.col("klabs")).cast("int").alias("lamqoh"),
-        F.sum(F.col("insme") + F.col("umlme") + F.col("einme") + F.col("speme")).cast("int").alias("restricted_all_stock")
+        F.sum(F.col("menge") - F.col("wemng")).cast("int").alias("open_po_qty")
     )
 )
