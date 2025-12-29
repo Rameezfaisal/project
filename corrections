@@ -1,65 +1,19 @@
-
-PySparkTypeError                          Traceback (most recent call last)
-Cell In[88], line 6
-      1 poqty = (
-      2     po_hist
-      3     .join(ekpo, ["ebeln", "ebelp"], "inner")
-      4     .join(newlist, po_hist.matnr == newlist.odrbom, "inner")
-      5     .filter(
-----> 6         (~F.right("due_dt", 5).isin("04-01", "12-31")) &
-      7         (F.col("status") != "INACT") &
-      8         (F.trim("matnr") != "") &
-      9         (F.trim("loekz") == "") &
-     10         (F.col("aussl") != "U3") &
-     11         (F.col("bsart") != "UB") &
-     12         (F.col("elikz") != "X") &
-     13         (~F.col("pstyp").isin("7", "9"))
-     14     )
-     15     .groupBy("nha")
-     16     .agg(
-     17         F.sum(F.col("menge") - F.col("wemng")).cast("int").alias("open_po_qty")
-     18     )
-     19 )
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/utils.py:174, in try_remote_functions.<locals>.wrapped(*args, **kwargs)
-    172     return getattr(functions, f.__name__)(*args, **kwargs)
-    173 else:
---> 174     return f(*args, **kwargs)
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/functions.py:10938, in right(str, len)
-  10917 @try_remote_functions
-  10918 def right(str: "ColumnOrName", len: "ColumnOrName") -> Column:
-  10919     """
-  10920     Returns the rightmost `len`(`len` can be string type) characters from the string `str`,
-  10921     if `len` is less or equal than 0 the result is an empty string.
-   (...)
-  10936     [Row(r='SQL')]
-  10937     """
-> 10938     return _invoke_function_over_columns("right", str, len)
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/functions.py:105, in _invoke_function_over_columns(name, *cols)
-    100 def _invoke_function_over_columns(name: str, *cols: "ColumnOrName") -> Column:
-    101     """
-    102     Invokes n-ary JVM function identified by name
-    103     and wraps the result with :class:`~pyspark.sql.Column`.
-    104     """
---> 105     return _invoke_function(name, *(_to_java_column(col) for col in cols))
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/functions.py:105, in <genexpr>(.0)
-    100 def _invoke_function_over_columns(name: str, *cols: "ColumnOrName") -> Column:
-    101     """
-    102     Invokes n-ary JVM function identified by name
-    103     and wraps the result with :class:`~pyspark.sql.Column`.
-    104     """
---> 105     return _invoke_function(name, *(_to_java_column(col) for col in cols))
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/column.py:65, in _to_java_column(col)
-     63     jcol = _create_column_from_name(col)
-     64 else:
----> 65     raise PySparkTypeError(
-     66         error_class="NOT_COLUMN_OR_STR",
-     67         message_parameters={"arg_name": "col", "arg_type": type(col).__name__},
-     68     )
-     69 return jcol
-
-PySparkTypeError: [NOT_COLUMN_OR_STR] Argument `col` should be a Column or str, got int.
+poqty = (
+    po_hist
+    .join(ekpo, ["ebeln", "ebelp"], "inner")
+    .join(newlist, po_hist.matnr == newlist.odrbom, "inner")
+    .filter(
+        (~F.substring("due_dt", -5, 5).isin("04-01", "12-31")) &
+        (F.col("status") != "INACT") &
+        (F.trim("matnr") != "") &
+        (F.trim("loekz") == "") &
+        (F.col("aussl") != "U3") &
+        (F.col("bsart") != "UB") &
+        (F.col("elikz") != "X") &
+        (~F.col("pstyp").isin("7", "9"))
+    )
+    .groupBy("nha")
+    .agg(
+        F.sum(F.col("menge") - F.col("wemng")).cast("int").alias("open_po_qty")
+    )
+)
