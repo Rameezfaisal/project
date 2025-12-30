@@ -13,3 +13,48 @@ Cell-4 translates SAP classification flags into Fabric-joinable attributes for e
 
 
 
+
+
+
+
+
+final_part = base.select(
+    dmd.cmpprtno,
+    dmd.nha,
+    makt.maktx.alias("description"),
+    sup.omat_selected_suppliercd.alias("vencode"),
+    sup.omat_selected_supplier.alias("venname"),
+    marc.plifz.cast("int").alias("lead_time"),
+    mbew.stprs.cast("double").alias("std_cost"),
+    mbew.zplp2.cast("double").alias("curr_cost"),
+    critical.critical,
+    ce.ce,
+    F.col("g.zdesc").alias("commodity"),
+    F.col("h.zdesc").alias("smg_group"),
+    F.col("i.zdesc").alias("smg_head"),
+    F.col("j.zdesc").alias("sbm"),
+    F.when(mrp_flag, F.lit(1)).otherwise(F.lit(0)).alias("mrp_supplier"),
+    sup.suppcd_po1.alias("po_supp_code"),
+    sup.suppname_po1.alias("po_supp_name")
+)
+
+
+
+
+
+
+
+
+final_part.createOrReplaceTempView("final_part")
+
+spark.sql(f"""
+INSERT INTO {tgt_part}
+(ce,cmpprtno,commodity,critical,curr_cost,description,lead_time,mrp_supplier,
+ nha,po_supp_code,po_supp_name,sbm,smg_group,smg_head,std_cost,vencode,venname)
+SELECT
+ ce,cmpprtno,commodity,critical,curr_cost,description,lead_time,mrp_supplier,
+ nha,po_supp_code,po_supp_name,sbm,smg_group,smg_head,std_cost,vencode,venname
+FROM final_part
+""")
+
+
