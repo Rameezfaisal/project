@@ -1,23 +1,33 @@
-Cell 9 – LAM Quantity On Hand & Restricted Stock
+Cell 10 – Open Purchase Order Quantity
 What this cell does
-Implements SAP 128743 change:
-Calculates LAMQOH and RESTRICTED_ALL_STOCK from CV_MARD, excluding storage location V014, grouped by CMPPRTNO + NHA.
+Calculates OPEN_PO_QTY per CMPPRTNO + NHA using PO history and EKPO, applying all SAP filters:
 
 
 
 
 
 
-lamqoh = (
-    mard
-    .join(nhalist, mard.matnr == nhalist.nha, "inner")
-    .filter(~mard.lgort.isin("V014"))
+
+
+openpo = (
+    po
+    .join(ekpo, ["ebeln", "ebelp"], "inner")
+    .join(nhalist, po.matnr == nhalist.nha, "inner")
+    .filter(
+        (~F.substring(po.due_dt, -5, 5).isin("04-01", "12-31")) &
+        (po.status != "INACT") &
+        (F.trim(po.matnr) != "") &
+        (F.trim(po.loekz) == "") &
+        (po.ausl != "U3") &
+        (po.bsart != "UB") &
+        (po.elikz != "X") &
+        (~ekpo.pstyp.isin("7", "9"))
+    )
     .groupBy(
         nhalist.cmpprtno.alias("cmpprtno_cd"),
-        mard.matnr.alias("nha_cd")
+        po.matnr.alias("nha_cd")
     )
     .agg(
-        F.sum(mard.labst + mard.klabs).alias("lamqoh"),
-        F.sum(mard.insme + mard.umlme + mard.einme + mard.speme).alias("restricted_all_stock")
+        F.sum(po.menge - po.wemng).alias("open_po_qty")
     )
 )
