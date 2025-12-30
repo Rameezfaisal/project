@@ -1,33 +1,40 @@
-Cell 10 – Open Purchase Order Quantity
-What this cell does
-Calculates OPEN_PO_QTY per CMPPRTNO + NHA using PO history and EKPO, applying all SAP filters:
+AttributeError                            Traceback (most recent call last)
+Cell In[76], line 10
+      1 openpo = (
+      2     po
+      3     .join(ekpo, ["ebeln", "ebelp"], "inner")
+      4     .join(nhalist, po.matnr == nhalist.nha, "inner")
+      5     .filter(
+      6         (~F.substring(po.due_dt, -5, 5).isin("04-01", "12-31")) &
+      7         (po.status != "INACT") &
+      8         (F.trim(po.matnr) != "") &
+      9         (F.trim(po.loekz) == "") &
+---> 10         (po.ausl != "U3") &
+     11         (po.bsart != "UB") &
+     12         (po.elikz != "X") &
+     13         (~ekpo.pstyp.isin("7", "9"))
+     14     )
+     15     .groupBy(
+     16         nhalist.cmpprtno.alias("cmpprtno_cd"),
+     17         po.matnr.alias("nha_cd")
+     18     )
+     19     .agg(
+     20         F.sum(po.menge - po.wemng).alias("open_po_qty")
+     21     )
+     22 )
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3129, in DataFrame.__getattr__(self, name)
+   3096 """Returns the :class:`Column` denoted by ``name``.
+   3097 
+   3098 .. versionadded:: 1.3.0
+   (...)
+   3126 +---+
+   3127 """
+   3128 if name not in self.columns:
+-> 3129     raise AttributeError(
+   3130         "'%s' object has no attribute '%s'" % (self.__class__.__name__, name)
+   3131     )
+   3132 jc = self._jdf.apply(name)
+   3133 return Column(jc)
 
-
-
-
-
-
-
-openpo = (
-    po
-    .join(ekpo, ["ebeln", "ebelp"], "inner")
-    .join(nhalist, po.matnr == nhalist.nha, "inner")
-    .filter(
-        (~F.substring(po.due_dt, -5, 5).isin("04-01", "12-31")) &
-        (po.status != "INACT") &
-        (F.trim(po.matnr) != "") &
-        (F.trim(po.loekz) == "") &
-        (po.ausl != "U3") &
-        (po.bsart != "UB") &
-        (po.elikz != "X") &
-        (~ekpo.pstyp.isin("7", "9"))
-    )
-    .groupBy(
-        nhalist.cmpprtno.alias("cmpprtno_cd"),
-        po.matnr.alias("nha_cd")
-    )
-    .agg(
-        F.sum(po.menge - po.wemng).alias("open_po_qty")
-    )
-)
+AttributeError: 'DataFrame' object has no attribute 'ausl'
