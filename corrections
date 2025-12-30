@@ -1,10 +1,17 @@
+
+
+
+
+
+
+
 dmd_cols = ["dmdpd"] + [f"dmd{i}" for i in range(1,27)]
 
-mfgdmd = (
+sprsdmd = (
     forecast
     .join(nhalist, forecast.matnr == nhalist.nha, "inner")
     .filter(
-        (forecast.rowtype == "06") &
+        (forecast.rowtype == "07") &
         (forecast.werks == "COMB")
     )
     .groupBy(
@@ -12,6 +19,6 @@ mfgdmd = (
         forecast.matnr.alias("nha_cd")
     )
     .agg(
-        sum(F.sum(F.col(c)) for c in dmd_cols).alias("mfg_dmd")
+        sum(F.sum(F.col(c)) for c in dmd_cols).alias("sprs_dmd")
     )
 )
