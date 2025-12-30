@@ -18,6 +18,56 @@ Cell-4 translates SAP classification flags into Fabric-joinable attributes for e
 
 
 
+Here are clean, short markdown briefs you can paste into your notebook for Cell 5 → Cell 8.
+📌 Cell 5 — Base join graph
+This cell joins together all master and reference data needed to build OMAT part records.
+It links each NHA from DMD to:
+Selected supplier & plant (from Supplier-by-Plant output)
+Material description (MAKT)
+Plant data (MARC)
+Valuation & cost (MBEW)
+Critical & CE flags (AUSP)
+Supplier classification hierarchy (ZSUPPLIER_XREF + ZSUPP_CODE_MSTR)
+In short:
+This creates a single wide dataset containing everything SAP needs to build OMAT_PART_DTLS.
+📌 Cell 6 — MRP supplier eligibility
+This cell implements SAP 107767 logic to decide whether a part has a valid MRP supplier.
+It checks if the NHA has a supplier in any of the MRP plants:
+Copy code
+
+2000, 1900, 3120, 1050, 1060, 1090
+If at least one exists → mrp_supplier = 1, else 0.
+In short:
+This determines whether the part is MRP-sourced in OMAT.
+📌 Cell 7 — Final projection
+This cell selects and formats exactly the columns required by
+eng_test.rpt_omat_part_dtls.
+It outputs:
+Part identifiers (CMPPRTNO, NHA)
+Description, supplier, lead time, costs
+Critical & CE flags
+Commodity, SMG group, head, SBM
+MRP flag
+PO supplier details
+In short:
+This converts the wide joined dataset into the final OMAT schema.
+📌 Cell 8 — Delta insert
+This cell inserts the prepared records into:
+Copy code
+
+eng_test.rpt_omat_part_dtls
+using an explicit column list to ensure:
+ANSI safety
+Delta schema enforcement
+No positional insert risks
+In short:
+This writes the final OMAT Part master into Fabric.
+
+
+
+
+
+
 final_part = base.select(
     dmd.cmpprtno,
     dmd.nha,
@@ -56,5 +106,4 @@ SELECT
  nha,po_supp_code,po_supp_name,sbm,smg_group,smg_head,std_cost,vencode,venname
 FROM final_part
 """)
-
 
