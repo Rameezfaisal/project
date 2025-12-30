@@ -1,55 +1,50 @@
-dmd_cols = [f"dmd{i}" for i in ["pd"] + list(range(1,27))]
+AnalysisException                         Traceback (most recent call last)
+Cell In[58], line 7
+      1 dmd_cols = [f"dmd{i}" for i in ["pd"] + list(range(1,27))]
+      3 mfgdmd = (
+      4     forecast.join(nhalist, forecast.matnr == nhalist.nha)
+      5     .filter((forecast.rowtype=="06") & (forecast.werks=="COMB"))
+      6     .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), forecast.matnr.alias("nha_cd"))
+----> 7     .agg(sum(F.col(c) for c in dmd_cols).alias("mfg_dmd"))
+      8 )
 
-mfgdmd = (
-    forecast.join(nhalist, forecast.matnr == nhalist.nha)
-    .filter((forecast.rowtype=="06") & (forecast.werks=="COMB"))
-    .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), forecast.matnr.alias("nha_cd"))
-    .agg(sum(F.col(c) for c in dmd_cols).alias("mfg_dmd"))
-)
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/group.py:186, in GroupedData.agg(self, *exprs)
+    184     assert all(isinstance(c, Column) for c in exprs), "all exprs should be Column"
+    185     exprs = cast(Tuple[Column, ...], exprs)
+--> 186     jdf = self._jgd.agg(exprs[0]._jc, _to_seq(self.session._sc, [c._jc for c in exprs[1:]]))
+    187 return DataFrame(jdf, self.session)
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-
-
-
-sprsdmd = (
-    forecast.join(nhalist, forecast.matnr == nhalist.nha)
-    .filter((forecast.rowtype=="07") & (forecast.werks=="COMB"))
-    .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), forecast.matnr.alias("nha_cd"))
-    .agg(sum(F.col(c) for c in dmd_cols).alias("sprs_dmd"))
-)
-
-
-
-
-
-
-
-
-
-sprs3 = (
-    spares.join(nhalist, spares.material == nhalist.nha)
-    .filter(
-        (spares.source_doc!="STO") &
-        (spares.order_type.isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")) &
-        (spares.actual_gi > F.date_sub(today,365*3))
-    )
-    .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), spares.material.alias("nha_cd"))
-    .agg(F.sum("qty_shipped").alias("sprs_3yrs_consumption"))
-)
-
-
-
-
-
-
-
-lamqoh = (
-    mard.join(nhalist, mard.matnr == nhalist.nha)
-    .filter(~mard.lgort.isin("V014"))
-    .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), mard.matnr.alias("nha_cd"))
-    .agg(
-        F.sum(mard.labst + mard.klabs).alias("lamqoh"),
-        F.sum(mard.insme + mard.umlme + mard.einme + mard.speme).alias("restricted_all_stock")
-    )
-)
+AnalysisException: [MISSING_AGGREGATION] The non-aggregating expression "dmdpd" is based on columns which are not participating in the GROUP BY clause.
+Add the columns or the expression to the GROUP BY, aggregate the expression, or use "any_value(dmdpd)" if you do not care which of the values within a group is returned.;
+Aggregate [cmpprtno#3377, matnr#3905], [cmpprtno#3377 AS cmpprtno_cd#6543, matnr#3905 AS nha_cd#6544, (((((((((((((((((((((((((((dmdpd#3913 + cast(0 as decimal(1,0))) + dmd1#3914) + dmd2#3915) + dmd3#3916) + dmd4#3917) + dmd5#3918) + dmd6#3919) + dmd7#3920) + dmd8#3921) + dmd9#3922) + dmd10#3923) + dmd11#3924) + dmd12#3925) + dmd13#3926) + dmd14#3927) + dmd15#3928) + dmd16#3929) + dmd17#3930) + dmd18#3931) + dmd19#3932) + dmd20#3933) + dmd21#3934) + dmd22#3935) + dmd23#3936) + dmd24#3937) + dmd25#3938) + dmd26#3939) AS mfg_dmd#6695]
++- Filter ((rowtype#3911 = 06) AND (werks#3907 = COMB))
+   +- Join Inner, (matnr#3905 = nha#3378)
+      :- SubqueryAlias spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nr4clr2ar38edfmer324lim6oo.zmmforecast
+      :  +- Relation spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nr4clr2ar38edfmer324lim6oo.zmmforecast[hvr_rowid#3903L,mandt#3904,matnr#3905,lifnr#3906,werks#3907,berid#3908,vbeln#3909,posnr#3910,rowtype#3911,meins#3912,dmdpd#3913,dmd1#3914,dmd2#3915,dmd3#3916,dmd4#3917,dmd5#3918,dmd6#3919,dmd7#3920,dmd8#3921,dmd9#3922,dmd10#3923,dmd11#3924,dmd12#3925,dmd13#3926,... 124 more fields] parquet
+      +- Deduplicate [cmpprtno#3377, nha#3378]
+         +- Project [cmpprtno#3377, nha#3378]
+            +- Deduplicate [cmpprtno#3377, nha#3378, isprocessed#3361]
+               +- Filter (isprocessed#3361 = N)
+                  +- Project [cmpprtno#3359 AS cmpprtno#3377, nha#3366 AS nha#3378, isprocessed#3361]
+                     +- SubqueryAlias spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk.rpt_omat_obpn_buy_nha_dtls
+                        +- Relation spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk.rpt_omat_obpn_buy_nha_dtls[cmpprtno#3359,cmpqpa#3360,isprocessed#3361,last_modified_on#3362,level#3363,matkl#3364,mstae#3365,nha#3366,nha_status_inactive#3367] parquet
