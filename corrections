@@ -1,4 +1,48 @@
-select *
-from eng_test.omat_dmd_consumption_dtls
-order by last_modified_on desc
-limit 20;
+CREATE TABLE IF NOT EXISTS eng_test.omat_dmd_consumption_dtls (
+  cmpprtno                STRING,
+  lamqoh                  INT,
+  last_modified_on        DATE,
+  mfg_12mnths_consumption INT,
+  mfg_3yrs_consumption    INT,
+  mfg_5yrs_consumption    INT,
+  mfg_dmd                 INT,
+  nha                     STRING,
+  open_po_qty             INT,
+  restricted_all_stock    INT,
+  sprs_3yrs_consumption   INT,
+  sprs_5yrs_consumption   INT,
+  sprs_dmd                INT
+)
+USING DELTA;
+
+
+CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_part_dtls (
+  ce           STRING,
+  cmpprtno     STRING,
+  commodity    STRING,
+  critical     STRING,
+  curr_cost    DOUBLE,
+  description  STRING,
+  lead_time    INT,
+  mrp_supplier INT,
+  nha          STRING,
+  po_supp_code STRING,
+  po_supp_name STRING,
+  sbm          STRING,
+  smg_group    STRING,
+  smg_head     STRING,
+  std_cost     DOUBLE,
+  vencode      STRING,
+  venname      STRING
+)
+USING DELTA;
+
+
+CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_log_dtls (
+  executed_on        TIMESTAMP,  -- SECONDDATE
+  obprtno_cnt        INT,
+  obprtno_nha_cnt    INT,
+  obpr_cnt           INT,
+  program_name       STRING
+)
+USING DELTA;
