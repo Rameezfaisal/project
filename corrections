@@ -1,5 +1,9 @@
 Cell 12 – Logging (SAP equivalent)
 
+This records:
+how many OB parts were processed
+how many NHAs were processed
+when the procedure ran
 
 
 
