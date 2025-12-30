@@ -1,24 +1,4 @@
-📌 Cell 4 — AUSP attributes (Critical & CE)
-This cell extracts two material characteristics from the SAP AUSP table and prepares them for joining to NHA parts:
-critical
-From ATINN = '0000006193'
-→ This is the SAP classification field that marks whether a part is Critical
-ce
-From ATINN = '0000015276' and ATWRT = 'Y'
-→ This identifies parts that are CE-qualified
-We convert these into two small lookup DataFrames keyed by NHA (objek), so they can be left-joined later when building OMAT_PART_DTLS.
-In short:
-Cell-4 translates SAP classification flags into Fabric-joinable attributes for each NHA.
 
-
-
-
-
-
-
-
-
-Here are clean, short markdown briefs you can paste into your notebook for Cell 5 → Cell 8.
 📌 Cell 5 — Base join graph
 This cell joins together all master and reference data needed to build OMAT part records.
 It links each NHA from DMD to:
@@ -65,45 +45,4 @@ This writes the final OMAT Part master into Fabric.
 
 
 
-
-
-
-final_part = base.select(
-    dmd.cmpprtno,
-    dmd.nha,
-    makt.maktx.alias("description"),
-    sup.omat_selected_suppliercd.alias("vencode"),
-    sup.omat_selected_supplier.alias("venname"),
-    marc.plifz.cast("int").alias("lead_time"),
-    mbew.stprs.cast("double").alias("std_cost"),
-    mbew.zplp2.cast("double").alias("curr_cost"),
-    critical.critical,
-    ce.ce,
-    F.col("g.zdesc").alias("commodity"),
-    F.col("h.zdesc").alias("smg_group"),
-    F.col("i.zdesc").alias("smg_head"),
-    F.col("j.zdesc").alias("sbm"),
-    F.when(mrp_flag, F.lit(1)).otherwise(F.lit(0)).alias("mrp_supplier"),
-    sup.suppcd_po1.alias("po_supp_code"),
-    sup.suppname_po1.alias("po_supp_name")
-)
-
-
-
-
-
-
-
-
-final_part.createOrReplaceTempView("final_part")
-
-spark.sql(f"""
-INSERT INTO {tgt_part}
-(ce,cmpprtno,commodity,critical,curr_cost,description,lead_time,mrp_supplier,
- nha,po_supp_code,po_supp_name,sbm,smg_group,smg_head,std_cost,vencode,venname)
-SELECT
- ce,cmpprtno,commodity,critical,curr_cost,description,lead_time,mrp_supplier,
- nha,po_supp_code,po_supp_name,sbm,smg_group,smg_head,std_cost,vencode,venname
-FROM final_part
-""")
 
