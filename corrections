@@ -46,3 +46,31 @@ This writes the final OMAT Part master into Fabric.
 
 
 
+
+Here are the business-level definitions of Cell 5 to Cell 8 — this is what you would explain to OMAT, Supply-Chain, or Audit teams.
+Cell 5 – Assemble all part, supplier and classification data
+This step brings together everything OMAT needs to understand a Buy NHA:
+What the part is (description)
+Where it is sourced (plant + supplier)
+What it costs (standard & current cost)
+How it is classified (criticality, CE, commodity, SMG, SBM)
+It links demand-driven parts to their approved suppliers and plants using the official MRP supplier selection logic created by the business (107767).
+Business meaning:
+“Build the complete master view of each Buy NHA — who supplies it, where it comes from, how risky it is, and how it is classified.”
+Cell 6 – Identify MRP-preferred parts
+This step checks if the part has at least one valid MRP-approved supplier in the LAM manufacturing plants.
+If yes → it is an MRP-managed part
+If no → it is non-MRP (riskier, manual sourcing)
+Business meaning:
+“Tell OMAT which parts are officially supported by the MRP supply chain.”
+Cell 7 – Shape the OMAT Part Master
+This step formats all data into the OMAT Part Master structure that the application expects:
+One row per CMPPRTNO + NHA
+With supplier, cost, lead-time, risk flags and hierarchy codes
+Business meaning:
+“Convert all raw SAP data into a clean OMAT-ready part master record.”
+Cell 8 – Publish to OMAT
+This step saves the result into the OMAT reporting table so the OMAT application, dashboards, and planners can use it.
+Business meaning:
+“Make the OMAT Part Master officially available for obsolescence, risk, and sourcing analysis.”
+
