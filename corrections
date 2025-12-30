@@ -1,23 +1,86 @@
-Cell 12 – Logging (SAP equivalent)
+Cell 13 – Build OMAT_PART_DTLS (Supplier + Attributes)
 
-This records:
-how many OB parts were processed
-how many NHAs were processed
-when the procedure ran
+This uses the 107767 MRP supplier model
 
 
 
-obprt_cnt = nhalist.select("cmpprtno").distinct().count()
-nha_cnt = nhalist.select("nha").distinct().count()
+
+
+
+
+
+
+
+# read DMD rows just created
+dmd = spark.table(tgt_dmd)
+
+sup = spark.table(src_suppliers_by_plant)
+
+makt = spark.table("prd_global_ecc.cv_makt")
+marc = spark.table("prd_global_ecc.cv_marc")
+mbew = spark.table("prd_global_ecc.cv_mbew")
+ausp = spark.table("prd_global_ecc.cv_ausp")
+xref = spark.table("prd_global_ecc.cv_zsupplier_xref")
+code = spark.table("prd_global_ecc.cv_zsupp_code_mstr")
+
+# --- attributes ---
+critical = ausp.filter(ausp.atinn=="0000006193") \
+    .select(ausp.objek.alias("nha_cd"), ausp.atwrt.alias("critical"))
+
+ce = ausp.filter((ausp.atinn=="0000015276") & (ausp.atwrt=="Y")) \
+    .select(ausp.objek.alias("nha_cd"), ausp.atwrt.alias("ce"))
+
+# --- join base ---
+base = (
+    dmd.alias("a")
+    .join(makt, dmd.nha == makt.matnr, "left")
+    .join(sup, dmd.nha == sup.nha, "left")
+    .join(marc, (dmd.nha == marc.matnr) & (sup.omat_selected_plant == marc.werks), "left")
+    .join(mbew, (dmd.nha == mbew.matnr) & (sup.omat_selected_plant == mbew.bwkey), "left")
+    .join(critical, dmd.nha == critical.nha_cd, "left")
+    .join(ce, dmd.nha == ce.nha_cd, "left")
+    .join(xref, sup.omat_selected_suppliercd == xref.lifnr, "left")
+    .join(code.alias("g"), xref.zcommcod == F.col("g.zcode"), "left")
+    .join(code.alias("h"), xref.zgrpsmg == F.col("h.zcode"), "left")
+    .join(code.alias("i"), xref.zsmgcd == F.col("i.zcode"), "left")
+    .join(code.alias("j"), xref.zprimmcd == F.col("j.zcode"), "left")
+)
+
+final_part = base.select(
+    dmd.cmpprtno,
+    dmd.nha,
+    makt.maktx.alias("description"),
+    sup.omat_selected_suppliercd.alias("vencode"),
+    sup.omat_selected_supplier.alias("venname"),
+    marc.plifz.cast("int").alias("lead_time"),
+    mbew.stprs.cast("double").alias("std_cost"),
+    mbew.zplp2.cast("double").alias("curr_cost"),
+    critical.critical,
+    ce.ce,
+    F.col("g.zdesc").alias("commodity"),
+    F.col("h.zdesc").alias("smg_group"),
+    F.col("i.zdesc").alias("smg_head"),
+    F.col("j.zdesc").alias("sbm"),
+    F.when(
+        (F.length(sup.suppcd_2000)>0) |
+        (F.length(sup.suppcd_1900)>0) |
+        (F.length(sup.suppcd_3120)>0) |
+        (F.length(sup.suppcd_1050)>0) |
+        (F.length(sup.suppcd_1060)>0) |
+        (F.length(sup.suppcd_1090)>0), 1
+    ).otherwise(0).alias("mrp_supplier"),
+    sup.suppcd_po1.alias("po_supp_code"),
+    sup.suppname_po1.alias("po_supp_name")
+)
+
+final_part.createOrReplaceTempView("final_part")
 
 spark.sql(f"""
-INSERT INTO {tgt_log}
-(program_name, obpr_cnt, obprtno_cnt, obprtno_nha_cnt, executed_on)
-VALUES
-('SP_OMAT_INSERT_DMD_CONS_PO', 1, {obprt_cnt}, {nha_cnt}, current_timestamp())
+INSERT INTO {tgt_part}
+(ce,cmpprtno,commodity,critical,curr_cost,description,lead_time,mrp_supplier,
+ nha,po_supp_code,po_supp_name,sbm,smg_group,smg_head,std_cost,vencode,venname)
+SELECT
+ ce,cmpprtno,commodity,critical,curr_cost,description,lead_time,mrp_supplier,
+ nha,po_supp_code,po_supp_name,sbm,smg_group,smg_head,std_cost,vencode,venname
+FROM final_part
 """)
-
-
-
-
-
