@@ -1,22 +1,60 @@
-openpo = (
-    po
-    .join(ekpo, ["ebeln", "ebelp"], "inner")
-    .join(nhalist, po.matnr == nhalist.nha, "inner")
-    .filter(
-        (~F.substring(po.due_dt, -5, 5).isin("04-01", "12-31")) &
-        (po.status != "INACT") &
-        (F.trim(po.matnr) != "") &
-        (F.trim(po.loekz) == "") &
-        (po.aussl != "U3") &          # fixed column name
-        (po.bsart != "UB") &
-        (po.elikz != "X") &
-        (~ekpo.pstyp.isin("7", "9"))
-    )
-    .groupBy(
-        nhalist.cmpprtno.alias("cmpprtno_cd"),
-        po.matnr.alias("nha_cd")
-    )
-    .agg(
-        F.sum(po.menge - po.wemng).alias("open_po_qty")
+Cell 11 – Final UNION + Insert into omat_dmd_consumption_dtls
+
+
+SAP has two parts:
+Always insert rows where CMPPRTNO = NHA
+Insert all other rows only if at least one metric > 0
+This preserves SAP’s data pruning logic
+
+
+
+
+
+
+
+
+
+
+base = (
+    nhalist.alias("a")
+    .join(mfg3.alias("b"), nhalist.nha == mfg3.nha_cd, "left")
+    .join(mfgdmd.alias("c"), nhalist.nha == mfgdmd.nha_cd, "left")
+    .join(sprsdmd.alias("d"), nhalist.nha == sprsdmd.nha_cd, "left")
+    .join(sprs3.alias("e"), nhalist.nha == sprs3.nha_cd, "left")
+    .join(lamqoh.alias("g"), nhalist.nha == lamqoh.nha_cd, "left")
+    .join(openpo.alias("h"), nhalist.nha == openpo.nha_cd, "left")
+    .select(
+        nhalist.cmpprtno.alias("cmpprtno"),
+        nhalist.nha.alias("nha"),
+        F.col("b.mfg_3yrs_consumption"),
+        F.col("c.mfg_dmd"),
+        F.col("d.sprs_dmd"),
+        F.col("e.sprs_3yrs_consumption"),
+        F.col("g.lamqoh"),
+        F.col("g.restricted_all_stock"),
+        F.col("h.open_po_qty")
     )
 )
+
+part1 = base.filter(F.col("cmpprtno") == F.col("nha"))
+
+part2 = base.filter(
+    (F.coalesce("mfg_3yrs_consumption",F.lit(0)) > 0) |
+    (F.coalesce("mfg_dmd",F.lit(0)) > 0) |
+    (F.coalesce("sprs_dmd",F.lit(0)) > 0) |
+    (F.coalesce("sprs_3yrs_consumption",F.lit(0)) > 0) |
+    (F.coalesce("open_po_qty",F.lit(0)) > 0)
+)
+
+final = part1.unionByName(part2).withColumn("last_modified_on", F.current_date())
+
+final.createOrReplaceTempView("final_dmd")
+
+spark.sql(f"""
+INSERT INTO {tgt_dmd}
+(cmpprtno,nha,mfg_3yrs_consumption,mfg_dmd,sprs_dmd,
+ sprs_3yrs_consumption,lamqoh,restricted_all_stock,open_po_qty,last_modified_on)
+SELECT cmpprtno,nha,mfg_3yrs_consumption,mfg_dmd,sprs_dmd,
+       sprs_3yrs_consumption,lamqoh,restricted_all_stock,open_po_qty,last_modified_on
+FROM final_dmd
+""")
