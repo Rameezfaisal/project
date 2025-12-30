@@ -1,48 +1,78 @@
-CREATE TABLE IF NOT EXISTS eng_test.omat_dmd_consumption_dtls (
-  cmpprtno                STRING,
-  lamqoh                  INT,
-  last_modified_on        DATE,
-  mfg_12mnths_consumption INT,
-  mfg_3yrs_consumption    INT,
-  mfg_5yrs_consumption    INT,
-  mfg_dmd                 INT,
-  nha                     STRING,
-  open_po_qty             INT,
-  restricted_all_stock    INT,
-  sprs_3yrs_consumption   INT,
-  sprs_5yrs_consumption   INT,
-  sprs_dmd                INT
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+
+
+
+# ===== Source tables =====
+src_nha = "prd_gops_omat.cv_omat_obpn_buy_nha_dtls"
+src_mseg = "prd_global_ecc.cv_mseg"
+src_mkpf = "prd_global_ecc.cv_mkpf"
+src_makt = "prd_global_ecc.cv_makt"
+src_forecast = "prd_global_ecc.cv_zmmforecast"
+src_spares = "alex_custom.zt_csbg_spares_deliveries"
+src_mard = "prd_global_ecc.cv_mard"
+src_po = "prd_global_ecc.cv_zpo_hstry"
+src_ekpo = "prd_global_ecc.cv_ekpo"
+
+src_suppliers_by_plant = "prd_gops_omat.cv_omat_buynha_suppliers_plant"
+
+# ===== Targets =====
+tgt_dmd = "eng_test.omat_dmd_consumption_dtls"
+tgt_part = "eng_test.rpt_omat_part_dtls"
+tgt_log = "eng_test.rpt_omat_log_dtls"
+
+# ===== Control =====
+today = F.current_date()
+
+
+
+
+
+
+nha = spark.table(src_nha).select(
+    F.col("cmpprtno").alias("cmpprtno"),
+    F.col("nha").alias("nha"),
+    F.col("isprocessed")
+).filter(F.col("isprocessed") == "N").distinct()
+
+mseg = spark.table(src_mseg)
+mkpf = spark.table(src_mkpf)
+makt = spark.table(src_makt)
+forecast = spark.table(src_forecast)
+spares = spark.table(src_spares)
+mard = spark.table(src_mard)
+po = spark.table(src_po)
+ekpo = spark.table(src_ekpo)
+
+
+
+
+
+
+
+
+
+nhalist = nha.select("cmpprtno", "nha").distinct()
+
+
+
+
+
+
+
+mfg3 = (
+    mseg.join(mkpf, "mblnr")
+        .join(nhalist, mseg.matnr == nhalist.nha)
+        .filter(
+            (mseg.bwart.isin("261","262")) &
+            (mkpf.bldat > F.date_sub(today, 365*3))
+        )
+        .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), mseg.matnr.alias("nha_cd"))
+        .agg(F.sum(F.when(mseg.shkzg=="S",-mseg.menge).otherwise(mseg.menge)).alias("mfg_3yrs_consumption"))
 )
-USING DELTA;
 
 
-CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_part_dtls (
-  ce           STRING,
-  cmpprtno     STRING,
-  commodity    STRING,
-  critical     STRING,
-  curr_cost    DOUBLE,
-  description  STRING,
-  lead_time    INT,
-  mrp_supplier INT,
-  nha          STRING,
-  po_supp_code STRING,
-  po_supp_name STRING,
-  sbm          STRING,
-  smg_group    STRING,
-  smg_head     STRING,
-  std_cost     DOUBLE,
-  vencode      STRING,
-  venname      STRING
-)
-USING DELTA;
 
 
-CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_log_dtls (
-  executed_on        TIMESTAMP,  -- SECONDDATE
-  obprtno_cnt        INT,
-  obprtno_nha_cnt    INT,
-  obpr_cnt           INT,
-  program_name       STRING
-)
-USING DELTA;
+
