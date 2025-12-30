@@ -1,55 +1,12 @@
-What it does
-Some NHAs do not get suppliers from INFOREC (Cell 6).
-SAP then looks in EORD (MRP preferred supplier) and fills the missing ones.
-Cell 8:
-Finds NHAs where all plant suppliers are blank
-Reads EORD + LFA1
-Applies SAP fallback rules
-1900 ← 1020
-2000 ← 1000
-3120 ← 1010
-Updates zt_omat_buynha_suppliers_plants using Delta MERGE
 
-
-
-
-
-
-# ============================
-# Cell 9 – Build POSUPP (Open PO suppliers)
-# ============================
-
-df_posupp = (
-    df_nha.alias("a")
-    .join(df_dmd.alias("d"), F.col("a.nha_cd") == F.col("d.nha"))
-    .join(df_po_hist.alias("p"), F.col("p.matnr") == F.col("a.nha_cd"))
-    .join(df_ekpo.alias("e"), ["ebeln","ebelp"])
-    .join(df_lfa1.alias("l"), F.col("l.lifnr") == F.lpad(F.col("p.lifnr"),10,"0"), "left")
-
-    .filter(
-        (F.col("d.open_po_qty") > 0) &
-        (~F.right("p.due_dt",5).isin("04-01","12-31")) &
-        (F.col("p.status") != "INACT") &
-        (F.trim("p.matnr") != "") &
-        (F.trim("p.loekz") == "") &
-        (F.col("p.discrd") != "X") &
-        (F.col("p.aussl") != "U3") &
-        (F.col("p.bsart") != "UB") &
-        (F.col("p.elikz") != "X") &
-        (~F.col("e.pstyp").isin("7","9"))
-    )
-
-    .select(
-        F.col("a.nha_cd").alias("nha"),
-        F.lpad("p.lifnr",10,"0").alias("suppcd"),
-        F.col("l.name1").alias("suppname")
-    )
-    .distinct()
-    .groupBy("nha")
-    .agg(
-        F.concat_ws(",", F.collect_list("suppcd")).alias("posupp_cd"),
-        F.concat_ws(",", F.collect_list("suppname")).alias("posupp_name")
-    )
-)
-
-df_posupp.createOrReplaceTempView("posupp")
+mfg3 = (
+    mseg.join(mkpf, on="mblnr", how="inner")
+        .join(makt, on=(mseg.matnr == makt.matnr), how="inner")
+        .join(nhalist, on=(mseg.matnr == nhalist.nha), how="inner")
+        .filter(
+            (mseg.bwart.isin("261","262")) &
+            (mkpf.bldat > F.date_sub(F.current_date(), 365*3)) &
+            (mkpf.bldat < F.current_date())
+        )
+        .groupBy(nhalist.cmpprtno.alias("cmpprtno"), mseg.matnr.alias("matnr"), makt.maktx.alias("maktx"))
+        .agg(F.sum(F.when(mseg.shkzg == "S", -mseg.menge).otherwise(mseg.menge)).alias("mfg_3yrs_consumption"))
