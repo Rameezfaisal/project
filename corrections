@@ -1,144 +1,32 @@
-from pyspark.sql import functions as F
+AttributeError                            Traceback (most recent call last)
+Cell In[46], line 9
+      1 base = (
+      2     dmd.alias("a")
+      3     .join(sup.alias("b"), dmd.nha == sup.nha, "left")
+      4     .join(makt, dmd.nha == makt.matnr, "left")
+      5     .join(marc, (dmd.nha == marc.matnr) & (sup.omat_selected_plant == marc.werks), "left")
+      6     .join(mbew, (dmd.nha == mbew.matnr) & (sup.omat_selected_plant == mbew.bwkey), "left")
+      7     .join(critical, dmd.nha == critical.nha_cd, "left")
+      8     .join(ce, dmd.nha == ce.nha_cd, "left")
+----> 9     .join(xref, sup.omat_selected_suppliercd == xref.lifnr, "left")
+     10     .join(code.alias("g"), xref.zcommcod == F.col("g.zcode"), "left")
+     11     .join(code.alias("h"), xref.zgrpsmg == F.col("h.zcode"), "left")
+     12     .join(code.alias("i"), xref.zsmgcd == F.col("i.zcode"), "left")
+     13     .join(code.alias("j"), xref.zprimmcd == F.col("j.zcode"), "left")
+     14 )
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3129, in DataFrame.__getattr__(self, name)
+   3096 """Returns the :class:`Column` denoted by ``name``.
+   3097 
+   3098 .. versionadded:: 1.3.0
+   (...)
+   3126 +---+
+   3127 """
+   3128 if name not in self.columns:
+-> 3129     raise AttributeError(
+   3130         "'%s' object has no attribute '%s'" % (self.__class__.__name__, name)
+   3131     )
+   3132 jc = self._jdf.apply(name)
+   3133 return Column(jc)
 
-
-
-
-
-# === Inputs ===
-src_dmd   = "eng_test.omat_dmd_consumption_dtls"
-src_sup   = "prd_gops_omat.cv_omat_buynha_suppliers_plant"
-
-src_makt  = "prd_global_ecc.cv_makt"
-src_marc  = "prd_global_ecc.cv_marc"
-src_mbew  = "prd_global_ecc.cv_mbew"
-src_ausp  = "prd_global_ecc.cv_ausp"
-src_xref  = "prd_global_ecc.cv_zsupplier_xref"
-src_code  = "prd_global_ecc.cv_zsupp_code_mstr"
-
-# === Target ===
-tgt_part  = "eng_test.rpt_omat_part_dtls"
-
-
-
-
-
-
-
-
-
-
-
-dmd   = spark.table(src_dmd)
-sup   = spark.table(src_sup)
-
-makt  = spark.table(src_makt)
-marc  = spark.table(src_marc)
-mbew  = spark.table(src_mbew)
-ausp  = spark.table(src_ausp)
-xref  = spark.table(src_xref)
-code  = spark.table(src_code)
-
-
-
-
-
-
-
-critical = (
-    ausp
-    .filter(ausp.atinn == "0000006193")
-    .select(ausp.objek.alias("nha_cd"), ausp.atwrt.alias("critical"))
-)
-
-ce = (
-    ausp
-    .filter((ausp.atinn == "0000015276") & (ausp.atwrt == "Y"))
-    .select(ausp.objek.alias("nha_cd"), ausp.atwrt.alias("ce"))
-)
-
-
-
-
-
-
-
-
-base = (
-    dmd.alias("a")
-    .join(sup.alias("b"), dmd.nha == sup.nha, "left")
-    .join(makt, dmd.nha == makt.matnr, "left")
-    .join(marc, (dmd.nha == marc.matnr) & (sup.omat_selected_plant == marc.werks), "left")
-    .join(mbew, (dmd.nha == mbew.matnr) & (sup.omat_selected_plant == mbew.bwkey), "left")
-    .join(critical, dmd.nha == critical.nha_cd, "left")
-    .join(ce, dmd.nha == ce.nha_cd, "left")
-    .join(xref, sup.omat_selected_suppliercd == xref.lifnr, "left")
-    .join(code.alias("g"), xref.zcommcod == F.col("g.zcode"), "left")
-    .join(code.alias("h"), xref.zgrpsmg == F.col("h.zcode"), "left")
-    .join(code.alias("i"), xref.zsmgcd == F.col("i.zcode"), "left")
-    .join(code.alias("j"), xref.zprimmcd == F.col("j.zcode"), "left")
-)
-
-
-
-
-
-
-
-
-mrp_flag = (
-    (F.length(sup.suppcd_2000) > 0) |
-    (F.length(sup.suppcd_1900) > 0) |
-    (F.length(sup.suppcd_3120) > 0) |
-    (F.length(sup.suppcd_1050) > 0) |
-    (F.length(sup.suppcd_1060) > 0) |
-    (F.length(sup.suppcd_1090) > 0)
-)
-
-
-
-
-
-
-
-final_part = base.select(
-    dmd.cmpprtno,
-    dmd.nha,
-    makt.maktx.alias("description"),
-    sup.omat_selected_suppliercd.alias("vencode"),
-    sup.omat_selected_supplier.alias("venname"),
-    marc.plifz.cast("int").alias("lead_time"),
-    mbew.stprs.cast("double").alias("std_cost"),
-    mbew.zplp2.cast("double").alias("curr_cost"),
-    critical.critical,
-    ce.ce,
-    F.col("g.zdesc").alias("commodity"),
-    F.col("h.zdesc").alias("smg_group"),
-    F.col("i.zdesc").alias("smg_head"),
-    F.col("j.zdesc").alias("sbm"),
-    F.when(mrp_flag, F.lit(1)).otherwise(F.lit(0)).alias("mrp_supplier"),
-    sup.suppcd_po1.alias("po_supp_code"),
-    sup.suppname_po1.alias("po_supp_name")
-)
-
-
-
-
-
-
-
-
-
-
-final_part.createOrReplaceTempView("final_part")
-
-spark.sql(f"""
-INSERT INTO {tgt_part}
-(ce,cmpprtno,commodity,critical,curr_cost,description,lead_time,mrp_supplier,
- nha,po_supp_code,po_supp_name,sbm,smg_group,smg_head,std_cost,vencode,venname)
-SELECT
- ce,cmpprtno,commodity,critical,curr_cost,description,lead_time,mrp_supplier,
- nha,po_supp_code,po_supp_name,sbm,smg_group,smg_head,std_cost,vencode,venname
-FROM final_part
-""")
-
+AttributeError: 'DataFrame' object has no attribute 'lifnr'
