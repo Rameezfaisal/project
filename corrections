@@ -1,78 +1,55 @@
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
+dmd_cols = [f"dmd{i}" for i in ["pd"] + list(range(1,27))]
 
-
-
-
-# ===== Source tables =====
-src_nha = "prd_gops_omat.cv_omat_obpn_buy_nha_dtls"
-src_mseg = "prd_global_ecc.cv_mseg"
-src_mkpf = "prd_global_ecc.cv_mkpf"
-src_makt = "prd_global_ecc.cv_makt"
-src_forecast = "prd_global_ecc.cv_zmmforecast"
-src_spares = "alex_custom.zt_csbg_spares_deliveries"
-src_mard = "prd_global_ecc.cv_mard"
-src_po = "prd_global_ecc.cv_zpo_hstry"
-src_ekpo = "prd_global_ecc.cv_ekpo"
-
-src_suppliers_by_plant = "prd_gops_omat.cv_omat_buynha_suppliers_plant"
-
-# ===== Targets =====
-tgt_dmd = "eng_test.omat_dmd_consumption_dtls"
-tgt_part = "eng_test.rpt_omat_part_dtls"
-tgt_log = "eng_test.rpt_omat_log_dtls"
-
-# ===== Control =====
-today = F.current_date()
-
-
-
-
-
-
-nha = spark.table(src_nha).select(
-    F.col("cmpprtno").alias("cmpprtno"),
-    F.col("nha").alias("nha"),
-    F.col("isprocessed")
-).filter(F.col("isprocessed") == "N").distinct()
-
-mseg = spark.table(src_mseg)
-mkpf = spark.table(src_mkpf)
-makt = spark.table(src_makt)
-forecast = spark.table(src_forecast)
-spares = spark.table(src_spares)
-mard = spark.table(src_mard)
-po = spark.table(src_po)
-ekpo = spark.table(src_ekpo)
-
-
-
-
-
-
-
-
-
-nhalist = nha.select("cmpprtno", "nha").distinct()
-
-
-
-
-
-
-
-mfg3 = (
-    mseg.join(mkpf, "mblnr")
-        .join(nhalist, mseg.matnr == nhalist.nha)
-        .filter(
-            (mseg.bwart.isin("261","262")) &
-            (mkpf.bldat > F.date_sub(today, 365*3))
-        )
-        .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), mseg.matnr.alias("nha_cd"))
-        .agg(F.sum(F.when(mseg.shkzg=="S",-mseg.menge).otherwise(mseg.menge)).alias("mfg_3yrs_consumption"))
+mfgdmd = (
+    forecast.join(nhalist, forecast.matnr == nhalist.nha)
+    .filter((forecast.rowtype=="06") & (forecast.werks=="COMB"))
+    .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), forecast.matnr.alias("nha_cd"))
+    .agg(sum(F.col(c) for c in dmd_cols).alias("mfg_dmd"))
 )
 
 
 
 
 
+
+sprsdmd = (
+    forecast.join(nhalist, forecast.matnr == nhalist.nha)
+    .filter((forecast.rowtype=="07") & (forecast.werks=="COMB"))
+    .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), forecast.matnr.alias("nha_cd"))
+    .agg(sum(F.col(c) for c in dmd_cols).alias("sprs_dmd"))
+)
+
+
+
+
+
+
+
+
+
+sprs3 = (
+    spares.join(nhalist, spares.material == nhalist.nha)
+    .filter(
+        (spares.source_doc!="STO") &
+        (spares.order_type.isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")) &
+        (spares.actual_gi > F.date_sub(today,365*3))
+    )
+    .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), spares.material.alias("nha_cd"))
+    .agg(F.sum("qty_shipped").alias("sprs_3yrs_consumption"))
+)
+
+
+
+
+
+
+
+lamqoh = (
+    mard.join(nhalist, mard.matnr == nhalist.nha)
+    .filter(~mard.lgort.isin("V014"))
+    .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), mard.matnr.alias("nha_cd"))
+    .agg(
+        F.sum(mard.labst + mard.klabs).alias("lamqoh"),
+        F.sum(mard.insme + mard.umlme + mard.einme + mard.speme).alias("restricted_all_stock")
+    )
+)
