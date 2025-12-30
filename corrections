@@ -1,24 +1,23 @@
+Implements SAP Step-4:
+Calculates total spares consumption over the last 3 years from
+ZT_CSBG_SPARES_DELIVERIES, filtered by order type, source doc, and GI date, grouped by CMPPRTNO + NHA.
 
 
 
 
-
-
-
-dmd_cols = ["dmdpd"] + [f"dmd{i}" for i in range(1,27)]
-
-sprsdmd = (
-    forecast
-    .join(nhalist, forecast.matnr == nhalist.nha, "inner")
+sprs3 = (
+    spares
+    .join(nhalist, spares.material == nhalist.nha, "inner")
     .filter(
-        (forecast.rowtype == "07") &
-        (forecast.werks == "COMB")
+        (spares.source_doc != "STO") &
+        (spares.order_type.isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")) &
+        (spares.actual_gi > F.date_sub(F.current_date(), 365*3))
     )
     .groupBy(
         nhalist.cmpprtno.alias("cmpprtno_cd"),
-        forecast.matnr.alias("nha_cd")
+        spares.material.alias("nha_cd")
     )
     .agg(
-        sum(F.sum(F.col(c)) for c in dmd_cols).alias("sprs_dmd")
+        F.sum(spares.qty_shipped).alias("sprs_3yrs_consumption")
     )
 )
