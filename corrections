@@ -1,59 +1,113 @@
-# ===============================
-# 1. Find duplicate NHAs
-# ===============================
-df_dups = (
-    spark.table("stage2_eord_filled")
-    .groupBy("nha")
-    .count()
-    .filter(F.col("count") > 1)
-    .select(F.col("nha").alias("dup_nha"))
-)
+Cell 7 — Base-Part Supplier Inheritance for R / S / C / X / D Parts
+What this step does in business terms
+Many NHAs are variants of a base part, for example:
+Copy code
 
-# ===============================
-# 2. Prepare EORD flags
-# ===============================
-df_eord_flag = (
-    df_eord
-    .select(
-        F.col("matnr_cd").alias("eord_nha"),
-        F.col("werks_cd").alias("eord_plant"),
-        F.col("lifnr_cd").alias("eord_lifnr"),
-        F.col("flifn_cd").alias("eord_flifn"),
-        F.col("autet_cd").alias("eord_autet")
+3-6R3-4567
+3-6S3-4567
+3-6C3-4567
+In SAP:
+The variant parts (R, S, C, X, D) often do not have their own supplier
+But the base part DOES
+So SAP uses a rule:
+“If a variant part has no supplier, inherit the supplier of the base part.”
+SAP does this using two different pattern rules:
+Replace R/S/C/X/D with -  (3-6R3 → 3-6-3)
+Remove R/S/C/X/D completely (R2-6-2 → 2-6-2)
+We reproduce both patterns.
+
+
+
+
+
+
+
+
+
+df_base = spark.table("stage3_deduped")
+
+# -------------------------------
+# Pattern 1 : Replace R,S,C,X,D with "-"
+# -------------------------------
+df_pattern1 = (
+    df_base
+    .withColumn(
+        "base_nha",
+        F.regexp_replace("nha", "[RSCXD]", "-")
     )
 )
 
-base = spark.table("stage2_eord_filled")
+# -------------------------------
+# Pattern 2 : Remove R,S,C,X,D
+# -------------------------------
+df_pattern2 = (
+    df_base
+    .withColumn(
+        "base_nha",
+        F.regexp_replace("nha", "[RSCXD]", "")
+    )
+)
 
-# ===============================
-# 3. Function to clean per plant
-# ===============================
-def clean_plant(df, plant):
+# -------------------------------
+# Base supplier lookup (from same table)
+# -------------------------------
+df_lookup = df_base.select(
+    F.col("nha").alias("base_nha"),
+    "suppcd_1900","suppname_1900",
+    "suppcd_2000","suppname_2000",
+    "suppcd_3120","suppname_3120",
+    "suppcd_1050","suppname_1050",
+    "suppcd_1060","suppname_1060",
+    "suppcd_1090","suppname_1090"
+)
+
+# -------------------------------
+# Apply Pattern 1
+# -------------------------------
+df_p1 = (
+    df_pattern1
+    .join(df_lookup, "base_nha", "left")
+)
+
+# -------------------------------
+# Apply Pattern 2
+# -------------------------------
+df_p2 = (
+    df_pattern2
+    .join(df_lookup, "base_nha", "left")
+)
+
+# -------------------------------
+# Fill missing suppliers from base part
+# -------------------------------
+def fill_from_base(df):
     return (
         df
-        .join(df_dups, df.nha == df_dups.dup_nha, "left")
-        .join(
-            df_eord_flag,
-            (df.nha == df_eord_flag.eord_nha) &
-            (df_eord_flag.eord_plant == plant) &
-            (df_eord_flag.eord_lifnr == df[f"suppcd_{plant}"]),
-            "left"
-        )
-        .filter(
-            ~(
-                F.col("dup_nha").isNotNull() &
-                F.col("eord_autet").isNotNull() &
-                (F.col("eord_flifn") != preferred_flag)
-            )
-        )
-        .drop("dup_nha", "eord_nha", "eord_plant", "eord_lifnr", "eord_flifn", "eord_autet")
+        .withColumn("suppcd_1900", F.coalesce("suppcd_1900", "suppcd_1900_base"))
+        .withColumn("suppname_1900", F.coalesce("suppname_1900", "suppname_1900_base"))
+        .withColumn("suppcd_2000", F.coalesce("suppcd_2000", "suppcd_2000_base"))
+        .withColumn("suppname_2000", F.coalesce("suppname_2000", "suppname_2000_base"))
+        .withColumn("suppcd_3120", F.coalesce("suppcd_3120", "suppcd_3120_base"))
+        .withColumn("suppname_3120", F.coalesce("suppname_3120", "suppname_3120_base"))
+        .withColumn("suppcd_1050", F.coalesce("suppcd_1050", "suppcd_1050_base"))
+        .withColumn("suppname_1050", F.coalesce("suppname_1050", "suppname_1050_base"))
+        .withColumn("suppcd_1060", F.coalesce("suppcd_1060", "suppcd_1060_base"))
+        .withColumn("suppname_1060", F.coalesce("suppname_1060", "suppname_1060_base"))
+        .withColumn("suppcd_1090", F.coalesce("suppcd_1090", "suppcd_1090_base"))
+        .withColumn("suppname_1090", F.coalesce("suppname_1090", "suppname_1090_base"))
     )
 
-# ===============================
-# 4. Apply for all procurement plants
-# ===============================
-df_stage3 = base
-for p in procurement_plants:
-    df_stage3 = clean_plant(df_stage3, p)
+df_stage4 = fill_from_base(df_p1)
+df_stage4 = fill_from_base(df_p2)
 
-df_stage3.createOrReplaceTempView("stage3_deduped")
+df_stage4 = df_stage4.select(
+    "nha",
+    "suppcd_1900","suppname_1900",
+    "suppcd_2000","suppname_2000",
+    "suppcd_3120","suppname_3120",
+    "suppcd_1050","suppname_1050",
+    "suppcd_1060","suppname_1060",
+    "suppcd_1090","suppname_1090"
+)
+
+df_stage4.createOrReplaceTempView("stage4_basepart_filled")
