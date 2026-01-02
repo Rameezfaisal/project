@@ -1,45 +1,99 @@
-from pyspark.sql import functions as F
-from pyspark.sql import Window
-
-
-
-
+# ===============================
+# OMAT demand / consumption
+# ===============================
+df_omat = (
+    spark.read.table(src_omat_dmd_tbl)
+         .select(
+             F.col("nha").alias("nha"),
+             F.col("open_po_qty").cast("int").alias("open_po_qty")
+         )
+         .dropDuplicates(["nha"])
+)
 
 # ===============================
-# Lakehouse table paths
+# INFOREC
 # ===============================
+df_inforec = (
+    spark.read.table(src_inforec_tbl)
+         .select(
+             F.col("material").alias("material_cd"),
+             F.col("plant").alias("plant_cd"),
+             F.col("mrp").alias("mrp_cd"),
+             F.col("supcode").alias("supcode_cd"),
+             F.col("suppliername").alias("suppliername_cd"),
+             F.col("supcat").alias("supcat_cd")
+         )
+         .filter(F.col("supcode_cd").isNotNull())
+         .filter(~F.col("supcat_cd").isin(excluded_supcats))
+)
 
-# ---- Source tables (CVs replicated into Lakehouse) ----
-src_omat_dmd_tbl          = "eng_test.cv_omat_dmd_consumption_dtls"
-src_inforec_tbl           = "eng_test.cv_zt_inforec_data_sched"
-src_eord_tbl              = "eng_test.cv_eord"
-src_lfa1_tbl              = "eng_test.cv_lfa1"
-src_zpo_hist_tbl          = "eng_test.cv_zpo_hstry"
-src_ekpo_tbl              = "eng_test.cv_ekpo"
-src_iplm_tbl              = "eng_test.cv_iplm_problem_report_part"
+# ===============================
+# EORD
+# ===============================
+df_eord = (
+    spark.read.table(src_eord_tbl)
+         .select(
+             F.col("matnr").alias("matnr_cd"),
+             F.col("werks").alias("werks_cd"),
+             F.col("lifnr").alias("lifnr_cd"),
+             F.col("autet").alias("autet_cd"),
+             F.col("flifn").alias("flifn_cd")
+         )
+)
 
-# ---- Target tables ----
-tgt_suppliers_tbl         = "eng_test.rpt_omat_buynha_suppliers_plants"
-tgt_log_tbl               = "eng_test.rpt_omat_log_dtls"
+# ===============================
+# LFA1 (Supplier master)
+# ===============================
+df_lfa1 = (
+    spark.read.table(src_lfa1_tbl)
+         .select(
+             F.col("lifnr").alias("lifnr_cd"),
+             F.col("name1").alias("name1_cd")
+         )
+)
 
-# ---- Control values ----
-procurement_plants = ["1900", "2000", "3120", "1050", "1060", "1090"]
-fallback_plants    = ["1000", "1010", "1020"]
+# ===============================
+# ZPO history (Open PO logic)
+# ===============================
+df_zpo = (
+    spark.read.table(src_zpo_hist_tbl)
+         .select(
+             F.col("matnr").alias("matnr_cd"),
+             F.col("lifnr").alias("lifnr_cd"),
+             F.col("ebeln").alias("ebeln_cd"),
+             F.col("ebelp").alias("ebelp_cd"),
+             F.col("due_dt").alias("due_dt_cd"),
+             F.col("status").alias("status_cd"),
+             F.col("loekz").alias("loekz_cd"),
+             F.col("discrd").alias("discrd_cd"),
+             F.col("aussl").alias("aussl_cd"),
+             F.col("bsart").alias("bsart_cd"),
+             F.col("elikz").alias("elikz_cd")
+         )
+)
 
-valid_mrp          = "1"
-valid_autet        = "1"
-preferred_flag    = "X"
+# ===============================
+# EKPO
+# ===============================
+df_ekpo = (
+    spark.read.table(src_ekpo_tbl)
+         .select(
+             F.col("ebeln").alias("ebeln_cd"),
+             F.col("ebelp").alias("ebelp_cd"),
+             F.col("pstyp").alias("pstyp_cd")
+         )
+)
 
-# supplier categories to exclude
-excluded_supcats   = ["A05", "A08", "A15"]
-
-# Program name for logging
-program_name = "SP_OMAT_UPDATE_SUPPLIERS_BYPLANT"
-
-
-
-
-
-
-
-
+# ===============================
+# IPLM OB PR
+# ===============================
+df_iplm = (
+    spark.read.table(src_iplm_tbl)
+         .select(
+             F.col("part_name").alias("part_name_cd"),
+             F.col("supplier_code").alias("supplier_code_cd"),
+             F.upper(F.col("state")).alias("state_cd"),
+             F.upper(F.col("disposition")).alias("disposition_cd"),
+             F.upper(F.col("reason")).alias("reason_cd")
+         )
+)
