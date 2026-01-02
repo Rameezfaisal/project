@@ -1,70 +1,61 @@
-Cell 12 — Write to OMAT Tables + Log Execution
-What this step does in business terms
-This is the commit step.
-Everything we calculated in memory is now:
-Written into the OMAT reporting table
-Audited in the OMAT log table
+PySparkValueError                         Traceback (most recent call last)
+Cell In[91], line 45
+      9 (
+     10     df_final
+     11     .select(
+   (...)
+     39     .saveAsTable(tgt_suppliers_tbl)
+     40 )
+     42 # ===============================
+     43 # 3. Insert execution log
+     44 # ===============================
+---> 45 log_df = spark.createDataFrame(
+     46     [(None, None, None, None, program_name)],
+     47     ["executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"]
+     48 ).withColumn("executed_on", F.current_timestamp())
+     50 (
+     51     log_df
+     52     .write
+   (...)
+     55     .saveAsTable(tgt_log_tbl)
+     56 )
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1443, in SparkSession.createDataFrame(self, data, schema, samplingRatio, verifySchema)
+   1438 if has_pandas and isinstance(data, pd.DataFrame):
+   1439     # Create a DataFrame from pandas DataFrame.
+   1440     return super(SparkSession, self).createDataFrame(  # type: ignore[call-overload]
+   1441         data, schema, samplingRatio, verifySchema
+   1442     )
+-> 1443 return self._create_dataframe(
+   1444     data, schema, samplingRatio, verifySchema  # type: ignore[arg-type]
+   1445 )
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1485, in SparkSession._create_dataframe(self, data, schema, samplingRatio, verifySchema)
+   1483     rdd, struct = self._createFromRDD(data.map(prepare), schema, samplingRatio)
+   1484 else:
+-> 1485     rdd, struct = self._createFromLocal(map(prepare, data), schema)
+   1486 assert self._jvm is not None
+   1487 jrdd = self._jvm.SerDeUtil.toJavaArray(rdd._to_java_object_rdd())
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1093, in SparkSession._createFromLocal(self, data, schema)
+   1090     data = list(data)
+   1092 if schema is None or isinstance(schema, (list, tuple)):
+-> 1093     struct = self._inferSchemaFromList(data, names=schema)
+   1094     converter = _create_converter(struct)
+   1095     tupled_data: Iterable[Tuple] = map(converter, data)
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:969, in SparkSession._inferSchemaFromList(self, data, names)
+    955 schema = reduce(
+    956     _merge_type,
+    957     (
+   (...)
+    966     ),
+    967 )
+    968 if _has_nulltype(schema):
+--> 969     raise PySparkValueError(
+    970         error_class="CANNOT_DETERMINE_TYPE",
+    971         message_parameters={},
+    972     )
+    973 return schema
 
-
-
-
-# ===============================
-# 1. Final dataset
-# ===============================
-df_final = spark.table("stage7_final_suppliers")
-
-# ===============================
-# 2. Replace target table (full refresh)
-# ===============================
-(
-    df_final
-    .select(
-        "nha",
-        "omat_selected_plant",
-        "omat_selected_supplier",
-        "omat_selected_suppliercd",
-        "suppcd_1050",
-        "suppcd_1060",
-        "suppcd_1090",
-        "suppcd_1900",
-        "suppcd_2000",
-        "suppcd_3120",
-        "suppcd_po1",
-        "suppcd_po2",
-        "suppcd_pr",
-        "suppname_1050",
-        "suppname_1060",
-        "suppname_1090",
-        "suppname_1900",
-        "suppname_2000",
-        "suppname_3120",
-        "suppname_po1",
-        "suppname_po2",
-        "suppname_pr"
-    )
-    .write
-    .mode("overwrite")
-    .format("delta")
-    .option("overwriteSchema", "true")
-    .saveAsTable(tgt_suppliers_tbl)
-)
-
-# ===============================
-# 3. Insert execution log
-# ===============================
-log_df = spark.createDataFrame(
-    [(None, None, None, None, program_name)],
-    ["executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"]
-).withColumn("executed_on", F.current_timestamp())
-
-(
-    log_df
-    .write
-    .mode("append")
-    .format("delta")
-    .saveAsTable(tgt_log_tbl)
-)
+PySparkValueError: [CANNOT_DETERMINE_TYPE] Some of types cannot be determined after inferring.
