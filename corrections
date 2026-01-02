@@ -1,88 +1,106 @@
-# filter only MRP preferred rows
-df_inforec_mrp = df_inforec.filter(F.col("mrp_cd") == valid_mrp)
+Cell 4 — Build MRP-Preferred Supplier Matrix (SAP INFOREC logic
 
-# helper to pad supplier codes to 10 chars
-def pad10(col):
-    return F.lpad(col, 10, "0")
 
-# create plant specific filtered datasets
-def plant_inforec(plant):
+This cell builds the first and most important supplier matrix for every Buy-NHA part.
+It answers this business question:
+“For each NHA, which supplier is officially preferred by SAP MRP in each manufacturing plant?”
+SAP stores this information in Info Records (INFREC).
+This cell reproduces the SAP logic that scans those records and builds a supplier-by-plant map.
+
+
+
+
+
+
+Cell 5 — Fill Missing Suppliers from SAP EORD (Purchasing Source List)
+What this step does in business terms
+Even after checking Info Records (MRP-preferred suppliers), many parts still have no supplier.
+SAP allows this because sometimes the official supplier is maintained in EORD (the Purchasing Source List) instead of Info Records.
+This step answers the business question:
+“If MRP did not define a supplier, who is the officially approved supplier for this part in SAP?”
+
+
+
+
+
+
+
+
+# filter valid fixed EORD suppliers
+df_eord_valid = (
+    df_eord
+    .filter((F.col("autet_cd") == valid_autet) & (F.col("flifn_cd") == preferred_flag))
+)
+
+# join supplier names
+df_eord_named = (
+    df_eord_valid
+    .join(df_lfa1, "lifnr_cd", "left")
+)
+
+# helper to extract EORD supplier per plant
+def eord_by_plant(plant):
     return (
-        df_inforec_mrp
-        .filter(F.col("plant_cd") == plant)
+        df_eord_named
+        .filter(F.col("werks_cd") == plant)
         .select(
-            F.col("material_cd").alias("nha"),
-            pad10(F.col("supcode_cd")).alias(f"suppcd_{plant}"),
-            F.col("suppliername_cd").alias(f"suppname_{plant}")
+            F.col("matnr_cd").alias("nha"),
+            pad10(F.col("lifnr_cd")).alias(f"eord_suppcd_{plant}"),
+            F.col("name1_cd").alias(f"eord_suppname_{plant}")
         )
     )
 
-inf_1900 = plant_inforec("1900")
-inf_2000 = plant_inforec("2000")
-inf_3120 = plant_inforec("3120")
-inf_1050 = plant_inforec("1050")
-inf_1060 = plant_inforec("1060")
-inf_1090 = plant_inforec("1090")
+eord_1900 = eord_by_plant("1900")
+eord_2000 = eord_by_plant("2000")
+eord_3120 = eord_by_plant("3120")
+eord_1050 = eord_by_plant("1050")
+eord_1060 = eord_by_plant("1060")
+eord_1090 = eord_by_plant("1090")
 
 # fallback plants
-inf_1000 = plant_inforec("1000")
-inf_1010 = plant_inforec("1010")
-inf_1020 = plant_inforec("1020")
+eord_1000 = eord_by_plant("1000")
+eord_1010 = eord_by_plant("1010")
+eord_1020 = eord_by_plant("1020")
 
-# join OMAT NHA with all plants
-df_nha = df_omat.select("nha")
-
-df_stage1 = (
-    df_nha
-    .join(inf_1900, "nha", "left")
-    .join(inf_2000, "nha", "left")
-    .join(inf_3120, "nha", "left")
-    .join(inf_1050, "nha", "left")
-    .join(inf_1060, "nha", "left")
-    .join(inf_1090, "nha", "left")
-    .join(inf_1000, "nha", "left")
-    .join(inf_1010, "nha", "left")
-    .join(inf_1020, "nha", "left")
+# join to stage1
+df_stage2 = (
+    spark.table("stage1_mrp_suppliers")
+    .join(eord_1900, "nha", "left")
+    .join(eord_2000, "nha", "left")
+    .join(eord_3120, "nha", "left")
+    .join(eord_1050, "nha", "left")
+    .join(eord_1060, "nha", "left")
+    .join(eord_1090, "nha", "left")
+    .join(eord_1000, "nha", "left")
+    .join(eord_1010, "nha", "left")
+    .join(eord_1020, "nha", "left")
 )
 
-# apply SAP fallback logic
-df_stage1 = (
-    df_stage1
-    .withColumn(
-        "suppcd_1900",
-        F.coalesce(F.col("suppcd_1900"), F.col("suppcd_1020"))
-    )
-    .withColumn(
-        "suppname_1900",
-        F.coalesce(F.col("suppname_1900"), F.col("suppname_1020"))
-    )
-    .withColumn(
-        "suppcd_2000",
-        F.coalesce(F.col("suppcd_2000"), F.col("suppcd_1000"))
-    )
-    .withColumn(
-        "suppname_2000",
-        F.coalesce(F.col("suppname_2000"), F.col("suppname_1000"))
-    )
-    .withColumn(
-        "suppcd_3120",
-        F.coalesce(F.col("suppcd_3120"), F.col("suppcd_1010"))
-    )
-    .withColumn(
-        "suppname_3120",
-        F.coalesce(F.col("suppname_3120"), F.col("suppname_1010"))
-    )
+# apply fallback and fill missing MRP values from EORD
+df_stage2 = (
+    df_stage2
+    .withColumn("suppcd_1900", F.coalesce("suppcd_1900", "eord_suppcd_1900", "eord_suppcd_1020"))
+    .withColumn("suppname_1900", F.coalesce("suppname_1900", "eord_suppname_1900", "eord_suppname_1020"))
+    .withColumn("suppcd_2000", F.coalesce("suppcd_2000", "eord_suppcd_2000", "eord_suppcd_1000"))
+    .withColumn("suppname_2000", F.coalesce("suppname_2000", "eord_suppname_2000", "eord_suppname_1000"))
+    .withColumn("suppcd_3120", F.coalesce("suppcd_3120", "eord_suppcd_3120", "eord_suppcd_1010"))
+    .withColumn("suppname_3120", F.coalesce("suppname_3120", "eord_suppname_3120", "eord_suppname_1010"))
+    .withColumn("suppcd_1050", F.coalesce("suppcd_1050", "eord_suppcd_1050"))
+    .withColumn("suppname_1050", F.coalesce("suppname_1050", "eord_suppname_1050"))
+    .withColumn("suppcd_1060", F.coalesce("suppcd_1060", "eord_suppcd_1060"))
+    .withColumn("suppname_1060", F.coalesce("suppname_1060", "eord_suppname_1060"))
+    .withColumn("suppcd_1090", F.coalesce("suppcd_1090", "eord_suppcd_1090"))
+    .withColumn("suppname_1090", F.coalesce("suppname_1090", "eord_suppname_1090"))
 )
 
-# keep only required columns
-df_stage1 = df_stage1.select(
+df_stage2 = df_stage2.select(
     "nha",
-    "suppcd_1900", "suppname_1900",
-    "suppcd_2000", "suppname_2000",
-    "suppcd_3120", "suppname_3120",
-    "suppcd_1050", "suppname_1050",
-    "suppcd_1060", "suppname_1060",
-    "suppcd_1090", "suppname_1090"
+    "suppcd_1900","suppname_1900",
+    "suppcd_2000","suppname_2000",
+    "suppcd_3120","suppname_3120",
+    "suppcd_1050","suppname_1050",
+    "suppcd_1060","suppname_1060",
+    "suppcd_1090","suppname_1090"
 )
 
-df_stage1.createOrReplaceTempView("stage1_mrp_suppliers")
+df_stage2.createOrReplaceTempView("stage2_eord_filled")
