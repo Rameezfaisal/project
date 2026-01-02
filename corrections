@@ -1,99 +1,88 @@
-# ===============================
-# OMAT demand / consumption
-# ===============================
-df_omat = (
-    spark.read.table(src_omat_dmd_tbl)
-         .select(
-             F.col("nha").alias("nha"),
-             F.col("open_po_qty").cast("int").alias("open_po_qty")
-         )
-         .dropDuplicates(["nha"])
+# filter only MRP preferred rows
+df_inforec_mrp = df_inforec.filter(F.col("mrp_cd") == valid_mrp)
+
+# helper to pad supplier codes to 10 chars
+def pad10(col):
+    return F.lpad(col, 10, "0")
+
+# create plant specific filtered datasets
+def plant_inforec(plant):
+    return (
+        df_inforec_mrp
+        .filter(F.col("plant_cd") == plant)
+        .select(
+            F.col("material_cd").alias("nha"),
+            pad10(F.col("supcode_cd")).alias(f"suppcd_{plant}"),
+            F.col("suppliername_cd").alias(f"suppname_{plant}")
+        )
+    )
+
+inf_1900 = plant_inforec("1900")
+inf_2000 = plant_inforec("2000")
+inf_3120 = plant_inforec("3120")
+inf_1050 = plant_inforec("1050")
+inf_1060 = plant_inforec("1060")
+inf_1090 = plant_inforec("1090")
+
+# fallback plants
+inf_1000 = plant_inforec("1000")
+inf_1010 = plant_inforec("1010")
+inf_1020 = plant_inforec("1020")
+
+# join OMAT NHA with all plants
+df_nha = df_omat.select("nha")
+
+df_stage1 = (
+    df_nha
+    .join(inf_1900, "nha", "left")
+    .join(inf_2000, "nha", "left")
+    .join(inf_3120, "nha", "left")
+    .join(inf_1050, "nha", "left")
+    .join(inf_1060, "nha", "left")
+    .join(inf_1090, "nha", "left")
+    .join(inf_1000, "nha", "left")
+    .join(inf_1010, "nha", "left")
+    .join(inf_1020, "nha", "left")
 )
 
-# ===============================
-# INFOREC
-# ===============================
-df_inforec = (
-    spark.read.table(src_inforec_tbl)
-         .select(
-             F.col("material").alias("material_cd"),
-             F.col("plant").alias("plant_cd"),
-             F.col("mrp").alias("mrp_cd"),
-             F.col("supcode").alias("supcode_cd"),
-             F.col("suppliername").alias("suppliername_cd"),
-             F.col("supcat").alias("supcat_cd")
-         )
-         .filter(F.col("supcode_cd").isNotNull())
-         .filter(~F.col("supcat_cd").isin(excluded_supcats))
+# apply SAP fallback logic
+df_stage1 = (
+    df_stage1
+    .withColumn(
+        "suppcd_1900",
+        F.coalesce(F.col("suppcd_1900"), F.col("suppcd_1020"))
+    )
+    .withColumn(
+        "suppname_1900",
+        F.coalesce(F.col("suppname_1900"), F.col("suppname_1020"))
+    )
+    .withColumn(
+        "suppcd_2000",
+        F.coalesce(F.col("suppcd_2000"), F.col("suppcd_1000"))
+    )
+    .withColumn(
+        "suppname_2000",
+        F.coalesce(F.col("suppname_2000"), F.col("suppname_1000"))
+    )
+    .withColumn(
+        "suppcd_3120",
+        F.coalesce(F.col("suppcd_3120"), F.col("suppcd_1010"))
+    )
+    .withColumn(
+        "suppname_3120",
+        F.coalesce(F.col("suppname_3120"), F.col("suppname_1010"))
+    )
 )
 
-# ===============================
-# EORD
-# ===============================
-df_eord = (
-    spark.read.table(src_eord_tbl)
-         .select(
-             F.col("matnr").alias("matnr_cd"),
-             F.col("werks").alias("werks_cd"),
-             F.col("lifnr").alias("lifnr_cd"),
-             F.col("autet").alias("autet_cd"),
-             F.col("flifn").alias("flifn_cd")
-         )
+# keep only required columns
+df_stage1 = df_stage1.select(
+    "nha",
+    "suppcd_1900", "suppname_1900",
+    "suppcd_2000", "suppname_2000",
+    "suppcd_3120", "suppname_3120",
+    "suppcd_1050", "suppname_1050",
+    "suppcd_1060", "suppname_1060",
+    "suppcd_1090", "suppname_1090"
 )
 
-# ===============================
-# LFA1 (Supplier master)
-# ===============================
-df_lfa1 = (
-    spark.read.table(src_lfa1_tbl)
-         .select(
-             F.col("lifnr").alias("lifnr_cd"),
-             F.col("name1").alias("name1_cd")
-         )
-)
-
-# ===============================
-# ZPO history (Open PO logic)
-# ===============================
-df_zpo = (
-    spark.read.table(src_zpo_hist_tbl)
-         .select(
-             F.col("matnr").alias("matnr_cd"),
-             F.col("lifnr").alias("lifnr_cd"),
-             F.col("ebeln").alias("ebeln_cd"),
-             F.col("ebelp").alias("ebelp_cd"),
-             F.col("due_dt").alias("due_dt_cd"),
-             F.col("status").alias("status_cd"),
-             F.col("loekz").alias("loekz_cd"),
-             F.col("discrd").alias("discrd_cd"),
-             F.col("aussl").alias("aussl_cd"),
-             F.col("bsart").alias("bsart_cd"),
-             F.col("elikz").alias("elikz_cd")
-         )
-)
-
-# ===============================
-# EKPO
-# ===============================
-df_ekpo = (
-    spark.read.table(src_ekpo_tbl)
-         .select(
-             F.col("ebeln").alias("ebeln_cd"),
-             F.col("ebelp").alias("ebelp_cd"),
-             F.col("pstyp").alias("pstyp_cd")
-         )
-)
-
-# ===============================
-# IPLM OB PR
-# ===============================
-df_iplm = (
-    spark.read.table(src_iplm_tbl)
-         .select(
-             F.col("part_name").alias("part_name_cd"),
-             F.col("supplier_code").alias("supplier_code_cd"),
-             F.upper(F.col("state")).alias("state_cd"),
-             F.upper(F.col("disposition")).alias("disposition_cd"),
-             F.upper(F.col("reason")).alias("reason_cd")
-         )
-)
+df_stage1.createOrReplaceTempView("stage1_mrp_suppliers")
