@@ -1,23 +1,11 @@
-Cell 4 — Build MRP-Preferred Supplier Matrix (SAP INFOREC logic
+Cell 6 — Remove Non-Preferred Suppliers when Duplicate NHAs Exist
 
-
-This cell builds the first and most important supplier matrix for every Buy-NHA part.
-It answers this business question:
-“For each NHA, which supplier is officially preferred by SAP MRP in each manufacturing plant?”
-SAP stores this information in Info Records (INFREC).
-This cell reproduces the SAP logic that scans those records and builds a supplier-by-plant map.
-
-
-
-
-
-
-Cell 5 — Fill Missing Suppliers from SAP EORD (Purchasing Source List)
 What this step does in business terms
-Even after checking Info Records (MRP-preferred suppliers), many parts still have no supplier.
-SAP allows this because sometimes the official supplier is maintained in EORD (the Purchasing Source List) instead of Info Records.
-This step answers the business question:
-“If MRP did not define a supplier, who is the officially approved supplier for this part in SAP?”
+After combining Info Records + EORD, some NHAs may still appear with multiple supplier rows
+(because SAP allows more than one valid source per part).
+However, OMAT must keep only the “best” supplier per NHA per plant.
+This step answers:
+“If multiple suppliers exist for the same NHA, which one is NOT the official fixed vendor?”
 
 
 
@@ -26,81 +14,55 @@ This step answers the business question:
 
 
 
-# filter valid fixed EORD suppliers
-df_eord_valid = (
+# detect duplicate NHAs
+w = Window.partitionBy("nha")
+
+df_dups = (
+    spark.table("stage2_eord_filled")
+    .withColumn("dup_cnt", F.count("*").over(w))
+    .filter(F.col("dup_cnt") > 1)
+    .select("nha")
+    .distinct()
+)
+
+df_dups.createOrReplaceTempView("dup_nha")
+
+# bring EORD back to mark fixed vs non-fixed suppliers
+df_eord_flag = (
     df_eord
-    .filter((F.col("autet_cd") == valid_autet) & (F.col("flifn_cd") == preferred_flag))
+    .select(
+        F.col("matnr_cd").alias("nha"),
+        F.col("werks_cd"),
+        F.col("lifnr_cd"),
+        F.col("flifn_cd"),
+        F.col("autet_cd")
+    )
 )
 
-# join supplier names
-df_eord_named = (
-    df_eord_valid
-    .join(df_lfa1, "lifnr_cd", "left")
-)
+base = spark.table("stage2_eord_filled")
 
-# helper to extract EORD supplier per plant
-def eord_by_plant(plant):
+def remove_non_fixed(df, plant):
     return (
-        df_eord_named
-        .filter(F.col("werks_cd") == plant)
-        .select(
-            F.col("matnr_cd").alias("nha"),
-            pad10(F.col("lifnr_cd")).alias(f"eord_suppcd_{plant}"),
-            F.col("name1_cd").alias(f"eord_suppname_{plant}")
+        df.join(
+            df_eord_flag,
+            (df.nha == df_eord_flag.nha) &
+            (df_eord_flag.werks_cd == plant) &
+            (df_eord_flag.lifnr_cd == df[f"suppcd_{plant}"]),
+            "left"
         )
+        .filter(
+            ~(
+                (F.col("nha").isin([r.nha for r in df_dups.collect()])) &
+                (F.col("flifn_cd") != preferred_flag) &
+                (F.col("autet_cd").isNotNull())
+            )
+        )
+        .drop("werks_cd","lifnr_cd","flifn_cd","autet_cd")
     )
 
-eord_1900 = eord_by_plant("1900")
-eord_2000 = eord_by_plant("2000")
-eord_3120 = eord_by_plant("3120")
-eord_1050 = eord_by_plant("1050")
-eord_1060 = eord_by_plant("1060")
-eord_1090 = eord_by_plant("1090")
+df_clean = base
+for plant in procurement_plants:
+    df_clean = remove_non_fixed(df_clean, plant)
 
-# fallback plants
-eord_1000 = eord_by_plant("1000")
-eord_1010 = eord_by_plant("1010")
-eord_1020 = eord_by_plant("1020")
+df_clean.createOrReplaceTempView("stage3_deduped")
 
-# join to stage1
-df_stage2 = (
-    spark.table("stage1_mrp_suppliers")
-    .join(eord_1900, "nha", "left")
-    .join(eord_2000, "nha", "left")
-    .join(eord_3120, "nha", "left")
-    .join(eord_1050, "nha", "left")
-    .join(eord_1060, "nha", "left")
-    .join(eord_1090, "nha", "left")
-    .join(eord_1000, "nha", "left")
-    .join(eord_1010, "nha", "left")
-    .join(eord_1020, "nha", "left")
-)
-
-# apply fallback and fill missing MRP values from EORD
-df_stage2 = (
-    df_stage2
-    .withColumn("suppcd_1900", F.coalesce("suppcd_1900", "eord_suppcd_1900", "eord_suppcd_1020"))
-    .withColumn("suppname_1900", F.coalesce("suppname_1900", "eord_suppname_1900", "eord_suppname_1020"))
-    .withColumn("suppcd_2000", F.coalesce("suppcd_2000", "eord_suppcd_2000", "eord_suppcd_1000"))
-    .withColumn("suppname_2000", F.coalesce("suppname_2000", "eord_suppname_2000", "eord_suppname_1000"))
-    .withColumn("suppcd_3120", F.coalesce("suppcd_3120", "eord_suppcd_3120", "eord_suppcd_1010"))
-    .withColumn("suppname_3120", F.coalesce("suppname_3120", "eord_suppname_3120", "eord_suppname_1010"))
-    .withColumn("suppcd_1050", F.coalesce("suppcd_1050", "eord_suppcd_1050"))
-    .withColumn("suppname_1050", F.coalesce("suppname_1050", "eord_suppname_1050"))
-    .withColumn("suppcd_1060", F.coalesce("suppcd_1060", "eord_suppcd_1060"))
-    .withColumn("suppname_1060", F.coalesce("suppname_1060", "eord_suppname_1060"))
-    .withColumn("suppcd_1090", F.coalesce("suppcd_1090", "eord_suppcd_1090"))
-    .withColumn("suppname_1090", F.coalesce("suppname_1090", "eord_suppname_1090"))
-)
-
-df_stage2 = df_stage2.select(
-    "nha",
-    "suppcd_1900","suppname_1900",
-    "suppcd_2000","suppname_2000",
-    "suppcd_3120","suppname_3120",
-    "suppcd_1050","suppname_1050",
-    "suppcd_1060","suppname_1060",
-    "suppcd_1090","suppname_1090"
-)
-
-df_stage2.createOrReplaceTempView("stage2_eord_filled")
