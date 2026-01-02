@@ -1,22 +1,138 @@
-from pyspark.sql.types import StructType, StructField, TimestampType, IntegerType, StringType
-
-log_schema = StructType([
-    StructField("executed_on", TimestampType(), True),
-    StructField("obprtno_cnt", IntegerType(), True),
-    StructField("obprtno_nha_cnt", IntegerType(), True),
-    StructField("obpr_cnt", IntegerType(), True),
-    StructField("program_name", StringType(), True)
-])
-
-log_df = spark.createDataFrame(
-    [(None, None, None, None, program_name)],
-    schema=log_schema
-).withColumn("executed_on", F.current_timestamp())
-
-(
-    log_df
-    .write
-    .mode("append")
-    .format("delta")
-    .saveAsTable(tgt_log_tbl)
+df_po_valid = (
+    df_zpo
+    .join(df_ekpo, ["ebeln_cd","ebelp_cd"])
+    .filter(F.col("status_cd") != "INACT")
+    .filter(F.col("loekz_cd") == "")
+    .filter(F.col("discrd_cd") != "X")
+    .filter(F.col("aussl_cd") != "U3")
+    .filter(F.col("bsart_cd") != "UB")
+    .filter(F.col("elikz_cd") != "X")
+    .filter(~F.col("pstyp_cd").isin("7","9"))
+    .filter(F.length("lifnr_cd") == 10)
+    .filter(~F.substring("due_dt_cd",-5,5).isin("04-01","12-31"))
 )
+
+df_posupp = (
+    df_po_valid
+    .join(df_lfa1,"lifnr_cd","left")
+    .groupBy(F.col("matnr_cd").alias("nha"))
+    .agg(
+        F.expr("concat_ws(',', array_sort(collect_set(lifnr_cd)))").alias("posuppcode"),
+        F.expr("concat_ws(',', array_sort(collect_set(name1_cd)))").alias("posuppname")
+    )
+)
+
+df_posupp.createOrReplaceTempView("posupp")
+
+
+
+
+
+
+
+
+
+
+
+df_stage5 = (
+    spark.table("stage4_basepart_filled")
+    .join(df_posupp,"nha","left")
+    .withColumn("suppcd_po1",F.split("posuppcode",",")[0])
+    .withColumn("suppcd_po2",F.split("posuppcode",",")[1])
+    .withColumn("suppname_po1",F.split("posuppname",",")[0])
+    .withColumn("suppname_po2",F.split("posuppname",",")[1])
+)
+
+df_stage5.createOrReplaceTempView("stage5_with_po")
+
+
+
+
+
+
+
+
+df_pr = (
+    df_iplm
+    .filter(F.col("state_cd") != "CLOSED")
+    .filter(F.col("reason_cd") == "OBSOLETE COMPONENT")
+    .filter(
+        (F.col("state_cd").isin("CONFIRMED","IN REVIEW","IN WORK")) |
+        (F.col("disposition_cd").isin("CONFIRMED","DEFER"))
+    )
+    .withColumn("suppcd_pr",F.lpad("supplier_code_cd",10,"0"))
+    .join(df_lfa1, F.col("suppcd_pr")==df_lfa1.lifnr_cd, "left")
+    .select("part_name_cd","suppcd_pr","name1_cd")
+)
+
+df_stage6 = (
+    spark.table("stage5_with_po")
+    .join(df_pr, df_pr.part_name_cd==F.col("nha"), "left")
+    .drop("part_name_cd")
+    .withColumnRenamed("name1_cd","suppname_pr")
+)
+
+df_stage6.createOrReplaceTempView("stage6_with_pr")
+
+
+
+
+
+
+
+
+
+
+def nz(c):
+    return F.nullif(F.trim(F.col(c)), "")
+
+df = spark.table("stage6_with_pr")
+
+df_final = (
+    df
+    .withColumn(
+        "omat_selected_suppliercd",
+        F.coalesce(
+            nz("suppcd_2000"),
+            nz("suppcd_1900"),
+            nz("suppcd_3120"),
+            nz("suppcd_1050"),
+            nz("suppcd_1060"),
+            nz("suppcd_1090"),
+            nz("suppcd_po1"),
+            nz("suppcd_po2"),
+            nz("suppcd_pr")
+        )
+    )
+    .withColumn(
+        "omat_selected_supplier",
+        F.coalesce(
+            nz("suppname_2000"),
+            nz("suppname_1900"),
+            nz("suppname_3120"),
+            nz("suppname_1050"),
+            nz("suppname_1060"),
+            nz("suppname_1090"),
+            nz("suppname_po1"),
+            nz("suppname_po2"),
+            nz("suppname_pr")
+        )
+    )
+    .withColumn(
+        "omat_selected_plant",
+        F.when(nz("suppcd_2000").isNotNull(),"2000")
+         .when(nz("suppcd_1900").isNotNull(),"1900")
+         .when(nz("suppcd_3120").isNotNull(),"3120")
+         .when(nz("suppcd_1050").isNotNull(),"1050")
+         .when(nz("suppcd_1060").isNotNull(),"1060")
+         .when(nz("suppcd_1090").isNotNull(),"1090")
+         .when(nz("suppcd_po1").isNotNull(),"2000")
+         .when(nz("suppcd_pr").isNotNull(),"2000")
+    )
+)
+
+df_final.createOrReplaceTempView("stage7_final_suppliers")
+
+
+
+
