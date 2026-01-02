@@ -1,68 +1,58 @@
-Cell 6 — Remove Non-Preferred Suppliers when Duplicate NHAs Exist
+AnalysisException                         Traceback (most recent call last)
+Cell In[67], line 49
+     47 df_clean = base
+     48 for plant in procurement_plants:
+---> 49     df_clean = remove_non_fixed(df_clean, plant)
+     51 df_clean.createOrReplaceTempView("stage3_deduped")
 
-What this step does in business terms
-After combining Info Records + EORD, some NHAs may still appear with multiple supplier rows
-(because SAP allows more than one valid source per part).
-However, OMAT must keep only the “best” supplier per NHA per plant.
-This step answers:
-“If multiple suppliers exist for the same NHA, which one is NOT the official fixed vendor?”
+Cell In[67], line 37, in remove_non_fixed(df, plant)
+     28 def remove_non_fixed(df, plant):
+     29     return (
+     30         df.join(
+     31             df_eord_flag,
+     32             (df.nha == df_eord_flag.nha) &
+     33             (df_eord_flag.werks_cd == plant) &
+     34             (df_eord_flag.lifnr_cd == df[f"suppcd_{plant}"]),
+     35             "left"
+     36         )
+---> 37         .filter(
+     38             ~(
+     39                 (F.col("nha").isin([r.nha for r in df_dups.collect()])) &
+     40                 (F.col("flifn_cd") != preferred_flag) &
+     41                 (F.col("autet_cd").isNotNull())
+     42             )
+     43         )
+     44         .drop("werks_cd","lifnr_cd","flifn_cd","autet_cd")
+     45     )
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3331, in DataFrame.filter(self, condition)
+   3329     jdf = self._jdf.filter(condition)
+   3330 elif isinstance(condition, Column):
+-> 3331     jdf = self._jdf.filter(condition._jc)
+   3332 else:
+   3333     raise PySparkTypeError(
+   3334         error_class="NOT_COLUMN_OR_STR",
+   3335         message_parameters={"arg_name": "condition", "arg_type": type(condition).__name__},
+   3336     )
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-
-
-
-
-# detect duplicate NHAs
-w = Window.partitionBy("nha")
-
-df_dups = (
-    spark.table("stage2_eord_filled")
-    .withColumn("dup_cnt", F.count("*").over(w))
-    .filter(F.col("dup_cnt") > 1)
-    .select("nha")
-    .distinct()
-)
-
-df_dups.createOrReplaceTempView("dup_nha")
-
-# bring EORD back to mark fixed vs non-fixed suppliers
-df_eord_flag = (
-    df_eord
-    .select(
-        F.col("matnr_cd").alias("nha"),
-        F.col("werks_cd"),
-        F.col("lifnr_cd"),
-        F.col("flifn_cd"),
-        F.col("autet_cd")
-    )
-)
-
-base = spark.table("stage2_eord_filled")
-
-def remove_non_fixed(df, plant):
-    return (
-        df.join(
-            df_eord_flag,
-            (df.nha == df_eord_flag.nha) &
-            (df_eord_flag.werks_cd == plant) &
-            (df_eord_flag.lifnr_cd == df[f"suppcd_{plant}"]),
-            "left"
-        )
-        .filter(
-            ~(
-                (F.col("nha").isin([r.nha for r in df_dups.collect()])) &
-                (F.col("flifn_cd") != preferred_flag) &
-                (F.col("autet_cd").isNotNull())
-            )
-        )
-        .drop("werks_cd","lifnr_cd","flifn_cd","autet_cd")
-    )
-
-df_clean = base
-for plant in procurement_plants:
-    df_clean = remove_non_fixed(df_clean, plant)
-
-df_clean.createOrReplaceTempView("stage3_deduped")
-
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `nha` is ambiguous, could be: [`nha`, `stage2_eord_filled`.`nha`].
