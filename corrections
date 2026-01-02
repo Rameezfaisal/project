@@ -1,61 +1,22 @@
-PySparkValueError                         Traceback (most recent call last)
-Cell In[91], line 45
-      9 (
-     10     df_final
-     11     .select(
-   (...)
-     39     .saveAsTable(tgt_suppliers_tbl)
-     40 )
-     42 # ===============================
-     43 # 3. Insert execution log
-     44 # ===============================
----> 45 log_df = spark.createDataFrame(
-     46     [(None, None, None, None, program_name)],
-     47     ["executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"]
-     48 ).withColumn("executed_on", F.current_timestamp())
-     50 (
-     51     log_df
-     52     .write
-   (...)
-     55     .saveAsTable(tgt_log_tbl)
-     56 )
+from pyspark.sql.types import StructType, StructField, TimestampType, IntegerType, StringType
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1443, in SparkSession.createDataFrame(self, data, schema, samplingRatio, verifySchema)
-   1438 if has_pandas and isinstance(data, pd.DataFrame):
-   1439     # Create a DataFrame from pandas DataFrame.
-   1440     return super(SparkSession, self).createDataFrame(  # type: ignore[call-overload]
-   1441         data, schema, samplingRatio, verifySchema
-   1442     )
--> 1443 return self._create_dataframe(
-   1444     data, schema, samplingRatio, verifySchema  # type: ignore[arg-type]
-   1445 )
+log_schema = StructType([
+    StructField("executed_on", TimestampType(), True),
+    StructField("obprtno_cnt", IntegerType(), True),
+    StructField("obprtno_nha_cnt", IntegerType(), True),
+    StructField("obpr_cnt", IntegerType(), True),
+    StructField("program_name", StringType(), True)
+])
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1485, in SparkSession._create_dataframe(self, data, schema, samplingRatio, verifySchema)
-   1483     rdd, struct = self._createFromRDD(data.map(prepare), schema, samplingRatio)
-   1484 else:
--> 1485     rdd, struct = self._createFromLocal(map(prepare, data), schema)
-   1486 assert self._jvm is not None
-   1487 jrdd = self._jvm.SerDeUtil.toJavaArray(rdd._to_java_object_rdd())
+log_df = spark.createDataFrame(
+    [(None, None, None, None, program_name)],
+    schema=log_schema
+).withColumn("executed_on", F.current_timestamp())
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1093, in SparkSession._createFromLocal(self, data, schema)
-   1090     data = list(data)
-   1092 if schema is None or isinstance(schema, (list, tuple)):
--> 1093     struct = self._inferSchemaFromList(data, names=schema)
-   1094     converter = _create_converter(struct)
-   1095     tupled_data: Iterable[Tuple] = map(converter, data)
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:969, in SparkSession._inferSchemaFromList(self, data, names)
-    955 schema = reduce(
-    956     _merge_type,
-    957     (
-   (...)
-    966     ),
-    967 )
-    968 if _has_nulltype(schema):
---> 969     raise PySparkValueError(
-    970         error_class="CANNOT_DETERMINE_TYPE",
-    971         message_parameters={},
-    972     )
-    973 return schema
-
-PySparkValueError: [CANNOT_DETERMINE_TYPE] Some of types cannot be determined after inferring.
+(
+    log_df
+    .write
+    .mode("append")
+    .format("delta")
+    .saveAsTable(tgt_log_tbl)
+)
