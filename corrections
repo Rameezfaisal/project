@@ -1,12 +1,17 @@
-Cell 8 — Open Purchase Order (PO) Supplier Identification
+Cell 9 — Attach Open-PO Suppliers (PO1 / PO2) to Each NHA
+
 What this step does in business terms
-Even if SAP master data does not show a supplier, open purchase orders tell us who we are actively buying from.
+At this point we know:
+Who SAP prefers (MRP + EORD)
+Who SAP is actually buying from (Open POs)
+OMAT must use Open PO suppliers as a fallback when:
+Master data is missing
+Or the part is newly sourced
 This step answers:
-“For this NHA, which suppliers currently have open purchase orders?”
-These suppliers are extremely important because:
-They are currently delivering
-They can provide inventory & lead-time
-OMAT uses them when master data is missing
+“Who are the first two active suppliers we are currently purchasing this NHA from?”
+SAP logic:
+First supplier in PO list → PO1
+Second supplier in PO list → PO2
 
 
 
@@ -16,48 +21,39 @@ OMAT uses them when master data is missing
 
 
 
-# ===============================
-# Filter only valid OPEN PO lines
-# ===============================
-df_po_valid = (
-    df_zpo
-    .join(df_ekpo, ["ebeln_cd", "ebelp_cd"], "inner")
-    .filter(F.col("matnr_cd").isNotNull())
-    .filter(F.col("matnr_cd") != "")
-    .filter(F.col("status_cd") != "INACT")
-    .filter(F.col("loekz_cd") == "")
-    .filter(F.col("discrd_cd") != "X")
-    .filter(F.col("aussl_cd") != "U3")
-    .filter(F.col("bsart_cd") != "UB")
-    .filter(F.col("elikz_cd") != "X")
-    .filter(~F.col("pstyp_cd").isin("7", "9"))
-    .filter(F.length("lifnr_cd") == 10)
-    .filter(
-        ~(
-            F.substring("due_dt_cd", -5, 5).isin("04-01", "12-31")
-        )
+df_base = spark.table("stage4_basepart_filled")
+
+# split comma separated supplier codes
+df_po_split = (
+    spark.table("posupp")
+    .withColumn("po1_cd", F.split("posuppcode", ",").getItem(0))
+    .withColumn("po2_cd", F.split("posuppcode", ",").getItem(1))
+)
+
+# split names
+df_po_split = (
+    df_po_split
+    .withColumn("po1_name", F.split("posuppname", ",").getItem(0))
+    .withColumn("po2_name", F.split("posuppname", ",").getItem(1))
+)
+
+# join PO suppliers into main dataset
+df_stage5 = (
+    df_base
+    .join(df_po_split, "nha", "left")
+    .select(
+        "nha",
+        "suppcd_1900","suppname_1900",
+        "suppcd_2000","suppname_2000",
+        "suppcd_3120","suppname_3120",
+        "suppcd_1050","suppname_1050",
+        "suppcd_1060","suppname_1060",
+        "suppcd_1090","suppname_1090",
+        F.col("po1_cd").alias("suppcd_po1"),
+        F.col("po1_name").alias("suppname_po1"),
+        F.col("po2_cd").alias("suppcd_po2"),
+        F.col("po2_name").alias("suppname_po2")
     )
 )
 
-# ===============================
-# Join supplier names
-# ===============================
-df_po_named = (
-    df_po_valid
-    .join(df_lfa1, "lifnr_cd", "left")
-)
-
-# ===============================
-# Aggregate suppliers per NHA
-# ===============================
-df_posupp = (
-    df_po_named
-    .groupBy(F.col("matnr_cd").alias("nha"))
-    .agg(
-        F.concat_ws(",", F.collect_set("lifnr_cd")).alias("posuppcode"),
-        F.concat_ws(",", F.collect_set("name1_cd")).alias("posuppname")
-    )
-)
-
-df_posupp.createOrReplaceTempView("posupp")
-
+df_stage5.createOrReplaceTempView("stage5_with_po")
