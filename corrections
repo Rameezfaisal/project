@@ -1,38 +1,45 @@
-CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_buynha_suppliers_plants (
-  nha                      STRING,
-  omat_selected_plant      STRING,
-  omat_selected_supplier   STRING,
-  omat_selected_suppliercd STRING,
-  suppcd_1050              STRING,
-  suppcd_1060              STRING,
-  suppcd_1090              STRING,
-  suppcd_1900              STRING,
-  suppcd_2000              STRING,
-  suppcd_3120              STRING,
-  suppcd_po1               STRING,
-  suppcd_po2               STRING,
-  suppcd_pr                STRING,
-  suppname_1050            STRING,
-  suppname_1060            STRING,
-  suppname_1090            STRING,
-  suppname_1900            STRING,
-  suppname_2000            STRING,
-  suppname_3120            STRING,
-  suppname_po1             STRING,
-  suppname_po2             STRING,
-  suppname_pr              STRING
-)
-USING DELTA;
+from pyspark.sql import functions as F
+from pyspark.sql import Window
 
 
 
-CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_log_dtls (
-  executed_on        TIMESTAMP,  -- SECONDDATE
-  obprtno_cnt        INT,
-  obprtno_nha_cnt    INT,
-  obpr_cnt           INT,
-  program_name       STRING
-)
-USING DELTA;
+
+
+# ===============================
+# Lakehouse table paths
+# ===============================
+
+# ---- Source tables (CVs replicated into Lakehouse) ----
+src_omat_dmd_tbl          = "eng_test.cv_omat_dmd_consumption_dtls"
+src_inforec_tbl           = "eng_test.cv_zt_inforec_data_sched"
+src_eord_tbl              = "eng_test.cv_eord"
+src_lfa1_tbl              = "eng_test.cv_lfa1"
+src_zpo_hist_tbl          = "eng_test.cv_zpo_hstry"
+src_ekpo_tbl              = "eng_test.cv_ekpo"
+src_iplm_tbl              = "eng_test.cv_iplm_problem_report_part"
+
+# ---- Target tables ----
+tgt_suppliers_tbl         = "eng_test.rpt_omat_buynha_suppliers_plants"
+tgt_log_tbl               = "eng_test.rpt_omat_log_dtls"
+
+# ---- Control values ----
+procurement_plants = ["1900", "2000", "3120", "1050", "1060", "1090"]
+fallback_plants    = ["1000", "1010", "1020"]
+
+valid_mrp          = "1"
+valid_autet        = "1"
+preferred_flag    = "X"
+
+# supplier categories to exclude
+excluded_supcats   = ["A05", "A08", "A15"]
+
+# Program name for logging
+program_name = "SP_OMAT_UPDATE_SUPPLIERS_BYPLANT"
+
+
+
+
+
+
 
 
