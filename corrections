@@ -1,103 +1,78 @@
-df_stage5 = (
-    spark.table("stage4_basepart_filled")
-    .join(spark.table("posupp"), "nha", "left")
-    .withColumn("suppcd_po1",F.split("posuppcode",",")[0])
-    .withColumn("suppcd_po2",F.split("posuppcode",",")[1])
-    .withColumn("suppname_po1",F.split("posuppname",",")[0])
-    .withColumn("suppname_po2",F.split("posuppname",",")[1])
-)
+AnalysisException                         Traceback (most recent call last)
+Cell In[43], line 8
+      2     return F.nullif(F.trim(F.col(c)), "")
+      4 df = spark.table("stage6_with_pr")
+      6 df_final = (
+      7     df
+----> 8     .withColumn(
+      9         "omat_selected_suppliercd",
+     10         F.coalesce(
+     11             nz("suppcd_2000"),
+     12             nz("suppcd_1900"),
+     13             nz("suppcd_3120"),
+     14             nz("suppcd_1050"),
+     15             nz("suppcd_1060"),
+     16             nz("suppcd_1090"),
+     17             nz("suppcd_po1"),
+     18             nz("suppcd_po2"),
+     19             nz("suppcd_pr")
+     20         )
+     21     )
+     22     .withColumn(
+     23         "omat_selected_supplier",
+     24         F.coalesce(
+     25             nz("suppname_2000"),
+     26             nz("suppname_1900"),
+     27             nz("suppname_3120"),
+     28             nz("suppname_1050"),
+     29             nz("suppname_1060"),
+     30             nz("suppname_1090"),
+     31             nz("suppname_po1"),
+     32             nz("suppname_po2"),
+     33             nz("suppname_pr")
+     34         )
+     35     )
+     36     .withColumn(
+     37         "omat_selected_plant",
+     38         F.when(nz("suppcd_2000").isNotNull(),"2000")
+     39          .when(nz("suppcd_1900").isNotNull(),"1900")
+     40          .when(nz("suppcd_3120").isNotNull(),"3120")
+     41          .when(nz("suppcd_1050").isNotNull(),"1050")
+     42          .when(nz("suppcd_1060").isNotNull(),"1060")
+     43          .when(nz("suppcd_1090").isNotNull(),"1090")
+     44          .when(nz("suppcd_po1").isNotNull(),"2000")
+     45          .when(nz("suppcd_pr").isNotNull(),"2000")
+     46     )
+     47 )
+     49 df_final.createOrReplaceTempView("stage7_final_suppliers")
 
-df_stage5.createOrReplaceTempView("stage5_with_po")
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:5176, in DataFrame.withColumn(self, colName, col)
+   5171 if not isinstance(col, Column):
+   5172     raise PySparkTypeError(
+   5173         error_class="NOT_COLUMN",
+   5174         message_parameters={"arg_name": "col", "arg_type": type(col).__name__},
+   5175     )
+-> 5176 return DataFrame(self._jdf.withColumn(colName, col._jc), self.sparkSession)
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-
-
-
-
-df_pr = (
-    df_iplm
-    .filter(F.col("state_cd") != "CLOSED")
-    .filter(F.col("reason_cd") == "OBSOLETE COMPONENT")
-    .filter(
-        (F.col("state_cd").isin("CONFIRMED","IN REVIEW","IN WORK")) |
-        (F.col("disposition_cd").isin("CONFIRMED","DEFER"))
-    )
-    .withColumn("suppcd_pr",F.lpad("supplier_code_cd",10,"0"))
-    .join(df_lfa1, F.col("suppcd_pr")==df_lfa1.lifnr_cd, "left")
-    .select("part_name_cd","suppcd_pr","name1_cd")
-)
-
-df_stage6 = (
-    spark.table("stage5_with_po")
-    .join(df_pr, df_pr.part_name_cd==F.col("nha"), "left")
-    .drop("part_name_cd")
-    .withColumnRenamed("name1_cd","suppname_pr")
-)
-
-df_stage6.createOrReplaceTempView("stage6_with_pr")
-
-
-
-
-
-
-
-
-def nz(c):
-    return F.nullif(F.trim(F.col(c)), "")
-
-df = spark.table("stage6_with_pr")
-
-df_final = (
-    df
-    .withColumn(
-        "omat_selected_suppliercd",
-        F.coalesce(
-            nz("suppcd_2000"),
-            nz("suppcd_1900"),
-            nz("suppcd_3120"),
-            nz("suppcd_1050"),
-            nz("suppcd_1060"),
-            nz("suppcd_1090"),
-            nz("suppcd_po1"),
-            nz("suppcd_po2"),
-            nz("suppcd_pr")
-        )
-    )
-    .withColumn(
-        "omat_selected_supplier",
-        F.coalesce(
-            nz("suppname_2000"),
-            nz("suppname_1900"),
-            nz("suppname_3120"),
-            nz("suppname_1050"),
-            nz("suppname_1060"),
-            nz("suppname_1090"),
-            nz("suppname_po1"),
-            nz("suppname_po2"),
-            nz("suppname_pr")
-        )
-    )
-    .withColumn(
-        "omat_selected_plant",
-        F.when(nz("suppcd_2000").isNotNull(),"2000")
-         .when(nz("suppcd_1900").isNotNull(),"1900")
-         .when(nz("suppcd_3120").isNotNull(),"3120")
-         .when(nz("suppcd_1050").isNotNull(),"1050")
-         .when(nz("suppcd_1060").isNotNull(),"1060")
-         .when(nz("suppcd_1090").isNotNull(),"1090")
-         .when(nz("suppcd_po1").isNotNull(),"2000")
-         .when(nz("suppcd_pr").isNotNull(),"2000")
-    )
-)
-
-df_final.createOrReplaceTempView("stage7_final_suppliers")
-
-
-
-
-
-
-
-display(spark.table("stage6_with_pr").limit(5))
+AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `` cannot be resolved. Did you mean one of the following? [`nha`, `suppcd_pr`, `posuppcode`, `posuppname`, `suppcd_po1`].;
+'Project [nha#74, suppcd_1900#56309, suppname_1900#56336, suppcd_2000#56363, suppname_2000#56390, suppcd_3120#56417, suppname_3120#56444, suppcd_1050#56471, suppname_1050#56498, suppcd_1060#56525, suppname_1060#56552, suppcd_1090#56579, suppname_1090#56606, posuppcode#56685, posuppname#56686, suppcd_po1#56870, suppcd_po2#56887, suppname_po1#56905, suppname_po2#56924, suppcd_pr#56944, suppname_pr#57197, coalesce(nullif(trim('suppcd_2000, None), '), nullif(trim('suppcd_1900, None), '), nullif(trim('suppcd_3120, None), '), nullif(trim('suppcd_1050, None), '), nullif(trim('suppcd_1060, None), '), nullif(trim('suppcd_1090, None), '), nullif(trim('suppcd_po1, None), '), nullif(trim('suppcd_po2, None), '), nullif(trim('suppcd_pr, None), ')) AS o
