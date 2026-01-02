@@ -1,13 +1,27 @@
-Cell 10 — OB PR Supplier (Supplier Who Raised the Obsolescence Request)
+Cell 11 — Final OMAT Supplier & Plant Selection
 What this step does in business terms
-Some parts become obsolete because a supplier officially reported the problem in IPLM (Problem Reports).
-That supplier:
-Is directly involved
-Usually holds last-time-buy stock
-Is often the best contact for OMAT
-This step answers:
-“Which supplier raised the Obsolete Component PR for this NHA?”
-SAP uses this supplier as a high-priority fallback.
+Now OMAT has multiple possible suppliers for every NHA:
+From MRP / Info Records
+From EORD
+From Base-part inheritance
+From Open POs
+From Obsolescence PR
+OMAT must choose one authoritative supplier to:
+Contact for inventory
+Track exposure
+Drive risk decisions
+SAP defines a strict priority order:
+🏆 Supplier Priority
+Plant 2000 MRP
+Plant 1900 MRP
+Plant 3120 MRP
+Plant 1050 MRP
+Plant 1060 MRP
+Plant 1090 MRP
+Open PO Supplier (PO1)
+Second PO Supplier (PO2)
+OB PR Supplier
+This is exactly what SAP’s final UPDATE does.
 
 
 
@@ -15,39 +29,50 @@ SAP uses this supplier as a high-priority fallback.
 
 
 
-# filter valid OB PRs
-df_obpr = (
-    df_iplm
-    .filter(F.col("part_name_cd") != "NA")
-    .filter(F.col("state_cd") != "CLOSED")
-    .filter(
-        (F.col("state_cd").isin("CONFIRMED", "IN REVIEW", "IN WORK")) |
-        (F.col("disposition_cd").isin("CONFIRMED", "DEFER"))
+
+df = spark.table("stage6_with_pr")
+
+df_stage7 = (
+    df
+    .withColumn(
+        "omat_selected_plant",
+        F.when(F.length("suppcd_2000") > 0, F.lit("2000"))
+         .when(F.length("suppcd_1900") > 0, F.lit("1900"))
+         .when(F.length("suppcd_3120") > 0, F.lit("3120"))
+         .when(F.length("suppcd_1050") > 0, F.lit("1050"))
+         .when(F.length("suppcd_1060") > 0, F.lit("1060"))
+         .when(F.length("suppcd_1090") > 0, F.lit("1090"))
+         .when(F.length("suppcd_po1") == 10, F.lit("2000"))
+         .when(F.length("suppcd_pr") > 0, F.lit("2000"))
     )
-    .filter(F.col("reason_cd") == "OBSOLETE COMPONENT")
-)
-
-# format supplier code to 10 chars
-df_obpr = (
-    df_obpr
-    .withColumn("suppcd_pr", F.lpad(F.col("supplier_code_cd"), 10, "0"))
-)
-
-# join supplier name
-df_obpr_named = (
-    df_obpr
-    .join(df_lfa1, df_obpr.suppcd_pr == df_lfa1.lifnr_cd, "left")
-    .select(
-        F.col("part_name_cd").alias("nha"),
-        F.col("suppcd_pr"),
-        F.col("name1_cd").alias("suppname_pr")
+    .withColumn(
+        "omat_selected_suppliercd",
+        F.coalesce(
+            "suppcd_2000",
+            "suppcd_1900",
+            "suppcd_3120",
+            "suppcd_1050",
+            "suppcd_1060",
+            "suppcd_1090",
+            "suppcd_po1",
+            F.expr("substring(suppcd_po2,1,10)"),
+            "suppcd_pr"
+        )
+    )
+    .withColumn(
+        "omat_selected_supplier",
+        F.coalesce(
+            "suppname_2000",
+            "suppname_1900",
+            "suppname_3120",
+            "suppname_1050",
+            "suppname_1060",
+            "suppname_1090",
+            "suppname_po1",
+            "suppname_po2",
+            "suppname_pr"
+        )
     )
 )
 
-# attach PR supplier to main dataset
-df_stage6 = (
-    spark.table("stage5_with_po")
-    .join(df_obpr_named, "nha", "left")
-)
-
-df_stage6.createOrReplaceTempView("stage6_with_pr")
+df_stage7.createOrReplaceTempView("stage7_final_suppliers")
