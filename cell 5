@@ -1,12 +1,56 @@
+# ===============================
+# Identify NHAs that have duplicates
+# ===============================
+df_dups = (
+    spark.table("stage2_eord_filled")
+    .groupBy("nha")
+    .count()
+    .filter(F.col("count") > 1)
+    .select(F.col("nha").alias("dup_nha"))
+)
 
-mfg3 = (
-    mseg.join(mkpf, on="mblnr", how="inner")
-        .join(makt, on=(mseg.matnr == makt.matnr), how="inner")
-        .join(nhalist, on=(mseg.matnr == nhalist.nha), how="inner")
-        .filter(
-            (mseg.bwart.isin("261","262")) &
-            (mkpf.bldat > F.date_sub(F.current_date(), 365*3)) &
-            (mkpf.bldat < F.current_date())
+# ===============================
+# Prepare EORD flags
+# ===============================
+df_eord_flag = (
+    df_eord
+    .select(
+        F.col("matnr_cd").alias("eord_nha"),
+        F.col("werks_cd").alias("eord_plant"),
+        F.col("lifnr_cd").alias("eord_lifnr"),
+        F.col("flifn_cd").alias("eord_flifn"),
+        F.col("autet_cd").alias("eord_autet")
+    )
+)
+
+base = spark.table("stage2_eord_filled")
+
+# ===============================
+# Apply SAP delete logic per plant
+# ===============================
+def dedup_plant(df, plant):
+    return (
+        df
+        .join(df_dups, df.nha == df_dups.dup_nha, "left")
+        .join(
+            df_eord_flag,
+            (df.nha == df_eord_flag.eord_nha) &
+            (df_eord_flag.eord_plant == plant) &
+            (df_eord_flag.eord_lifnr == df[f"suppcd_{plant}"]),
+            "left"
         )
-        .groupBy(nhalist.cmpprtno.alias("cmpprtno"), mseg.matnr.alias("matnr"), makt.maktx.alias("maktx"))
-        .agg(F.sum(F.when(mseg.shkzg == "S", -mseg.menge).otherwise(mseg.menge)).alias("mfg_3yrs_consumption"))
+        .filter(
+            ~(
+                F.col("dup_nha").isNotNull() &
+                F.col("eord_autet").isNotNull() &
+                (F.col("eord_flifn") != preferred_flag)
+            )
+        )
+        .drop("dup_nha","eord_nha","eord_plant","eord_lifnr","eord_flifn","eord_autet")
+    )
+
+df_stage3 = base
+for p in procurement_plants:
+    df_stage3 = dedup_plant(df_stage3, p)
+
+df_stage3.createOrReplaceTempView("stage3_deduped")
