@@ -1,113 +1,65 @@
-Cell 7 — Base-Part Supplier Inheritance for R / S / C / X / D Parts
-What this step does in business terms
-Many NHAs are variants of a base part, for example:
-Copy code
+AnalysisException                         Traceback (most recent call last)
+Cell In[73], line 74
+     57 def fill_from_base(df):
+     58     return (
+     59         df
+     60         .withColumn("suppcd_1900", F.coalesce("suppcd_1900", "suppcd_1900_base"))
+   (...)
+     71         .withColumn("suppname_1090", F.coalesce("suppname_1090", "suppname_1090_base"))
+     72     )
+---> 74 df_stage4 = fill_from_base(df_p1)
+     75 df_stage4 = fill_from_base(df_p2)
+     77 df_stage4 = df_stage4.select(
+     78     "nha",
+     79     "suppcd_1900","suppname_1900",
+   (...)
+     84     "suppcd_1090","suppname_1090"
+     85 )
 
-3-6R3-4567
-3-6S3-4567
-3-6C3-4567
-In SAP:
-The variant parts (R, S, C, X, D) often do not have their own supplier
-But the base part DOES
-So SAP uses a rule:
-“If a variant part has no supplier, inherit the supplier of the base part.”
-SAP does this using two different pattern rules:
-Replace R/S/C/X/D with -  (3-6R3 → 3-6-3)
-Remove R/S/C/X/D completely (R2-6-2 → 2-6-2)
-We reproduce both patterns.
+Cell In[73], line 60, in fill_from_base(df)
+     57 def fill_from_base(df):
+     58     return (
+     59         df
+---> 60         .withColumn("suppcd_1900", F.coalesce("suppcd_1900", "suppcd_1900_base"))
+     61         .withColumn("suppname_1900", F.coalesce("suppname_1900", "suppname_1900_base"))
+     62         .withColumn("suppcd_2000", F.coalesce("suppcd_2000", "suppcd_2000_base"))
+     63         .withColumn("suppname_2000", F.coalesce("suppname_2000", "suppname_2000_base"))
+     64         .withColumn("suppcd_3120", F.coalesce("suppcd_3120", "suppcd_3120_base"))
+     65         .withColumn("suppname_3120", F.coalesce("suppname_3120", "suppname_3120_base"))
+     66         .withColumn("suppcd_1050", F.coalesce("suppcd_1050", "suppcd_1050_base"))
+     67         .withColumn("suppname_1050", F.coalesce("suppname_1050", "suppname_1050_base"))
+     68         .withColumn("suppcd_1060", F.coalesce("suppcd_1060", "suppcd_1060_base"))
+     69         .withColumn("suppname_1060", F.coalesce("suppname_1060", "suppname_1060_base"))
+     70         .withColumn("suppcd_1090", F.coalesce("suppcd_1090", "suppcd_1090_base"))
+     71         .withColumn("suppname_1090", F.coalesce("suppname_1090", "suppname_1090_base"))
+     72     )
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:5176, in DataFrame.withColumn(self, colName, col)
+   5171 if not isinstance(col, Column):
+   5172     raise PySparkTypeError(
+   5173         error_class="NOT_COLUMN",
+   5174         message_parameters={"arg_name": "col", "arg_type": type(col).__name__},
+   5175     )
+-> 5176 return DataFrame(self._jdf.withColumn(colName, col._jc), self.sparkSession)
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-
-
-
-
-
-df_base = spark.table("stage3_deduped")
-
-# -------------------------------
-# Pattern 1 : Replace R,S,C,X,D with "-"
-# -------------------------------
-df_pattern1 = (
-    df_base
-    .withColumn(
-        "base_nha",
-        F.regexp_replace("nha", "[RSCXD]", "-")
-    )
-)
-
-# -------------------------------
-# Pattern 2 : Remove R,S,C,X,D
-# -------------------------------
-df_pattern2 = (
-    df_base
-    .withColumn(
-        "base_nha",
-        F.regexp_replace("nha", "[RSCXD]", "")
-    )
-)
-
-# -------------------------------
-# Base supplier lookup (from same table)
-# -------------------------------
-df_lookup = df_base.select(
-    F.col("nha").alias("base_nha"),
-    "suppcd_1900","suppname_1900",
-    "suppcd_2000","suppname_2000",
-    "suppcd_3120","suppname_3120",
-    "suppcd_1050","suppname_1050",
-    "suppcd_1060","suppname_1060",
-    "suppcd_1090","suppname_1090"
-)
-
-# -------------------------------
-# Apply Pattern 1
-# -------------------------------
-df_p1 = (
-    df_pattern1
-    .join(df_lookup, "base_nha", "left")
-)
-
-# -------------------------------
-# Apply Pattern 2
-# -------------------------------
-df_p2 = (
-    df_pattern2
-    .join(df_lookup, "base_nha", "left")
-)
-
-# -------------------------------
-# Fill missing suppliers from base part
-# -------------------------------
-def fill_from_base(df):
-    return (
-        df
-        .withColumn("suppcd_1900", F.coalesce("suppcd_1900", "suppcd_1900_base"))
-        .withColumn("suppname_1900", F.coalesce("suppname_1900", "suppname_1900_base"))
-        .withColumn("suppcd_2000", F.coalesce("suppcd_2000", "suppcd_2000_base"))
-        .withColumn("suppname_2000", F.coalesce("suppname_2000", "suppname_2000_base"))
-        .withColumn("suppcd_3120", F.coalesce("suppcd_3120", "suppcd_3120_base"))
-        .withColumn("suppname_3120", F.coalesce("suppname_3120", "suppname_3120_base"))
-        .withColumn("suppcd_1050", F.coalesce("suppcd_1050", "suppcd_1050_base"))
-        .withColumn("suppname_1050", F.coalesce("suppname_1050", "suppname_1050_base"))
-        .withColumn("suppcd_1060", F.coalesce("suppcd_1060", "suppcd_1060_base"))
-        .withColumn("suppname_1060", F.coalesce("suppname_1060", "suppname_1060_base"))
-        .withColumn("suppcd_1090", F.coalesce("suppcd_1090", "suppcd_1090_base"))
-        .withColumn("suppname_1090", F.coalesce("suppname_1090", "suppname_1090_base"))
-    )
-
-df_stage4 = fill_from_base(df_p1)
-df_stage4 = fill_from_base(df_p2)
-
-df_stage4 = df_stage4.select(
-    "nha",
-    "suppcd_1900","suppname_1900",
-    "suppcd_2000","suppname_2000",
-    "suppcd_3120","suppname_3120",
-    "suppcd_1050","suppname_1050",
-    "suppcd_1060","suppname_1060",
-    "suppcd_1090","suppname_1090"
-)
-
-df_stage4.createOrReplaceTempView("stage4_basepart_filled")
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `suppcd_1900` is ambiguous, could be: [`stage3_deduped`.`suppcd_1900`, `stage3_deduped`.`suppcd_1900`].
