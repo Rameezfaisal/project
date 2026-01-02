@@ -1,49 +1,19 @@
-def nz(c):
-    return F.when(F.trim(F.col(c)) == "", None).otherwise(F.col(c))
 
-df = spark.table("stage6_with_pr")
+Cell 11.5 — Abort if OMAT source is empty
 
-df_final = (
-    df
-    .withColumn(
-        "omat_selected_suppliercd",
-        F.coalesce(
-            nz("suppcd_2000"),
-            nz("suppcd_1900"),
-            nz("suppcd_3120"),
-            nz("suppcd_1050"),
-            nz("suppcd_1060"),
-            nz("suppcd_1090"),
-            nz("suppcd_po1"),
-            nz("suppcd_po2"),
-            nz("suppcd_pr")
-        )
-    )
-    .withColumn(
-        "omat_selected_supplier",
-        F.coalesce(
-            nz("suppname_2000"),
-            nz("suppname_1900"),
-            nz("suppname_3120"),
-            nz("suppname_1050"),
-            nz("suppname_1060"),
-            nz("suppname_1090"),
-            nz("suppname_po1"),
-            nz("suppname_po2"),
-            nz("suppname_pr")
-        )
-    )
-    .withColumn(
-        "omat_selected_plant",
-        F.when(nz("suppcd_2000").isNotNull(),"2000")
-         .when(nz("suppcd_1900").isNotNull(),"1900")
-         .when(nz("suppcd_3120").isNotNull(),"3120")
-         .when(nz("suppcd_1050").isNotNull(),"1050")
-         .when(nz("suppcd_1060").isNotNull(),"1060")
-         .when(nz("suppcd_1090").isNotNull(),"1090")
-         .when(nz("suppcd_po1").isNotNull(),"2000")
-         .when(nz("suppcd_pr").isNotNull(),"2000")
-    )
-)
 
-df_final.createOrReplaceTempView("stage7_final_suppliers")
+
+
+
+
+
+
+omat_cnt = spark.table(src_omat_dmd_tbl).count()
+
+if omat_cnt == 0:
+    raise Exception(
+        f"ABORTED: OMAT source {src_omat_dmd_tbl} is empty. "
+        "Skipping overwrite to avoid wiping eng_test.rpt_omat_buynha_suppliers_plants."
+    )
+
+print(f"OMAT source row count = {omat_cnt} — safe to proceed")
