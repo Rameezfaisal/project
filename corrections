@@ -1,27 +1,9 @@
-Cell 11 — Final OMAT Supplier & Plant Selection
+Cell 12 — Write to OMAT Tables + Log Execution
 What this step does in business terms
-Now OMAT has multiple possible suppliers for every NHA:
-From MRP / Info Records
-From EORD
-From Base-part inheritance
-From Open POs
-From Obsolescence PR
-OMAT must choose one authoritative supplier to:
-Contact for inventory
-Track exposure
-Drive risk decisions
-SAP defines a strict priority order:
-🏆 Supplier Priority
-Plant 2000 MRP
-Plant 1900 MRP
-Plant 3120 MRP
-Plant 1050 MRP
-Plant 1060 MRP
-Plant 1090 MRP
-Open PO Supplier (PO1)
-Second PO Supplier (PO2)
-OB PR Supplier
-This is exactly what SAP’s final UPDATE does.
+This is the commit step.
+Everything we calculated in memory is now:
+Written into the OMAT reporting table
+Audited in the OMAT log table
 
 
 
@@ -30,49 +12,59 @@ This is exactly what SAP’s final UPDATE does.
 
 
 
-df = spark.table("stage6_with_pr")
+# ===============================
+# 1. Final dataset
+# ===============================
+df_final = spark.table("stage7_final_suppliers")
 
-df_stage7 = (
-    df
-    .withColumn(
+# ===============================
+# 2. Replace target table (full refresh)
+# ===============================
+(
+    df_final
+    .select(
+        "nha",
         "omat_selected_plant",
-        F.when(F.length("suppcd_2000") > 0, F.lit("2000"))
-         .when(F.length("suppcd_1900") > 0, F.lit("1900"))
-         .when(F.length("suppcd_3120") > 0, F.lit("3120"))
-         .when(F.length("suppcd_1050") > 0, F.lit("1050"))
-         .when(F.length("suppcd_1060") > 0, F.lit("1060"))
-         .when(F.length("suppcd_1090") > 0, F.lit("1090"))
-         .when(F.length("suppcd_po1") == 10, F.lit("2000"))
-         .when(F.length("suppcd_pr") > 0, F.lit("2000"))
-    )
-    .withColumn(
-        "omat_selected_suppliercd",
-        F.coalesce(
-            "suppcd_2000",
-            "suppcd_1900",
-            "suppcd_3120",
-            "suppcd_1050",
-            "suppcd_1060",
-            "suppcd_1090",
-            "suppcd_po1",
-            F.expr("substring(suppcd_po2,1,10)"),
-            "suppcd_pr"
-        )
-    )
-    .withColumn(
         "omat_selected_supplier",
-        F.coalesce(
-            "suppname_2000",
-            "suppname_1900",
-            "suppname_3120",
-            "suppname_1050",
-            "suppname_1060",
-            "suppname_1090",
-            "suppname_po1",
-            "suppname_po2",
-            "suppname_pr"
-        )
+        "omat_selected_suppliercd",
+        "suppcd_1050",
+        "suppcd_1060",
+        "suppcd_1090",
+        "suppcd_1900",
+        "suppcd_2000",
+        "suppcd_3120",
+        "suppcd_po1",
+        "suppcd_po2",
+        "suppcd_pr",
+        "suppname_1050",
+        "suppname_1060",
+        "suppname_1090",
+        "suppname_1900",
+        "suppname_2000",
+        "suppname_3120",
+        "suppname_po1",
+        "suppname_po2",
+        "suppname_pr"
     )
+    .write
+    .mode("overwrite")
+    .format("delta")
+    .option("overwriteSchema", "true")
+    .saveAsTable(tgt_suppliers_tbl)
 )
 
-df_stage7.createOrReplaceTempView("stage7_final_suppliers")
+# ===============================
+# 3. Insert execution log
+# ===============================
+log_df = spark.createDataFrame(
+    [(None, None, None, None, program_name)],
+    ["executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"]
+).withColumn("executed_on", F.current_timestamp())
+
+(
+    log_df
+    .write
+    .mode("append")
+    .format("delta")
+    .saveAsTable(tgt_log_tbl)
+)
