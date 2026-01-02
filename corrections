@@ -1,73 +1,63 @@
-df_base = spark.table("stage3_deduped")
+Cell 8 — Open Purchase Order (PO) Supplier Identification
+What this step does in business terms
+Even if SAP master data does not show a supplier, open purchase orders tell us who we are actively buying from.
+This step answers:
+“For this NHA, which suppliers currently have open purchase orders?”
+These suppliers are extremely important because:
+They are currently delivering
+They can provide inventory & lead-time
+OMAT uses them when master data is missing
 
-# -------------------------------
-# Create base lookup with renamed columns
-# -------------------------------
-df_lookup = df_base.select(
-    F.col("nha").alias("base_nha"),
-    F.col("suppcd_1900").alias("base_suppcd_1900"),
-    F.col("suppname_1900").alias("base_suppname_1900"),
-    F.col("suppcd_2000").alias("base_suppcd_2000"),
-    F.col("suppname_2000").alias("base_suppname_2000"),
-    F.col("suppcd_3120").alias("base_suppcd_3120"),
-    F.col("suppname_3120").alias("base_suppname_3120"),
-    F.col("suppcd_1050").alias("base_suppcd_1050"),
-    F.col("suppname_1050").alias("base_suppname_1050"),
-    F.col("suppcd_1060").alias("base_suppcd_1060"),
-    F.col("suppname_1060").alias("base_suppname_1060"),
-    F.col("suppcd_1090").alias("base_suppcd_1090"),
-    F.col("suppname_1090").alias("base_suppname_1090")
-)
 
-# -------------------------------
-# Pattern 1: replace R,S,C,X,D with "-"
-# -------------------------------
-df_p1 = (
-    df_base
-    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", "-"))
-    .join(df_lookup, "base_nha", "left")
-)
 
-# -------------------------------
-# Pattern 2: remove R,S,C,X,D
-# -------------------------------
-df_p2 = (
-    df_base
-    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", ""))
-    .join(df_lookup, "base_nha", "left")
-)
 
-# -------------------------------
-# Fill missing suppliers from base part
-# -------------------------------
-def fill_from_base(df):
-    return (
-        df
-        .withColumn("suppcd_1900", F.coalesce("suppcd_1900", "base_suppcd_1900"))
-        .withColumn("suppname_1900", F.coalesce("suppname_1900", "base_suppname_1900"))
-        .withColumn("suppcd_2000", F.coalesce("suppcd_2000", "base_suppcd_2000"))
-        .withColumn("suppname_2000", F.coalesce("suppname_2000", "base_suppname_2000"))
-        .withColumn("suppcd_3120", F.coalesce("suppcd_3120", "base_suppcd_3120"))
-        .withColumn("suppname_3120", F.coalesce("suppname_3120", "base_suppname_3120"))
-        .withColumn("suppcd_1050", F.coalesce("suppcd_1050", "base_suppcd_1050"))
-        .withColumn("suppname_1050", F.coalesce("suppname_1050", "base_suppname_1050"))
-        .withColumn("suppcd_1060", F.coalesce("suppcd_1060", "base_suppcd_1060"))
-        .withColumn("suppname_1060", F.coalesce("suppname_1060", "base_suppname_1060"))
-        .withColumn("suppcd_1090", F.coalesce("suppcd_1090", "base_suppcd_1090"))
-        .withColumn("suppname_1090", F.coalesce("suppname_1090", "base_suppname_1090"))
+
+
+
+
+
+# ===============================
+# Filter only valid OPEN PO lines
+# ===============================
+df_po_valid = (
+    df_zpo
+    .join(df_ekpo, ["ebeln_cd", "ebelp_cd"], "inner")
+    .filter(F.col("matnr_cd").isNotNull())
+    .filter(F.col("matnr_cd") != "")
+    .filter(F.col("status_cd") != "INACT")
+    .filter(F.col("loekz_cd") == "")
+    .filter(F.col("discrd_cd") != "X")
+    .filter(F.col("aussl_cd") != "U3")
+    .filter(F.col("bsart_cd") != "UB")
+    .filter(F.col("elikz_cd") != "X")
+    .filter(~F.col("pstyp_cd").isin("7", "9"))
+    .filter(F.length("lifnr_cd") == 10)
+    .filter(
+        ~(
+            F.substring("due_dt_cd", -5, 5).isin("04-01", "12-31")
+        )
     )
-
-df_stage4 = fill_from_base(df_p1)
-df_stage4 = fill_from_base(df_stage4.join(df_p2.select("nha"), "nha", "left"))
-
-df_stage4 = df_stage4.select(
-    "nha",
-    "suppcd_1900","suppname_1900",
-    "suppcd_2000","suppname_2000",
-    "suppcd_3120","suppname_3120",
-    "suppcd_1050","suppname_1050",
-    "suppcd_1060","suppname_1060",
-    "suppcd_1090","suppname_1090"
 )
 
-df_stage4.createOrReplaceTempView("stage4_basepart_filled")
+# ===============================
+# Join supplier names
+# ===============================
+df_po_named = (
+    df_po_valid
+    .join(df_lfa1, "lifnr_cd", "left")
+)
+
+# ===============================
+# Aggregate suppliers per NHA
+# ===============================
+df_posupp = (
+    df_po_named
+    .groupBy(F.col("matnr_cd").alias("nha"))
+    .agg(
+        F.concat_ws(",", F.collect_set("lifnr_cd")).alias("posuppcode"),
+        F.concat_ws(",", F.collect_set("name1_cd")).alias("posuppname")
+    )
+)
+
+df_posupp.createOrReplaceTempView("posupp")
+
