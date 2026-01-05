@@ -25,9 +25,6 @@ def parse_fabric_date(colname):
 
 
 
-
-
-
 prj_zt_iplm_problem_report = (
     problem_report_src
     .select( ... same column list ... )
