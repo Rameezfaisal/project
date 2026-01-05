@@ -1,56 +1,195 @@
-# ===============================
-# Identify NHAs that have duplicates
-# ===============================
-df_dups = (
-    spark.table("stage2_eord_filled")
-    .groupBy("nha")
-    .count()
-    .filter(F.col("count") > 1)
-    .select(F.col("nha").alias("dup_nha"))
+
+
+
+
+prj_zt_iplm_problem_report = ( problem_report_src.select(
+# "need_date_1",
+# "planned_completion_date_1",
+# "ob_last_buy_date_1",
+# "disposition_due_date_1",
+# "due_date_1",
+# "actual_completion_date_1",
+# "submitted_date_1",
+# "solution_submit_date_1",
+# "review_start_date_1",
+"name",
+"id",
+"state",
+"title",
+"problem_description",
+"priority",
+"originator",
+"fcid_number",
+"escalation_number",
+"deviation_or_waiver_required",
+"requestor_organization",
+"reason",
+"suggested_solution",
+"benefit",
+"customer",
+"solution_owner",
+"technical_owner",
+"solution_type",
+"cause_code",
+"department_category",
+"spin_clean_model_number",
+"spin_clean_serial_numbers",
+"root_cause_corrective_action",
+"number_of_years",
+"obsolescence_reason",
+"disposition",
+"environmental_public_health",
+"clear_case_issue_number",
+"dns_reason",
+"dns_replacement",
+"dns_user_defined_reason",
+"dns_user_defined_replacement",
+"dns_reviewer",
+"equipment_facility",
+"team_track_issue_number",
+"raw_material_description",
+"dns_set_unset",
+"po_number",
+"track_issue_number",
+"nature_of_injury",
+"likelihood",
+"injury",
+"people",
+"sw_bug_or_feature",
+"multi_bu_or_pg",
+"iqms_case_id",
+"business_unit_type",
+"business_unit_name",
+"primary_product_affected_type",
+"primary_product_affected_name",
+"secondary_product_affected_type",
+"secondary_product_affected_name",
+"related_pr_type",
+"related_pr_name",
+"lrc_related_pr_type",
+"supplier_email",
+"supplier_code",
+"is_the_last_time_buy_available",
+"engineering_trigger_lead_time",
+"pr_reviewer",
+"pr_disposition_reviewer",
+"end_item",
+"last_updated_time",
+"ecn_number",
+"semi_s10_risk_ranking",
+"originated",
+"submitted_date_end",
+"safety_review_date_actual",
+"safety_review_date_end",
+"confirmed_date_actual",
+"confirmed_date_end",
+"in_work_date_actual",
+"in_work_date_end",
+"develop_date_actual",
+"develop_date_end",
+"test_date_end",
+"cancelled_date_end",
+"closed_date_actual",
+"closed_date_end",
+"primary_product_affected_id",
+"create_date_end",
+"safety_containment",
+"department",
+"product_group",
+"primary_product_pg",
+"is_rpm",
+"rpm_review_actual",
+"rpm_review_end",
+"rpm_task_reviewer",
+"need_date",                         # F.col("need_date_1").alias("need_date"),
+"planned_completion_date",           # F.col("planned_completion_date_1").alias("planned_completion_date"),
+"ob_last_buy_date",                  # F.col("ob_last_buy_date_1").alias("ob_last_buy_date"),
+"disposition_due_date",              # F.col("disposition_due_date_1").alias("disposition_due_date"),
+"due_date",                          # F.col("due_date_1").alias("due_date"),
+"actual_completion_date",            # F.col("actual_completion_date_1").alias("actual_completion_date"),
+"submitted_date",                    # F.col("submitted_date_1").alias("submitted_date"),
+"solution_submit_date",              # F.col("solution_submit_date_1").alias("solution_submit_date"),
+"review_start_date",                 # F.col("review_start_date_1").alias("review_start_date"),
+"lam_contact_name",
+"lam_contact_sbm",
+"lam_contact_se",
+"investigator_assigned_date",
+"ltb_po",
+"ltb_qty",
+"ltb_decision",
+"ltb_purch_req",
+"safety_alert_no",
+"lrc_ob_mitigation",
+"eng_excellence_no",
+"tier_level")
+    .withColumn("need_date",F.when(
+        F.col("need_date").isNull() | F.trim(F.col("need_date")).isin("", "00000000", "0"),F.lit(None).cast("string")
+    ).otherwise(F.date_format(F.to_utc_timestamp(F.to_timestamp(
+                F.coalesce(
+                        F.to_date(F.trim(F.col("need_date")), "yyyy-MM-dd"),
+                        F.to_date(F.trim(F.col("need_date")), "MM/dd/yyyy"))),"UTC"),"yyyy-MM-dd'T'HH:mm:ss'Z'")))
+
+    .withColumn("planned_completion_date",F.when(
+        F.col("planned_completion_date").isNull() | F.trim(F.col("planned_completion_date")).isin("", "00000000", "0"),F.lit(None).cast("string")
+    ).otherwise(F.date_format(F.to_utc_timestamp(F.to_timestamp(
+                F.coalesce(
+                        F.to_date(F.trim(F.col("planned_completion_date")), "yyyy-MM-dd"),
+                        F.to_date(F.trim(F.col("planned_completion_date")), "MM/dd/yyyy"))),"UTC"),"yyyy-MM-dd'T'HH:mm:ss'Z'")))
+
+    .withColumn("ob_last_buy_date",F.when(
+        F.col("ob_last_buy_date").isNull() | F.trim(F.col("ob_last_buy_date")).isin("", "00000000", "0"),F.lit(None).cast("string")
+    ).otherwise(F.date_format(F.to_utc_timestamp(F.to_timestamp(
+                F.coalesce(
+                        F.to_date(F.trim(F.col("ob_last_buy_date")), "yyyy-MM-dd"),
+                        F.to_date(F.trim(F.col("ob_last_buy_date")), "MM/dd/yyyy"))),"UTC"),"yyyy-MM-dd'T'HH:mm:ss'Z'")))
+
+    .withColumn("disposition_due_date",F.when(
+        F.col("disposition_due_date").isNull() | F.trim(F.col("disposition_due_date")).isin("", "00000000", "0"),F.lit(None).cast("string")
+    ).otherwise(F.date_format(F.to_utc_timestamp(F.to_timestamp(
+                F.coalesce(
+                        F.to_date(F.trim(F.col("disposition_due_date")), "yyyy-MM-dd"),
+                        F.to_date(F.trim(F.col("disposition_due_date")), "MM/dd/yyyy"))),"UTC"),"yyyy-MM-dd'T'HH:mm:ss'Z'")))
+
+    .withColumn("due_date",F.when(
+        F.col("due_date").isNull() | F.trim(F.col("due_date")).isin("", "00000000", "0"),F.lit(None).cast("string")
+    ).otherwise(F.date_format(F.to_utc_timestamp(F.to_timestamp(
+                F.coalesce(
+                        F.to_date(F.trim(F.col("due_date")), "yyyy-MM-dd"),
+                        F.to_date(F.trim(F.col("due_date")), "MM/dd/yyyy"))),"UTC"),"yyyy-MM-dd'T'HH:mm:ss'Z'")))
+
+    .withColumn("actual_completion_date",F.when(
+        F.col("actual_completion_date").isNull() | F.trim(F.col("actual_completion_date")).isin("", "00000000", "0"),F.lit(None).cast("string")
+    ).otherwise(F.date_format(F.to_utc_timestamp(F.to_timestamp(
+                F.coalesce(
+                        F.to_date(F.trim(F.col("actual_completion_date")), "yyyy-MM-dd"),
+                        F.to_date(F.trim(F.col("actual_completion_date")), "MM/dd/yyyy"))),"UTC"),"yyyy-MM-dd'T'HH:mm:ss'Z'")))
+
+    .withColumn("submitted_date",F.when(
+        F.col("submitted_date").isNull() | F.trim(F.col("submitted_date")).isin("", "00000000", "0"),F.lit(None).cast("string")
+    ).otherwise(F.date_format(F.to_utc_timestamp(F.to_timestamp(
+                F.coalesce(
+                        F.to_date(F.trim(F.col("submitted_date")), "yyyy-MM-dd"),
+                        F.to_date(F.trim(F.col("submitted_date")), "MM/dd/yyyy"))),"UTC"),"yyyy-MM-dd'T'HH:mm:ss'Z'")))
+
+    .withColumn("solution_submit_date",F.when(
+        F.col("solution_submit_date").isNull() | F.trim(F.col("solution_submit_date")).isin("", "00000000", "0"),F.lit(None).cast("string")
+    ).otherwise(F.date_format(F.to_utc_timestamp(F.to_timestamp(
+                F.coalesce(
+                        F.to_date(F.trim(F.col("solution_submit_date")), "yyyy-MM-dd"),
+                        F.to_date(F.trim(F.col("solution_submit_date")), "MM/dd/yyyy"))),"UTC"),"yyyy-MM-dd'T'HH:mm:ss'Z'")))
+
+    .withColumn("review_start_date",F.when(
+        F.col("review_start_date").isNull() | F.trim(F.col("review_start_date")).isin("", "00000000", "0"),F.lit(None).cast("string")
+    ).otherwise(F.date_format(F.to_utc_timestamp(F.to_timestamp(
+                F.coalesce(
+                        F.to_date(F.trim(F.col("review_start_date")), "yyyy-MM-dd"),
+                        F.to_date(F.trim(F.col("review_start_date")), "MM/dd/yyyy"))),"UTC"),"yyyy-MM-dd'T'HH:mm:ss'Z'")))
+
+
 )
 
-# ===============================
-# Prepare EORD flags
-# ===============================
-df_eord_flag = (
-    df_eord
-    .select(
-        F.col("matnr_cd").alias("eord_nha"),
-        F.col("werks_cd").alias("eord_plant"),
-        F.col("lifnr_cd").alias("eord_lifnr"),
-        F.col("flifn_cd").alias("eord_flifn"),
-        F.col("autet_cd").alias("eord_autet")
-    )
-)
 
-base = spark.table("stage2_eord_filled")
+display(prj_zt_iplm_problem_report.limit(10))
 
-# ===============================
-# Apply SAP delete logic per plant
-# ===============================
-def dedup_plant(df, plant):
-    return (
-        df
-        .join(df_dups, df.nha == df_dups.dup_nha, "left")
-        .join(
-            df_eord_flag,
-            (df.nha == df_eord_flag.eord_nha) &
-            (df_eord_flag.eord_plant == plant) &
-            (df_eord_flag.eord_lifnr == df[f"suppcd_{plant}"]),
-            "left"
-        )
-        .filter(
-            ~(
-                F.col("dup_nha").isNotNull() &
-                F.col("eord_autet").isNotNull() &
-                (F.col("eord_flifn") != preferred_flag)
-            )
-        )
-        .drop("dup_nha","eord_nha","eord_plant","eord_lifnr","eord_flifn","eord_autet")
-    )
 
-df_stage3 = base
-for p in procurement_plants:
-    df_stage3 = dedup_plant(df_stage3, p)
 
-df_stage3.createOrReplaceTempView("stage3_deduped")
