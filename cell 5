@@ -1,62 +1,41 @@
----------------------------------------------------------------------------
-Py4JJavaError                             Traceback (most recent call last)
-Cell In[67], line 1
-----> 1 display(prj_zt_iplm_problem_report.limit(10))
+from pyspark.sql import functions as F
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/notebookutils/visualization/display.py:278, in display(data, summary)
-    275     success = False
-    276     log4jLogger \
-    277         .error(f"display failed with error, language: python, error: {err}, correlationId={correlation_id}")
---> 278     raise err
-    279 finally:
-    280     duration_ms = ceil((time.time() - start_time) * 1000)
+def parse_fabric_date(colname):
+    c = F.trim(F.col(colname))
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/notebookutils/visualization/display.py:270, in display(data, summary)
-    267             _clear()
-    268             return
---> 270     return _display_with_spark(data, correlation_id, summary)
-    272 except ImportError:
-    273     success = False
+    return F.when(
+        c.isNull() | c.isin("", "0", "00000000"),
+        None
+    ).otherwise(
+        F.date_format(
+            F.to_utc_timestamp(
+                F.coalesce(
+                    F.to_timestamp(c, "yyyy-MM-dd"),
+                    F.to_timestamp(c, "MM/dd/yyyy"),
+                    F.to_timestamp(c, "M/d/yyyy"),      # 👈 THIS fixes 12/7/2020
+                    F.to_timestamp(c, "yyyyMMdd")
+                ),
+                "UTC"
+            ),
+            "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        )
+    )
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/notebookutils/visualization/display.py:296, in _display_with_spark(data, correlation_id, summary)
-    293 if is_ipython_enabled(runtime.host_nbutils_version):
-    294     # pylint: disable=C0415
-    295     from IPython.display import publish_display_data
---> 296     display_str = sc._jvm.display.getDisplayResultForIPython(
-    297             df._jdf, summary, correlation_id)
-    298     if display_str:
-    299         display_json = json.loads(display_str)
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:179, in capture_sql_exception.<locals>.deco(*a, **kw)
-    177 def deco(*a: Any, **kw: Any) -> Any:
-    178     try:
---> 179         return f(*a, **kw)
-    180     except Py4JJavaError as e:
-    181         converted = convert_exception(e.java_exception)
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/protocol.py:326, in get_return_value(answer, gateway_client, target_id, name)
-    324 value = OUTPUT_CONVERTER[type](answer[2:], gateway_client)
-    325 if answer[1] == REFERENCE_TYPE:
---> 326     raise Py4JJavaError(
-    327         "An error occurred while calling {0}{1}{2}.\n".
-    328         format(target_id, ".", name), value)
-    329 else:
-    330     raise Py4JError(
-    331         "An error occurred while calling {0}{1}{2}. Trace:\n{3}\n".
-    332         format(target_id, ".", name, value))
+prj_zt_iplm_problem_report = (
+    problem_report_src
+    .select( ... same column list ... )
 
-Py4JJavaError: An error occurred while calling z:com.microsoft.spark.notebook.visualization.display.getDisplayResultForIPython.
-: org.apache.spark.SparkException: Job aborted due to stage failure: Task 2 in stage 17.0 failed 4 times, most recent failure: Lost task 2.3 in stage 17.0 (TID 142) (vm-98f77341 executor 3): org.apache.spark.SparkUpgradeException: [INCONSISTENT_BEHAVIOR_CROSS_VERSION.PARSE_DATETIME_BY_NEW_PARSER] You may get a different result due to the upgrading to Spark >= 3.0:
-Fail to parse '12/7/2020' in the new parser. You can set "spark.sql.legacy.timeParserPolicy" to "LEGACY" to restore the behavior before Spark 3.0, or set to "CORRECTED" and treat it as an invalid datetime string.
-	at org.apache.spark.sql.errors.ExecutionErrors.failToParseDateTimeInNewParserError(ExecutionErrors.scala:54)
+    .withColumn("need_date",               parse_fabric_date("need_date"))
+    .withColumn("planned_completion_date", parse_fabric_date("planned_completion_date"))
+    .withColumn("ob_last_buy_date",        parse_fabric_date("ob_last_buy_date"))
+    .withColumn("disposition_due_date",    parse_fabric_date("disposition_due_date"))
+    .withColumn("due_date",                parse_fabric_date("due_date"))
+    .withColumn("actual_completion_date",  parse_fabric_date("actual_completion_date"))
+    .withColumn("submitted_date",          parse_fabric_date("submitted_date"))
+    .withColumn("solution_submit_date",    parse_fabric_date("solution_submit_date"))
+    .withColumn("review_start_date",       parse_fabric_date("review_start_date"))
+)
+
