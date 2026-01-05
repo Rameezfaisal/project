@@ -1,19 +1,39 @@
+tables just have "eng_omat.rpt_" as prefix according to fabric 
 
-Cell 11.5 — Abort if OMAT source is empty
+CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_rscxd_dtls (
+  ce               STRING,
+  cmpprtno         STRING,
+  cmpqpa           STRING,
+  commodity        STRING,
+  critical         STRING,
+  curr_cost        STRING,
+  dash             STRING,
+  description      STRING,
+  lead_time        INT,
+  matkl            STRING,
+  mstae            STRING,
+  nha              STRING,
+  po_supplier      STRING,
+  po_supplier_code STRING,
+  sbm              STRING,
+  smg_group        STRING,
+  smg_head         STRING,
+  std_cost         STRING,
+  type             STRING,
+  vencode          STRING,
+  venname          STRING
+)
+USING DELTA;
 
 
-
-
-
-
-
-
-omat_cnt = spark.table(src_omat_dmd_tbl).count()
-
-if omat_cnt == 0:
-    raise Exception(
-        f"ABORTED: OMAT source {src_omat_dmd_tbl} is empty. "
-        "Skipping overwrite to avoid wiping eng_test.rpt_omat_buynha_suppliers_plants."
-    )
-
-print(f"OMAT source row count = {omat_cnt} — safe to proceed")
+CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_rscxd_dmd_cons (
+  cmpprtno             STRING,
+  lamqoh               INT,
+  last_modified_on     DATE,
+  nha                  STRING,
+  open_po_qty          INT,
+  restricted_all_stock INT,
+  sprs_cons            INT,
+  sprs_dmd             INT
+)
+USING DELTA;
