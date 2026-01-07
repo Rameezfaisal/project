@@ -1,56 +1,91 @@
-rscxd_proj = (
-    rscxd_final
-    .select(
-        F.col("obprno"),
-        F.col("cmpprtno").alias("obprtno"),
-        F.col("nha"),
-        F.col("description"),
-        F.col("cmpqpa"),
-        F.lit(None).cast("int").alias("level"),
-        F.col("matkl"),
-        F.col("mstae"),
-        F.col("mstae").alias("part_status"),
-        F.col("vencode"),
-        F.col("venname"),
-        F.lit(None).cast("int").alias("mfg_5yrs_consumption"),
-        F.col("sprs_cons").alias("sprs_5yrs_consumption"),
-        F.lit(None).cast("int").alias("mfg_12mnths_consumption"),
-        F.lit(None).cast("int").alias("mfg_dmd"),
-        F.col("sprs_dmd"),
-        F.col("lamqoh"),
-        F.col("open_po_qty"),
-        F.col("std_cost"),
-        F.col("curr_cost"),
-        F.col("lead_time"),
-        F.col("mfr_part_id"),
-        F.col("name"),
-        F.lit(None).cast("string").alias("reltd_ob_pr"),
-        F.col("commodity"),
-        F.lit(None).cast("string").alias("business_unit"),
-        F.lit(None).cast("string").alias("pg_pm"),
-        F.col("smg_group"),
-        F.col("smg_head"),
-        F.col("sbm"),
-        F.col("critical"),
-        F.col("ce"),
-        F.lit(None).cast("string").alias("enditem"),
-        F.lit(None).cast("int").alias("obprtflag"),
-        F.col("po_supplier_code"),
-        F.col("po_supplier"),
-        F.col("suppcd_pr").alias("pr_supplier_code"),
-        F.col("suppname_pr").alias("pr_supplier"),
-        F.col("suppcd_1900"),
-        F.col("suppname_1900"),
-        F.col("suppcd_2000"),
-        F.col("suppname_2000"),
-        F.col("suppcd_3120"),
-        F.col("suppname_3120"),
-        F.col("suppcd_1050"),
-        F.col("suppname_1050"),
-        F.col("suppcd_1060"),
-        F.col("suppname_1060"),
-        F.col("suppcd_1090"),
-        F.col("suppname_1090"),
-        F.col("restricted_all_stock")
-    )
-)
+AnalysisException                         Traceback (most recent call last)
+Cell In[55], line 2
+      1 rscxd_proj = (
+----> 2     rscxd_final
+      3     .select(
+      4         F.col("obprno"),
+      5         F.col("cmpprtno").alias("obprtno"),
+      6         F.col("nha"),
+      7         F.col("description"),
+      8         F.col("cmpqpa"),
+      9         F.lit(None).cast("int").alias("level"),
+     10         F.col("matkl"),
+     11         F.col("mstae"),
+     12         F.col("mstae").alias("part_status"),
+     13         F.col("vencode"),
+     14         F.col("venname"),
+     15         F.lit(None).cast("int").alias("mfg_5yrs_consumption"),
+     16         F.col("sprs_cons").alias("sprs_5yrs_consumption"),
+     17         F.lit(None).cast("int").alias("mfg_12mnths_consumption"),
+     18         F.lit(None).cast("int").alias("mfg_dmd"),
+     19         F.col("sprs_dmd"),
+     20         F.col("lamqoh"),
+     21         F.col("open_po_qty"),
+     22         F.col("std_cost"),
+     23         F.col("curr_cost"),
+     24         F.col("lead_time"),
+     25         F.col("mfr_part_id"),
+     26         F.col("name"),
+     27         F.lit(None).cast("string").alias("reltd_ob_pr"),
+     28         F.col("commodity"),
+     29         F.lit(None).cast("string").alias("business_unit"),
+     30         F.lit(None).cast("string").alias("pg_pm"),
+     31         F.col("smg_group"),
+     32         F.col("smg_head"),
+     33         F.col("sbm"),
+     34         F.col("critical"),
+     35         F.col("ce"),
+     36         F.lit(None).cast("string").alias("enditem"),
+     37         F.lit(None).cast("int").alias("obprtflag"),
+     38         F.col("po_supplier_code"),
+     39         F.col("po_supplier"),
+     40         F.col("suppcd_pr").alias("pr_supplier_code"),
+     41         F.col("suppname_pr").alias("pr_supplier"),
+     42         F.col("suppcd_1900"),
+     43         F.col("suppname_1900"),
+     44         F.col("suppcd_2000"),
+     45         F.col("suppname_2000"),
+     46         F.col("suppcd_3120"),
+     47         F.col("suppname_3120"),
+     48         F.col("suppcd_1050"),
+     49         F.col("suppname_1050"),
+     50         F.col("suppcd_1060"),
+     51         F.col("suppname_1060"),
+     52         F.col("suppcd_1090"),
+     53         F.col("suppname_1090"),
+     54         F.col("restricted_all_stock")
+     55     )
+     56 )
+
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3229, in DataFrame.select(self, *cols)
+   3184 def select(self, *cols: "ColumnOrName") -> "DataFrame":  # type: ignore[misc]
+   3185     """Projects a set of expressions and returns a new :class:`DataFrame`.
+   3186 
+   3187     .. versionadded:: 1.3.0
+   (...)
+   3227     +-----+---+
+   3228     """
+-> 3229     jdf = self._jdf.select(self._jcols(*cols))
+   3230     return DataFrame(jdf, self.sparkSession)
+
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
+
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
+
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `nha` is ambiguous, could be: [`a`.`nha`, `e`.`nha`].
