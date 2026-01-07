@@ -1,9 +1,14 @@
 from pyspark.sql import functions as F
 
-prj_df = prj_df.withColumn(
-    "dmddt",
-    F.coalesce(
-        normalize_sap_date("dmddt"),              # real SAP date if valid
-        F.lit("1900-01-01T00:00:00Z")               # SAP default
+bad_dmddt = (
+    problem_report_src
+    .select("dmddt")
+    .withColumn("normalized", normalize_sap_date("dmddt"))
+    .filter(
+        F.col("dmddt").isNotNull() &
+        ~F.trim(F.col("dmddt")).isin("", "0", "00000000") &
+        F.col("normalized").isNull()
     )
 )
+
+display(bad_dmddt)
