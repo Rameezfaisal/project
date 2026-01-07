@@ -1,39 +1,103 @@
-tables just have "eng_omat.rpt_" as prefix according to fabric 
+from pyspark.sql import functions as F
+from pyspark.sql import Window
 
-CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_rscxd_dtls (
-  ce               STRING,
-  cmpprtno         STRING,
-  cmpqpa           STRING,
-  commodity        STRING,
-  critical         STRING,
-  curr_cost        STRING,
-  dash             STRING,
-  description      STRING,
-  lead_time        INT,
-  matkl            STRING,
-  mstae            STRING,
-  nha              STRING,
-  po_supplier      STRING,
-  po_supplier_code STRING,
-  sbm              STRING,
-  smg_group        STRING,
-  smg_head         STRING,
-  std_cost         STRING,
-  type             STRING,
-  vencode          STRING,
-  venname          STRING
+
+
+
+# ------------------------
+# Source tables
+# ------------------------
+cv_rcsm_material        = "prd_csbg.cv_csbg_rcsm_material"
+cv_buy_nha_dtls         = "prd_gops_omat.cv_omat_obpn_buy_nha_dtls"
+cv_obprtno_dtls         = "prd_gops_omat.cv_omat_obprtno_dtls"
+
+cv_makt                 = "prd_global_ecc.cv_makt"
+cv_buynha_suppliers     = "prd_gops_omat.cv_omat_buynha_suppliers_plant"
+cv_part_ecosystem       = "prd_gops_omat.cv_part_ecosystem"
+cv_mara                 = "prd_global_ecc.cv_mara"
+cv_marc                 = "prd_global_ecc.cv_marc"
+cv_mbew                 = "prd_global_ecc.cv_mbew"
+cv_ausp                 = "prd_global_ecc.cv_ausp"
+cv_supplier_xref        = "prd_global_ecc.cv_zsupplier_xref"
+cv_supp_code            = "prd_global_ecc.cv_zsupp_code_mstr"
+
+cv_dmd_detail           = "prd_global_ecc.cv_zspm_dmd_detail"
+cv_sales_order         = "prd_global_ecc.cv_zspm_sales_order"
+cv_po_hist             = "prd_global_ecc.cv_zpo_hstry"
+cv_ekpo                = "prd_global_ecc.cv_ekpo"
+cv_mard                = "prd_global_ecc.cv_mard"
+
+# ------------------------
+# Target tables
+# ------------------------
+tgt_dtls     = "eng_test.rpt_omat_rscxd_dtls"
+tgt_dmd_cons = "eng_test.rpt_omat_rscxd_dmd_cons"
+
+
+
+
+
+
+mat_df      = spark.table(cv_rcsm_material)
+buy_df      = spark.table(cv_buy_nha_dtls)
+ob_df       = spark.table(cv_obprtno_dtls)
+makt_df     = spark.table(cv_makt)
+sup_df      = spark.table(cv_buynha_suppliers)
+eco_df      = spark.table(cv_part_ecosystem)
+mara_df     = spark.table(cv_mara)
+marc_df     = spark.table(cv_marc)
+mbew_df     = spark.table(cv_mbew)
+ausp_df     = spark.table(cv_ausp)
+xref_df     = spark.table(cv_supplier_xref)
+code_df     = spark.table(cv_supp_code)
+
+dmd_df      = spark.table(cv_dmd_detail)
+so_df       = spark.table(cv_sales_order)
+po_df       = spark.table(cv_po_hist)
+ekpo_df     = spark.table(cv_ekpo)
+mard_df     = spark.table(cv_mard)
+
+
+
+
+
+
+
+
+
+dt1wk = F.date_sub(F.current_date(), F.weekday(F.current_date()))
+dt26wk = F.date_add(
+            F.date_sub(F.date_add(dt1wk, 182), F.weekday(F.date_add(dt1wk, 182))), 6
+         )
+
+
+
+
+
+
+nhalist = (
+    mat_df.alias("a")
+    .join(buy_df.alias("b"), F.col("b.nha") == F.col("a.material"))
+    .join(ob_df.alias("c"), F.col("c.obprtno") == F.col("b.cmpprtno"))
+    .filter(F.upper("c.obpr_state").isin("CONFIRMED","IN REVIEW","IN WORK"))
+    .select(
+        F.col("b.cmpprtno").alias("cmpprtno"),
+        F.col("b.nha").alias("dash"),
+        "a.r_part","a.core_part","a.s_part","a.x_part","a.d_part"
+    ).distinct()
 )
-USING DELTA;
 
 
-CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_rscxd_dmd_cons (
-  cmpprtno             STRING,
-  lamqoh               INT,
-  last_modified_on     DATE,
-  nha                  STRING,
-  open_po_qty          INT,
-  restricted_all_stock INT,
-  sprs_cons            INT,
-  sprs_dmd             INT
+
+
+
+
+
+
+lstdata = (
+    nhalist.select("cmpprtno","dash",F.col("r_part").alias("nha"),F.lit("R").alias("type")).filter("nha is not null")
+    .unionByName(nhalist.select("cmpprtno","dash",F.col("core_part").alias("nha"),F.lit("C").alias("type")).filter("nha is not null"))
+    .unionByName(nhalist.select("cmpprtno","dash",F.col("s_part").alias("nha"),F.lit("S").alias("type")).filter("nha is not null"))
+    .unionByName(nhalist.select("cmpprtno","dash",F.col("x_part").alias("nha"),F.lit("X").alias("type")).filter("nha is not null"))
+    .unionByName(nhalist.select("cmpprtno","dash",F.col("d_part").alias("nha"),F.lit("D").alias("type")).filter("nha is not null"))
 )
-USING DELTA;
