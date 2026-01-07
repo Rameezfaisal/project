@@ -1,77 +1,77 @@
-main_proj = (
-    main_df
+
+New Cell-7 (Main branch projection)
+Run this cell instead of the previous Cell-7.
+💼 Business meaning
+This creates the final business-ready columns for the OBPR part ecosystem — choosing the correct NHA, description, supplier, costs, demand, etc. exactly as SAP did.
+
+
+
+
+
+CELL-8 — RSCXD projection (SAP UNION second branch)
+💼 Business meaning
+This builds the replacement / substitute / cross-reference part view that SAP UNIONs with the main ecosystem, but shaped into the same business schema so it can live in the same reporting table.
+
+
+
+
+
+
+rscxd_proj = (
+    rscxd_final
     .select(
-        F.col("a.obprno").alias("obprno"),
-        F.col("a.obprtno").alias("obprtno"),
-
-        F.coalesce(F.col("e.nha"), F.col("a.obprtno")).alias("nha"),
-        F.coalesce(F.col("e.description"), F.col("b.description")).alias("description"),
-        F.coalesce(F.col("e.cmpqpa"), F.col("c.cmpqpa")).alias("cmpqpa"),
-        F.coalesce(F.col("e.level"), F.col("c.level")).alias("level"),
-        F.coalesce(F.col("e.matkl"), F.col("c.matkl")).alias("matkl"),
-        F.coalesce(F.col("e.mstae"), F.col("c.mstae")).alias("mstae"),
-
-        F.col("a.part_status").alias("part_status"),
-
-        F.when(
-            (F.col("e.vencode").isNull()) &
-            (F.col("e.po_supp_code").isNull()) &
-            (F.col("e.cmpprtno") == F.col("e.nha")),
-            F.col("b.supplier_code")
-        ).when(
-            (F.col("e.vencode").isNull()) & F.col("e.po_supp_code").isNotNull(),
-            F.col("e.po_supp_code")
-        ).otherwise(F.col("e.vencode")).alias("vencode"),
-
-        F.when(
-            (F.col("e.vencode").isNull()) &
-            (F.col("e.po_supp_code").isNull()) &
-            (F.col("e.cmpprtno") == F.col("e.nha")),
-            F.col("b.supplier_name")
-        ).when(
-            (F.col("e.vencode").isNull()) & F.col("e.po_supp_code").isNotNull(),
-            F.col("e.po_supp_name")
-        ).otherwise(F.col("e.venname")).alias("venname"),
-
-        F.when(F.col("e.mfg_5yrs_consumption") <= 0, F.lit(0)).otherwise(F.col("e.mfg_5yrs_consumption")).alias("mfg_5yrs_consumption"),
-        F.col("e.sprs_5yrs_consumption").alias("sprs_5yrs_consumption"),
-        F.when(F.col("e.mfg_12mnths_consumption") <= 0, F.lit(0)).otherwise(F.col("e.mfg_12mnths_consumption")).alias("mfg_12mnths_consumption"),
-        F.col("e.mfg_dmd"),
-        F.col("e.sprs_dmd"),
-        F.col("e.lamqoh"),
-        F.col("e.open_po_qty"),
-        F.col("e.std_cost"),
-        F.col("e.curr_cost"),
-        F.col("e.lead_time"),
-        F.col("f.mfr_part_id"),
-        F.col("f.name"),
-        F.col("a.reltd_ob_pr").cast("string").alias("reltd_ob_pr"),
-        F.col("e.commodity"),
-        F.col("b.bu").alias("business_unit"),
-        F.col("b.primary_product_pgpm").alias("pg_pm"),
-        F.col("e.smg_group"),
-        F.col("e.smg_head"),
-        F.col("e.sbm"),
-        F.col("e.critical"),
-        F.col("e.ce"),
-        F.col("b.end_items").cast("string").alias("enditem"),
-        F.when((F.col("e.nha").isNull()) | (F.col("e.nha") == F.col("a.obprtno")), 1).otherwise(0).alias("obprtflag"),
-        F.col("e.po_supp_code").alias("po_supplier_code"),
-        F.col("e.po_supp_name").alias("po_supplier"),
-        F.col("b.supplier_code").alias("pr_supplier_code"),
-        F.col("b.supplier_name").alias("pr_supplier"),
-        F.col("g.suppcd_1900").alias("supplier_code_1900"),
-        F.col("g.suppname_1900").alias("supplier_name_1900"),
-        F.col("g.suppcd_2000").alias("supplier_code_2000"),
-        F.col("g.suppname_2000").alias("supplier_name_2000"),
-        F.col("g.suppcd_3120").alias("supplier_code_3120"),
-        F.col("g.suppname_3120").alias("supplier_name_3120"),
-        F.col("g.suppcd_1050").alias("supplier_code_1050"),
-        F.col("g.suppname_1050").alias("supplier_name_1050"),
-        F.col("g.suppcd_1060").alias("supplier_code_1060"),
-        F.col("g.suppname_1060").alias("supplier_name_1060"),
-        F.col("g.suppcd_1090").alias("supplier_code_1090"),
-        F.col("g.suppname_1090").alias("supplier_name_1090"),
-        F.col("e.restricted_all_stock")
+        F.col("b.obprno").alias("obprno"),
+        F.col("a.cmpprtno").alias("obprtno"),
+        F.col("a.nha").alias("nha"),
+        F.col("a.description").alias("description"),
+        F.col("a.cmpqpa").alias("cmpqpa"),
+        F.lit(None).cast("int").alias("level"),
+        F.col("a.matkl"),
+        F.col("a.mstae"),
+        F.col("a.mstae").alias("part_status"),
+        F.col("a.vencode"),
+        F.col("a.venname"),
+        F.lit(None).cast("int").alias("mfg_5yrs_consumption"),
+        F.col("c.sprs_cons").alias("sprs_5yrs_consumption"),
+        F.lit(None).cast("int").alias("mfg_12mnths_consumption"),
+        F.lit(None).cast("int").alias("mfg_dmd"),
+        F.col("c.sprs_dmd"),
+        F.col("c.lamqoh"),
+        F.col("c.open_po_qty"),
+        F.col("a.std_cost"),
+        F.col("a.curr_cost"),
+        F.col("a.lead_time"),
+        F.col("d.mfr_part_id"),
+        F.col("d.name"),
+        F.lit(None).cast("string").alias("reltd_ob_pr"),
+        F.col("a.commodity"),
+        F.lit(None).cast("string").alias("business_unit"),
+        F.lit(None).cast("string").alias("pg_pm"),
+        F.col("a.smg_group"),
+        F.col("a.smg_head"),
+        F.col("a.sbm"),
+        F.col("a.critical"),
+        F.col("a.ce"),
+        F.lit(None).cast("string").alias("enditem"),
+        F.lit(None).cast("int").alias("obprtflag"),
+        F.col("a.po_supplier_code"),
+        F.col("a.po_supplier"),
+        F.col("e.suppcd_pr").alias("pr_supplier_code"),
+        F.col("e.suppname_pr").alias("pr_supplier"),
+        F.col("e.suppcd_1900"),
+        F.col("e.suppname_1900"),
+        F.col("e.suppcd_2000"),
+        F.col("e.suppname_2000"),
+        F.col("e.suppcd_3120"),
+        F.col("e.suppname_3120"),
+        F.col("e.suppcd_1050"),
+        F.col("e.suppname_1050"),
+        F.col("e.suppcd_1060"),
+        F.col("e.suppname_1060"),
+        F.col("e.suppcd_1090"),
+        F.col("e.suppname_1090"),
+        F.col("c.restricted_all_stock")
     )
 )
+
+
