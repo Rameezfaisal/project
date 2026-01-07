@@ -1,0 +1,48 @@
+AnalysisException                         Traceback (most recent call last)
+Cell In[37], line 7
+      1 rscxd_final = (
+      2     rscxd_df.alias("a")
+      3     .join(b_df.alias("b"), F.col("a.cmpprtno")==F.col("b.obprtno"), "left")
+      4     .join(rscxd_cons_df.alias("c"), ["cmpprtno","nha"], "left")
+      5     .join(zmfg_df.alias("d"), F.col("a.nha")==F.col("d.matnr"), "left")
+      6     .join(supp_df.alias("e"), F.col("a.nha")==F.col("e.nha"), "left")
+----> 7     .filter(F.upper(F.col("b.obpr_state")).isin("CONFIRMED","IN WORK","IN REVIEW"))
+      8 )
+
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3331, in DataFrame.filter(self, condition)
+   3329     jdf = self._jdf.filter(condition)
+   3330 elif isinstance(condition, Column):
+-> 3331     jdf = self._jdf.filter(condition._jc)
+   3332 else:
+   3333     raise PySparkTypeError(
+   3334         error_class="NOT_COLUMN_OR_STR",
+   3335         message_parameters={"arg_name": "condition", "arg_type": type(condition).__name__},
+   3336     )
+
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
+
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
+
+AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `b`.`obpr_state` cannot be resolved. Did you mean one of the following? [`b`.`BU`, `b`.`CE`, `b`.`MBU_FLAG`, `b`.`MPN`, `d`.`mandt`].;
+'Filter upper('b.obpr_state) IN (CONFIRMED,IN WORK,IN REVIEW)
++- Join LeftOuter, (nha#579 = nha#504)
+   :- Join LeftOuter, (nha#579 = matnr#454)
+   :  :- Project [CMPPRTNO#578, NHA#579, TYPE#580, DASH#581, DESCRIPTION#582, CMPQPA#583, MATKL#584, MSTAE#585, VENCODE#586, VENNAME#587, STD_COST#588, CURR_COST#589, LEAD_TIME#590, COMMODITY#591, SMG_GROUP#592, SMG_HEAD#593, SBM#594, CRITICAL#595, CE#596, PO_SUPPLIER_CODE#597, PO_SUPPLIER#598, OBPRNO#112, OBPRTNO#113, DESCRIPTION#114, ... 47 more fields]
+   :  :  +- Join LeftOuter, ((CMPPRTNO#578 = CMPPRTNO#650) AND (NHA#579 = NHA#651))
+   :  :     :- Join LeftOuter, (cmpprtno#578 = obprtno#113)
