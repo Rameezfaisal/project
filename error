@@ -1,49 +1,45 @@
-This step builds the R, S, C, X, D parts (non-standard parts) and:
-keeps only those parts that belong to active engineering obsolescence projects (Confirmed, In-Work, or In-Review)
-In business terms:
-We are pulling all replacement, substitute, and cross-reference parts that are part of live obsolescence projects, along with their demand, stock, supplier, and manufacturer info.
+AnalysisException                         Traceback (most recent call last)
+Cell In[43], line 20
+      2 cols = [
+      3     "obprno","obprtno","nha","description","cmpqpa","level","matkl","mstae","part_status",
+      4     "vencode","venname","mfg_5yrs_consumption","sprs_5yrs_consumption",
+   (...)
+     16     "restricted_all_stock"
+     17 ]
+     19 # ---- Align both sides ----
+---> 20 main_aligned = main_df.select(*[F.col(c) for c in cols])
+     21 rscxd_aligned = rscxd_final.select(*[F.col(c) for c in cols])
+     23 # ---- UNION ALL ----
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3229, in DataFrame.select(self, *cols)
+   3184 def select(self, *cols: "ColumnOrName") -> "DataFrame":  # type: ignore[misc]
+   3185     """Projects a set of expressions and returns a new :class:`DataFrame`.
+   3186 
+   3187     .. versionadded:: 1.3.0
+   (...)
+   3227     +-----+---+
+   3228     """
+-> 3229     jdf = self._jdf.select(self._jcols(*cols))
+   3230     return DataFrame(jdf, self.sparkSession)
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-
-
-
-CELL-7 — UNION of OBPR ecosystem + RSCXD parts
-💼 Business meaning
-We now merge:
-Primary OBPR parts (from the engineering obsolescence projects)
-R / S / C / X / D parts (replacement, substitute, cross-reference parts)
-This creates one complete “Part Ecosystem” that the business uses to:
-see all parts related to an obsolescence project in one dataset.
-
-
-
-
-
-
-
-# ---- Define final column list (SAP var_out structure) ----
-cols = [
-    "obprno","obprtno","nha","description","cmpqpa","level","matkl","mstae","part_status",
-    "vencode","venname","mfg_5yrs_consumption","sprs_5yrs_consumption",
-    "mfg_12mnths_consumption","mfg_dmd","sprs_dmd","lamqoh","open_po_qty",
-    "std_cost","curr_cost","lead_time","mfr_part_id","name","reltd_ob_pr",
-    "commodity","business_unit","pg_pm","smg_group","smg_head","sbm","critical","ce",
-    "enditem","obprtflag","po_supplier_code","po_supplier",
-    "pr_supplier_code","pr_supplier",
-    "supplier_code_1900","supplier_name_1900",
-    "supplier_code_2000","supplier_name_2000",
-    "supplier_code_3120","supplier_name_3120",
-    "supplier_code_1050","supplier_name_1050",
-    "supplier_code_1060","supplier_name_1060",
-    "supplier_code_1090","supplier_name_1090",
-    "restricted_all_stock"
-]
-
-# ---- Align both sides ----
-main_aligned = main_df.select(*[F.col(c) for c in cols])
-rscxd_aligned = rscxd_final.select(*[F.col(c) for c in cols])
-
-# ---- UNION ALL ----
-final_df = main_aligned.unionByName(rscxd_aligned)
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `nha` is ambiguous, could be: [`c`.`nha`, `e`.`nha`, `g`.`nha`].
