@@ -1,14 +1,63 @@
 from pyspark.sql import functions as F
+from pyspark.sql import types as T
 
-bad_dmddt = (
-    problem_report_src
-    .select("dmddt")
-    .withColumn("normalized", normalize_sap_date("dmddt"))
-    .filter(
-        F.col("dmddt").isNotNull() &
-        ~F.trim(F.col("dmddt")).isin("", "0", "00000000") &
-        F.col("normalized").isNull()
+
+
+
+
+
+# ---------- SOURCE TABLES ----------
+tbl_obprtno_dtls      = "eng_omat.rpt_omat_obprtno_dtls"
+tbl_obpr_info_dtls   = "eng_omat.rpt_omat_obpr_info_dtls"
+tbl_obpn_nha_dtls    = "eng_omat.rpt_omat_obpn_nha_dtls"
+tbl_dmd_cons         = "eng_omat.rpt_omat_dmd_consumption_dtls"
+tbl_buy_nha          = "eng_omat.rpt_omat_obpn_buy_nha_dtls"
+tbl_part_dtls        = "eng_omat.rpt_omat_part_dtls"
+tbl_zmfg             = "eng_global.rpt_zmfg_partref"
+tbl_suppliers        = "eng_omat.rpt_omat_buynha_suppliers_plant"
+tbl_rscxd_dtls       = "eng_omat.rpt_omat_rscxd_dtls"
+tbl_rscxd_cons       = "eng_omat.rpt_omat_rscxd_dmd_cons"
+
+# ---------- TARGET ----------
+tbl_target = "eng_test.rpt_part_ecosystem"
+
+
+
+
+
+
+a_df = spark.table(tbl_obprtno_dtls)
+b_df = spark.table(tbl_obpr_info_dtls)
+c_df = spark.table(tbl_obpn_nha_dtls)
+dmd_df = spark.table(tbl_dmd_cons)
+buy_df = spark.table(tbl_buy_nha)
+part_df = spark.table(tbl_part_dtls)
+zmfg_df = spark.table(tbl_zmfg)
+supp_df = spark.table(tbl_suppliers)
+rscxd_df = spark.table(tbl_rscxd_dtls)
+rscxd_cons_df = spark.table(tbl_rscxd_cons)
+
+
+
+
+
+
+
+
+e_df = (
+    dmd_df.alias("b")
+    .join(buy_df.alias("c"), (F.col("c.cmpprtno") == F.col("b.cmpprtno")) & (F.col("c.nha") == F.col("b.nha")))
+    .join(part_df.alias("d"), (F.col("d.cmpprtno") == F.col("b.cmpprtno")) & (F.col("d.nha") == F.col("b.nha")))
+    .filter(F.col("c.nha_status_inactive") != F.lit("X"))
+    .groupBy(
+        "b.cmpprtno","b.nha","d.description","c.matkl","c.mstae","d.vencode","d.venname",
+        "b.mfg_12mnths_consumption","b.mfg_dmd","b.sprs_dmd","b.lamqoh","b.open_po_qty",
+        "b.mfg_5yrs_consumption","b.sprs_5yrs_consumption",
+        "d.std_cost","d.curr_cost","d.lead_time","d.commodity","d.smg_group","d.smg_head",
+        "d.sbm","d.critical","d.ce","d.po_supp_code","d.po_supp_name","b.restricted_all_stock"
+    )
+    .agg(
+        F.sum("c.cmpqpa").alias("cmpqpa"),
+        F.max("c.level").alias("level")
     )
 )
-
-display(bad_dmddt)
