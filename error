@@ -1,81 +1,35 @@
-CELL-9 — UNION ALL (SAP var_out)
-💼 Business meaning
-This recreates SAP’s final var_out = SELECT … UNION ALL SELECT …
-It produces the complete Part Ecosystem used by Engineering, Supply Chain, and Obsolescence teams.
+AnalysisException                         Traceback (most recent call last)
+Cell In[91], line 1
+----> 1 final_df = main_proj.unionByName(rscxd_proj)
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:4043, in DataFrame.unionByName(self, other, allowMissingColumns)
+   3965 def unionByName(self, other: "DataFrame", allowMissingColumns: bool = False) -> "DataFrame":
+   3966     """Returns a new :class:`DataFrame` containing union of rows in this and another
+   3967     :class:`DataFrame`.
+   3968 
+   (...)
+   4041     +----+----+----+----+----+----+
+   4042     """
+-> 4043     return DataFrame(self._jdf.unionByName(other._jdf, allowMissingColumns), self.sparkSession)
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
-final_df = main_proj.unionByName(rscxd_proj)
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-
-
-
-
-
-CELL-10 — Create the Delta table (SAP schema → Fabric)
-💼 Business meaning
-We now create the physical reporting table in Fabric that replaces the SAP calculation view.
-
-
-
-
-
-
-spark.sql("""
-CREATE TABLE IF NOT EXISTS eng_test.rpt_part_ecosystem (
-  business_unit STRING,
-  ce STRING,
-  cmpqpa INT,
-  commodity STRING,
-  critical STRING,
-  curr_cost DOUBLE,
-  description STRING,
-  enditem STRING,
-  lamqoh INT,
-  lead_time INT,
-  level INT,
-  matkl STRING,
-  mfg_12mnths_consumption INT,
-  mfg_5yrs_consumption INT,
-  mfg_dmd INT,
-  mfr_part_id STRING,
-  mstae STRING,
-  name STRING,
-  nha STRING,
-  obprno STRING,
-  obprtflag INT,
-  obprtno STRING,
-  open_po_qty INT,
-  part_status STRING,
-  pg_pm STRING,
-  po_supplier STRING,
-  po_supplier_code STRING,
-  pr_supplier STRING,
-  pr_supplier_code STRING,
-  reltd_ob_pr STRING,
-  restricted_all_stock INT,
-  sbm STRING,
-  smg_group STRING,
-  smg_head STRING,
-  sprs_5yrs_consumption INT,
-  sprs_dmd INT,
-  std_cost DOUBLE,
-  supplier_code_1050 STRING,
-  supplier_code_1060 STRING,
-  supplier_code_1090 STRING,
-  supplier_code_1900 STRING,
-  supplier_code_2000 STRING,
-  supplier_code_3120 STRING,
-  supplier_name_1050 STRING,
-  supplier_name_1060 STRING,
-  supplier_name_1090 STRING,
-  supplier_name_1900 STRING,
-  supplier_name_2000 STRING,
-  supplier_name_3120 STRING,
-  vencode STRING,
-  venname STRING
-)
-USING DELTA
-""")
-
-
+AnalysisException: Cannot resolve column name "supplier_code_1900" among (obprno, obprtno, nha, description, cmpqpa, level, matkl, mstae, part_status, vencode, venname, mfg_5yrs_consumption, sprs_5yrs_consumption, mfg_12mnths_consumption, mfg_dmd, sprs_dmd, lamqoh, open_po_qty, std_cost, curr_cost, lead_time, mfr_part_id, name, reltd_ob_pr, commodity, business_unit, pg_pm, smg_group, smg_head, sbm, critical, ce, enditem, obprtflag, po_supplier_code, po_supplier, pr_supplier_code, pr_supplier, suppcd_1900, suppname_1900, suppcd_2000, suppname_2000, suppcd_3120, suppname_3120, suppcd_1050, suppname_1050, suppcd_1060, suppname_1060, suppcd_1090, suppname_1090, restricted_all_stock).
