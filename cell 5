@@ -33,6 +33,7 @@ def normalize_sap_date(colname):
 
 
 
+
 prj_zt_iplm_problem_report = (
     problem_report_src
     .select( ... same select list ... )
@@ -47,10 +48,3 @@ prj_zt_iplm_problem_report = (
     .withColumn("solution_submit_date",    normalize_sap_date("solution_submit_date"))
     .withColumn("review_start_date",       normalize_sap_date("review_start_date"))
 )
-
-
-
-
-
-
-
