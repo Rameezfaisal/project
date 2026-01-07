@@ -1,25 +1,33 @@
 from pyspark.sql import functions as F
 
-def parse_fabric_date(colname):
+def normalize_sap_date(colname):
     c = F.trim(F.col(colname))
+
+    # yyyy-MM-dd
+    iso = F.when(c.rlike(r"^\d{4}-\d{1,2}-\d{1,2}$"), c)
+
+    # yyyyMMdd
+    ymd = F.when(c.rlike(r"^\d{8}$"),
+                 F.concat_ws("-", F.substring(c,1,4), F.substring(c,5,2), F.substring(c,7,2)))
+
+    # M/d/yyyy or MM/dd/yyyy
+    mdy = F.when(c.rlike(r"^\d{1,2}/\d{1,2}/\d{4}$"),
+        F.concat_ws("-",
+            F.split(c,"/").getItem(2),
+            F.lpad(F.split(c,"/").getItem(0),2,"0"),
+            F.lpad(F.split(c,"/").getItem(1),2,"0")
+        )
+    )
+
+    normalized = F.coalesce(iso, ymd, mdy)
 
     return F.when(
         c.isNull() | c.isin("", "0", "00000000"),
         None
     ).otherwise(
-        F.date_format(
-            F.to_utc_timestamp(
-                F.coalesce(
-                    F.expr(f"try_to_timestamp({colname}, 'yyyy-MM-dd')"),
-                    F.expr(f"try_to_timestamp({colname}, 'MM/dd/yyyy')"),
-                    F.expr(f"try_to_timestamp({colname}, 'M/d/yyyy')"),
-                    F.expr(f"try_to_timestamp({colname}, 'yyyyMMdd')")
-                ),
-                "UTC"
-            ),
-            "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        )
+        F.concat(normalized, F.lit("T00:00:00Z"))
     )
+
 
 
 
@@ -27,15 +35,22 @@ def parse_fabric_date(colname):
 
 prj_zt_iplm_problem_report = (
     problem_report_src
-    .select( ... same column list ... )
+    .select( ... same select list ... )
 
-    .withColumn("need_date",               parse_fabric_date("need_date"))
-    .withColumn("planned_completion_date", parse_fabric_date("planned_completion_date"))
-    .withColumn("ob_last_buy_date",        parse_fabric_date("ob_last_buy_date"))
-    .withColumn("disposition_due_date",    parse_fabric_date("disposition_due_date"))
-    .withColumn("due_date",                parse_fabric_date("due_date"))
-    .withColumn("actual_completion_date",  parse_fabric_date("actual_completion_date"))
-    .withColumn("submitted_date",          parse_fabric_date("submitted_date"))
-    .withColumn("solution_submit_date",    parse_fabric_date("solution_submit_date"))
-    .withColumn("review_start_date",       parse_fabric_date("review_start_date"))
+    .withColumn("need_date",               normalize_sap_date("need_date"))
+    .withColumn("planned_completion_date", normalize_sap_date("planned_completion_date"))
+    .withColumn("ob_last_buy_date",        normalize_sap_date("ob_last_buy_date"))
+    .withColumn("disposition_due_date",    normalize_sap_date("disposition_due_date"))
+    .withColumn("due_date",                normalize_sap_date("due_date"))
+    .withColumn("actual_completion_date",  normalize_sap_date("actual_completion_date"))
+    .withColumn("submitted_date",          normalize_sap_date("submitted_date"))
+    .withColumn("solution_submit_date",    normalize_sap_date("solution_submit_date"))
+    .withColumn("review_start_date",       normalize_sap_date("review_start_date"))
 )
+
+
+
+
+
+
+
