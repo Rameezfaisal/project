@@ -1,40 +1,62 @@
-spark.sql(f"DELETE FROM {tgt_dtls}")
+AnalysisException                         Traceback (most recent call last)
+Cell In[52], line 8
+      1 final_dtls = (
+      2     lstdata.alias("a")
+      3     .join(makt_df.alias("m"), F.col("m.matnr") == F.col("a.nha"), "left")
+      4     .join(sup_df.alias("s"), F.col("s.nha") == F.col("a.nha"), "left")
+      5     .join(eco_df.alias("e"), (F.col("e.nha")==F.col("a.dash")) & (F.col("e.obprtno")==F.col("a.cmpprtno")), "left")
+      6     .join(mara_df.alias("ma"), F.col("ma.matnr")==F.col("a.nha"), "left")
+      7     .filter(~F.col("ma.mstae").isin("OB","OS","OP"))
+----> 8     .select(
+      9         "a.cmpprtno","a.nha","a.type","a.dash",
+     10         F.col("m.maktx").alias("description"),
+     11         "e.cmpqpa","ma.matkl","ma.mstae",
+     12         F.col("s.omat_selected_suppliercd").alias("vencode"),
+     13         F.col("s.omat_selected_supplier").alias("venname"),
+     14         F.col("s.plifz").alias("lead_time")
+     15     )
+     16 )
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3229, in DataFrame.select(self, *cols)
+   3184 def select(self, *cols: "ColumnOrName") -> "DataFrame":  # type: ignore[misc]
+   3185     """Projects a set of expressions and returns a new :class:`DataFrame`.
+   3186 
+   3187     .. versionadded:: 1.3.0
+   (...)
+   3227     +-----+---+
+   3228     """
+-> 3229     jdf = self._jdf.select(self._jcols(*cols))
+   3230     return DataFrame(jdf, self.sparkSession)
 
-final_dtls = (
-    lstdata.alias("a")
-    .join(makt_df.alias("m"), F.col("m.matnr") == F.col("a.nha"), "left")
-    .join(sup_df.alias("s"), F.col("s.nha") == F.col("a.nha"), "left")
-    .join(eco_df.alias("e"), (F.col("e.nha")==F.col("a.dash")) & (F.col("e.obprtno")==F.col("a.cmpprtno")), "left")
-    .join(mara_df.alias("ma"), F.col("ma.matnr")==F.col("a.nha"), "left")
-    .filter(~F.col("ma.mstae").isin("OB","OS","OP"))
-    .select(
-        "a.cmpprtno","a.nha","a.type","a.dash",
-        F.col("m.maktx").alias("description"),
-        "e.cmpqpa","ma.matkl","ma.mstae",
-        F.col("s.omat_selected_suppliercd").alias("vencode"),
-        F.col("s.omat_selected_supplier").alias("venname"),
-        F.col("s.plifz").alias("lead_time")
-    )
-)
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-final_dtls.write.insertInto(tgt_dtls)
-
-
-
-
-
-
-
-
-
-
-partcons = (
-    spark.table(tgt_dtls).alias("a")
-    .join(dmd_df.alias("b"), F.col("a.nha")==F.col("b.hostpartid"))
-    .filter(F.col("b.ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"))
-    .groupBy("a.nha")
-    .agg(F.sum("b.historyamount").alias("sprs_cons"))
-)
-
+AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `s`.`plifz` cannot be resolved. Did you mean one of the following? [`s`.`NHA`, `e`.`ce`, `e`.`nha`, `a`.`nha`, `e`.`sbm`].;
+'Project [cmpprtno#8054, nha#8063, type#8064, dash#8055, maktx#5079 AS description#9754, cmpqpa#5139, matkl#5249, mstae#5324, omat_selected_suppliercd#5111 AS vencode#9755, omat_selected_supplier#5112 AS venname#9756, 's.plifz AS lead_time#9757]
++- Filter NOT mstae#5324 IN (OB,OS,OP)
+   +- Join LeftOuter, (matnr#5239 = nha#8063)
+      :- Join LeftOuter, ((nha#5137 = dash#8055) AND (obprtno#5136 = cmpprtno#8054))
+      :  :- Join LeftOuter, (nha#5091 = nha#8063)
+      :  :  :- Join LeftOuter, (matnr#5077 = nha#8063)
+      :  :  :  :- SubqueryAlias a
+      :  :  :  :  +- Union false, false
+      :  :  :  :     :- Filter isnotnull(nha#8063)
+      :  :  :  :     :  +- Project [cmpprtno#8054, dash#8055, r_part#5008 AS nha#8063, R AS type#8064]
+      :  :  :  :     :     +- Deduplicate [s_part#5009, d_part#5005, r_part#5008, core_part#5004, dash#8055, x_part#5011, cmpprtno#8054]
