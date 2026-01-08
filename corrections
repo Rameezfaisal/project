@@ -1,24 +1,61 @@
-Step 10 — Open Purchase Order Quantity
-What this step does (business)
-Calculates how many units are already on order from suppliers for each RSCXD part.
-This tells us what supply is coming in.
+---------------------------------------------------------------------------
+PySparkTypeError                          Traceback (most recent call last)
+Cell In[88], line 5
+      1 openpo = (
+      2     po_df.alias("p")
+      3     .join(ekpo_df.alias("e"), ["ebeln", "ebelp"])
+      4     .join(spark.table(tgt_dtls).alias("d"), F.col("p.matnr") == F.col("d.nha"))
+----> 5     .filter(~F.right(F.col("p.due_dt"), 5).isin("04-01", "12-31"))
+      6     .filter(F.col("p.status") != "INACT")
+      7     .filter(F.trim(F.col("p.matnr")) != "")
+      8     .filter(F.trim(F.col("p.loekz")) == "")
+      9     .filter(F.col("p.aussl") != "U3")
+     10     .filter(F.col("p.bsart") != "UB")
+     11     .filter(F.col("p.elikz") != "X")
+     12     .filter(~F.col("e.pstyp").isin("7", "9"))
+     13     .groupBy("d.cmpprtno", "p.matnr")
+     14     .agg(F.sum(F.col("p.menge") - F.col("p.wemng")).cast("int").alias("open_po_qty"))
+     15 )
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/utils.py:174, in try_remote_functions.<locals>.wrapped(*args, **kwargs)
+    172     return getattr(functions, f.__name__)(*args, **kwargs)
+    173 else:
+--> 174     return f(*args, **kwargs)
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/functions.py:10938, in right(str, len)
+  10917 @try_remote_functions
+  10918 def right(str: "ColumnOrName", len: "ColumnOrName") -> Column:
+  10919     """
+  10920     Returns the rightmost `len`(`len` can be string type) characters from the string `str`,
+  10921     if `len` is less or equal than 0 the result is an empty string.
+   (...)
+  10936     [Row(r='SQL')]
+  10937     """
+> 10938     return _invoke_function_over_columns("right", str, len)
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/functions.py:105, in _invoke_function_over_columns(name, *cols)
+    100 def _invoke_function_over_columns(name: str, *cols: "ColumnOrName") -> Column:
+    101     """
+    102     Invokes n-ary JVM function identified by name
+    103     and wraps the result with :class:`~pyspark.sql.Column`.
+    104     """
+--> 105     return _invoke_function(name, *(_to_java_column(col) for col in cols))
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/functions.py:105, in <genexpr>(.0)
+    100 def _invoke_function_over_columns(name: str, *cols: "ColumnOrName") -> Column:
+    101     """
+    102     Invokes n-ary JVM function identified by name
+    103     and wraps the result with :class:`~pyspark.sql.Column`.
+    104     """
+--> 105     return _invoke_function(name, *(_to_java_column(col) for col in cols))
 
-openpo = (
-    po_df.alias("p")
-    .join(ekpo_df.alias("e"), ["ebeln", "ebelp"])
-    .join(spark.table(tgt_dtls).alias("d"), F.col("p.matnr") == F.col("d.nha"))
-    .filter(~F.right(F.col("p.due_dt"), 5).isin("04-01", "12-31"))
-    .filter(F.col("p.status") != "INACT")
-    .filter(F.trim(F.col("p.matnr")) != "")
-    .filter(F.trim(F.col("p.loekz")) == "")
-    .filter(F.col("p.aussl") != "U3")
-    .filter(F.col("p.bsart") != "UB")
-    .filter(F.col("p.elikz") != "X")
-    .filter(~F.col("e.pstyp").isin("7", "9"))
-    .groupBy("d.cmpprtno", "p.matnr")
-    .agg(F.sum(F.col("p.menge") - F.col("p.wemng")).cast("int").alias("open_po_qty"))
-)
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/column.py:65, in _to_java_column(col)
+     63     jcol = _create_column_from_name(col)
+     64 else:
+---> 65     raise PySparkTypeError(
+     66         error_class="NOT_COLUMN_OR_STR",
+     67         message_parameters={"arg_name": "col", "arg_type": type(col).__name__},
+     68     )
+     69 return jcol
+
+PySparkTypeError: [NOT_COLUMN_OR_STR] Argument `col` should be a Column or str, got int.
