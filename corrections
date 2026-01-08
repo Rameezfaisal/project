@@ -1,21 +1,24 @@
-Step 9 — Future Demand (SPRS_DMD)
+Step 10 — Open Purchase Order Quantity
 What this step does (business)
-Calculates how much of each RSCXD part is needed in the next 6 months based on open SAP sales orders.
-This represents forward-looking demand.
+Calculates how many units are already on order from suppliers for each RSCXD part.
+This tells us what supply is coming in.
 
 
 
 
 
-partdmd = (
-    spark.table(tgt_dtls).alias("a")
-    .join(so_df.alias("b"), F.col("a.nha") == F.col("b.hostpartid"))
-    .filter(F.col("b.auart").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"))
-    .filter(
-        (F.col("b.salesorderdtdue") >= dt1wk) &
-        (F.col("b.salesorderdtdue") <= dt26wk)
-    )
-    .filter(F.col("a.type").isin("R","S","D","X"))
-    .groupBy("a.nha")
-    .agg(F.sum("b.openqty").cast("int").alias("sprs_dmd"))
+openpo = (
+    po_df.alias("p")
+    .join(ekpo_df.alias("e"), ["ebeln", "ebelp"])
+    .join(spark.table(tgt_dtls).alias("d"), F.col("p.matnr") == F.col("d.nha"))
+    .filter(~F.right(F.col("p.due_dt"), 5).isin("04-01", "12-31"))
+    .filter(F.col("p.status") != "INACT")
+    .filter(F.trim(F.col("p.matnr")) != "")
+    .filter(F.trim(F.col("p.loekz")) == "")
+    .filter(F.col("p.aussl") != "U3")
+    .filter(F.col("p.bsart") != "UB")
+    .filter(F.col("p.elikz") != "X")
+    .filter(~F.col("e.pstyp").isin("7", "9"))
+    .groupBy("d.cmpprtno", "p.matnr")
+    .agg(F.sum(F.col("p.menge") - F.col("p.wemng")).cast("int").alias("open_po_qty"))
 )
