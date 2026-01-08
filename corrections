@@ -1,15 +1,25 @@
-openpo = (
-    po_df.alias("p")
-    .join(ekpo_df.alias("e"), ["ebeln", "ebelp"])
-    .join(spark.table(tgt_dtls).alias("d"), F.col("p.matnr") == F.col("d.nha"))
-    .filter(~F.right(F.col("p.due_dt"), F.lit(5)).isin("04-01", "12-31"))
-    .filter(F.col("p.status") != "INACT")
-    .filter(F.trim(F.col("p.matnr")) != "")
-    .filter(F.trim(F.col("p.loekz")) == "")
-    .filter(F.col("p.aussl") != "U3")
-    .filter(F.col("p.bsart") != "UB")
-    .filter(F.col("p.elikz") != "X")
-    .filter(~F.col("e.pstyp").isin("7", "9"))
-    .groupBy("d.cmpprtno", "p.matnr")
-    .agg(F.sum(F.col("p.menge") - F.col("p.wemng")).cast("int").alias("open_po_qty"))
+Step 11 — LAMQOH & Restricted Stock
+What this step does (business)
+Calculates how much inventory is available and how much is restricted for each RSCXD part.
+This shows what is physically in stock right now.
+
+
+
+
+
+
+
+lamqoh = (
+    mard_df.alias("m")
+    .join(spark.table(tgt_dtls).alias("d"), F.col("m.matnr") == F.col("d.nha"))
+    .groupBy("d.cmpprtno", "m.matnr")
+    .agg(
+        F.sum(F.col("m.labst") + F.col("m.klabs")).cast("int").alias("lamqoh"),
+        F.sum(
+            F.col("m.insme") +
+            F.col("m.umlme") +
+            F.col("m.einme") +
+            F.col("m.speme")
+        ).cast("int").alias("restricted_all_stock")
+    )
 )
