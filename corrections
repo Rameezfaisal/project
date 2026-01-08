@@ -1,25 +1,49 @@
-Step 11 — LAMQOH & Restricted Stock
+Step 12 — Build OMAT_RSCXD_DMD_CONS
 What this step does (business)
-Calculates how much inventory is available and how much is restricted for each RSCXD part.
-This shows what is physically in stock right now.
+Combines usage, future demand, open POs, and inventory into one table so planners can see
+supply vs demand risk per RSCXD part.
 
 
 
 
 
 
+spark.sql(f"DELETE FROM {tgt_dmd_cons}")
 
-lamqoh = (
-    mard_df.alias("m")
-    .join(spark.table(tgt_dtls).alias("d"), F.col("m.matnr") == F.col("d.nha"))
-    .groupBy("d.cmpprtno", "m.matnr")
-    .agg(
-        F.sum(F.col("m.labst") + F.col("m.klabs")).cast("int").alias("lamqoh"),
-        F.sum(
-            F.col("m.insme") +
-            F.col("m.umlme") +
-            F.col("m.einme") +
-            F.col("m.speme")
-        ).cast("int").alias("restricted_all_stock")
+
+
+
+
+final_dmd_cons = (
+    spark.table(tgt_dtls).alias("a")
+    .join(partcons.alias("b"), "nha", "left")
+    .join(partdmd.alias("c"), "nha", "left")
+    .join(
+        openpo.alias("d"),
+        (F.col("a.nha") == F.col("d.matnr")) &
+        (F.col("a.cmpprtno") == F.col("d.cmpprtno")),
+        "left"
+    )
+    .join(
+        lamqoh.alias("e"),
+        (F.col("a.nha") == F.col("e.matnr")) &
+        (F.col("a.cmpprtno") == F.col("e.cmpprtno")),
+        "left"
+    )
+    .select(
+        F.col("a.cmpprtno"),
+        F.col("a.nha"),
+        F.col("b.sprs_cons"),
+        F.col("c.sprs_dmd"),
+        F.col("d.open_po_qty"),
+        F.current_date().alias("last_modified_on"),
+        F.col("e.lamqoh"),
+        F.col("e.restricted_all_stock")
     )
 )
+
+
+
+
+
+final_dmd_cons.write.insertInto(tgt_dmd_cons)
