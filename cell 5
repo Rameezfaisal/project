@@ -1,52 +1,55 @@
-  ;COLUMN_NAME            ;DATA_TYPE_NAME;LENGTH;SCALE;IS_NULLABLE
-1 ;BUSINESS_UNIT          ;VARCHAR       ;20    ;?    ;TRUE       
-2 ;CE                     ;VARCHAR       ;1     ;?    ;TRUE       
-3 ;CMPQPA                 ;INTEGER       ;10    ;0    ;TRUE       
-4 ;COMMODITY              ;NVARCHAR      ;50    ;?    ;TRUE       
-5 ;CRITICAL               ;VARCHAR       ;4     ;?    ;TRUE       
-6 ;CURR_COST              ;DOUBLE        ;15    ;?    ;TRUE       
-7 ;DESCRIPTION            ;NVARCHAR      ;100   ;?    ;TRUE       
-8 ;ENDITEM                ;NVARCHAR      ;500   ;?    ;TRUE       
-9 ;LAMQOH                 ;INTEGER       ;10    ;0    ;TRUE       
-10;LEAD_TIME              ;INTEGER       ;10    ;0    ;TRUE       
-11;LEVEL                  ;INTEGER       ;10    ;0    ;TRUE       
-12;MATKL                  ;VARCHAR       ;20    ;?    ;TRUE       
-13;MFG_12MNTHS_CONSUMPTION;INTEGER       ;10    ;0    ;TRUE       
-14;MFG_5YRS_CONSUMPTION   ;INTEGER       ;10    ;0    ;TRUE       
-15;MFG_DMD                ;INTEGER       ;10    ;0    ;TRUE       
-16;MFR_PART_ID            ;VARCHAR       ;20    ;?    ;TRUE       
-17;MSTAE                  ;VARCHAR       ;20    ;?    ;TRUE       
-18;NAME                   ;NVARCHAR      ;100   ;?    ;TRUE       
-19;NHA                    ;VARCHAR       ;20    ;?    ;TRUE       
-20;OBPRNO                 ;VARCHAR       ;20    ;?    ;TRUE       
-21;OBPRTFLAG              ;DECIMAL       ;2     ;0    ;TRUE       
-22;OBPRTNO                ;VARCHAR       ;20    ;?    ;TRUE       
-23;OPEN_PO_QTY            ;INTEGER       ;10    ;0    ;TRUE       
-24;PART_STATUS            ;VARCHAR       ;3     ;?    ;TRUE       
-25;PG_PM                  ;NVARCHAR      ;30    ;?    ;TRUE       
-26;PO_SUPPLIER            ;VARCHAR       ;500   ;?    ;TRUE       
-27;PO_SUPPLIER_CODE       ;VARCHAR       ;10    ;?    ;TRUE       
-28;PR_SUPPLIER            ;VARCHAR       ;500   ;?    ;TRUE       
-29;PR_SUPPLIER_CODE       ;VARCHAR       ;10    ;?    ;TRUE       
-30;RELTD_OB_PR            ;NVARCHAR      ;50    ;?    ;TRUE       
-31;RESTRICTED_ALL_STOCK   ;INTEGER       ;10    ;0    ;TRUE       
-32;SBM                    ;NVARCHAR      ;20    ;?    ;TRUE       
-33;SMG_GROUP              ;NVARCHAR      ;30    ;?    ;TRUE       
-34;SMG_HEAD               ;NVARCHAR      ;30    ;?    ;TRUE       
-35;SPRS_5YRS_CONSUMPTION  ;INTEGER       ;10    ;0    ;TRUE       
-36;SPRS_DMD               ;INTEGER       ;10    ;0    ;TRUE       
-37;STD_COST               ;DOUBLE        ;15    ;?    ;TRUE       
-38;SUPPLIER_CODE_1050     ;VARCHAR       ;10    ;?    ;TRUE       
-39;SUPPLIER_CODE_1060     ;VARCHAR       ;10    ;?    ;TRUE       
-40;SUPPLIER_CODE_1090     ;VARCHAR       ;10    ;?    ;TRUE       
-41;SUPPLIER_CODE_1900     ;VARCHAR       ;10    ;?    ;TRUE       
-42;SUPPLIER_CODE_2000     ;VARCHAR       ;10    ;?    ;TRUE       
-43;SUPPLIER_CODE_3120     ;VARCHAR       ;10    ;?    ;TRUE       
-44;SUPPLIER_NAME_1050     ;VARCHAR       ;500   ;?    ;TRUE       
-45;SUPPLIER_NAME_1060     ;VARCHAR       ;500   ;?    ;TRUE       
-46;SUPPLIER_NAME_1090     ;VARCHAR       ;500   ;?    ;TRUE       
-47;SUPPLIER_NAME_1900     ;VARCHAR       ;500   ;?    ;TRUE       
-48;SUPPLIER_NAME_2000     ;VARCHAR       ;500   ;?    ;TRUE       
-49;SUPPLIER_NAME_3120     ;VARCHAR       ;500   ;?    ;TRUE       
-50;VENCODE                ;VARCHAR       ;10    ;?    ;TRUE       
-51;VENNAME                ;VARCHAR       ;100   ;?    ;TRUE       
+Cell 4 – Date window calculation (DT1WK, DT26WK)
+Business purpose:
+Defines the future demand horizon used for demand forecasting.
+DT1WK = Start of the current week
+DT26WK = End of the 26-week window (~6 months)
+This creates the time window in which open sales orders are considered as demand for RSCXD parts.
+👉 Business meaning:
+“Look at all sales demand for the next 6 months, starting from this week.”
+Cell 5 – NHALIST (Part Ecosystem Mapping)
+Business purpose:
+Identifies all RSCXD component parts and maps them to their parent assemblies (NHA/DASH) that are in the obsolescence program.
+It:
+Takes all OB-tracked part numbers
+Links them to their Next Higher Assembly (NHA)
+Keeps only parts that are Confirmed / In Review / In Work
+👉 Business meaning:
+“Which components belong to which aircraft/assembly, and are actively being tracked for obsolescence?”
+This forms the official universe of valid RSCXD parts.
+Cell 6 – LSTDATA (Explode part types)
+Business purpose:
+Creates one row per real physical part from the part ecosystem.
+Each NHA has multiple types of parts:
+R = Replaceable
+C = Core
+S = Spares
+X = Exchange
+D = Depot
+This cell converts the SAP structure into:
+Copy code
+
+CMPPRTNO | DASH | NHA | TYPE
+one row per actual material.
+👉 Business meaning:
+“List every sellable, usable, and stocked part that belongs to each RSCXD assembly.”
+This is what later gets demand, stock, PO, and consumption applied.
+Cell 7 – Build OMAT_RSCXD_DTLS (Master data table)
+Business purpose:
+Creates the master RSCXD part table used by planners.
+It enriches every part with:
+Description
+Supplier
+Lead time
+Material status
+Commodity hierarchy
+Criticality & CE flags
+And removes:
+Obsolete or out-of-scope parts (OB, OS, OP)
+👉 Business meaning:
+“This is the golden list of all valid RSCXD parts with procurement and planning attributes.”
+This table is the foundation for:
+Demand
+Consumption
+Inventory
+Open POs
+Everything downstream depends on this being correct.
