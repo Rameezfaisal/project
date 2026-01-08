@@ -1,25 +1,21 @@
-final_dtls.write.insertInto(tgt_dtls)
-
-
-
-
-Step 8 — Historical Consumption
-What it does (business)
-Calculates how much of each RSCXD part has been used in the past from SAP demand history.
-This shows part criticality based on real usage.
+Step 9 — Future Demand (SPRS_DMD)
+What this step does (business)
+Calculates how much of each RSCXD part is needed in the next 6 months based on open SAP sales orders.
+This represents forward-looking demand.
 
 
 
 
 
-partcons = (
+partdmd = (
     spark.table(tgt_dtls).alias("a")
-    .join(dmd_df.alias("b"), F.col("a.nha") == F.col("b.hostpartid"))
-    .filter(F.col("b.ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"))
+    .join(so_df.alias("b"), F.col("a.nha") == F.col("b.hostpartid"))
+    .filter(F.col("b.auart").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"))
+    .filter(
+        (F.col("b.salesorderdtdue") >= dt1wk) &
+        (F.col("b.salesorderdtdue") <= dt26wk)
+    )
+    .filter(F.col("a.type").isin("R","S","D","X"))
     .groupBy("a.nha")
-    .agg(F.sum("b.historyamount").cast("int").alias("sprs_cons"))
+    .agg(F.sum("b.openqty").cast("int").alias("sprs_dmd"))
 )
-
-
-
-
