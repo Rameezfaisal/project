@@ -1,55 +1,30 @@
-Cell 4 – Date window calculation (DT1WK, DT26WK)
-Business purpose:
-Defines the future demand horizon used for demand forecasting.
-DT1WK = Start of the current week
-DT26WK = End of the 26-week window (~6 months)
-This creates the time window in which open sales orders are considered as demand for RSCXD parts.
-👉 Business meaning:
-“Look at all sales demand for the next 6 months, starting from this week.”
-Cell 5 – NHALIST (Part Ecosystem Mapping)
-Business purpose:
-Identifies all RSCXD component parts and maps them to their parent assemblies (NHA/DASH) that are in the obsolescence program.
-It:
-Takes all OB-tracked part numbers
-Links them to their Next Higher Assembly (NHA)
-Keeps only parts that are Confirmed / In Review / In Work
-👉 Business meaning:
-“Which components belong to which aircraft/assembly, and are actively being tracked for obsolescence?”
-This forms the official universe of valid RSCXD parts.
-Cell 6 – LSTDATA (Explode part types)
-Business purpose:
-Creates one row per real physical part from the part ecosystem.
-Each NHA has multiple types of parts:
-R = Replaceable
-C = Core
-S = Spares
-X = Exchange
-D = Depot
-This cell converts the SAP structure into:
-Copy code
+AnalysisException                         Traceback (most recent call last)
+Cell In[58], line 1
+----> 1 final_dtls.write.insertInto(tgt_dtls)
 
-CMPPRTNO | DASH | NHA | TYPE
-one row per actual material.
-👉 Business meaning:
-“List every sellable, usable, and stocked part that belongs to each RSCXD assembly.”
-This is what later gets demand, stock, PO, and consumption applied.
-Cell 7 – Build OMAT_RSCXD_DTLS (Master data table)
-Business purpose:
-Creates the master RSCXD part table used by planners.
-It enriches every part with:
-Description
-Supplier
-Lead time
-Material status
-Commodity hierarchy
-Criticality & CE flags
-And removes:
-Obsolete or out-of-scope parts (OB, OS, OP)
-👉 Business meaning:
-“This is the golden list of all valid RSCXD parts with procurement and planning attributes.”
-This table is the foundation for:
-Demand
-Consumption
-Inventory
-Open POs
-Everything downstream depends on this being correct.
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/readwriter.py:1513, in DataFrameWriter.insertInto(self, tableName, overwrite)
+   1511 if overwrite is not None:
+   1512     self.mode("overwrite" if overwrite else "append")
+-> 1513 self._jwrite.insertInto(tableName)
+
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
+
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
+
+AnalysisException: [DELTA_INSERT_COLUMN_ARITY_MISMATCH] Cannot write to 'spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk.rpt_omat_rscxd_dtls', not enough data columns; target table has 21 column(s) but the inserted data has 11 column(s)
