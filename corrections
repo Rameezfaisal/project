@@ -1,46 +1,25 @@
-final_dtls = (
-    lstdata.alias("a")
+final_dtls.write.insertInto(tgt_dtls)
 
-    # Material description
-    .join(makt_df.alias("m"), F.col("m.matnr") == F.col("a.nha"), "left")
 
-    # Supplier per NHA
-    .join(sup_df.alias("s"), F.col("s.nha") == F.col("a.nha"), "left")
 
-    # Part ecosystem (CMPQPA)
-    .join(
-        eco_df.alias("e"),
-        (F.col("e.nha") == F.col("a.dash")) &
-        (F.col("e.obprtno") == F.col("a.cmpprtno")),
-        "left"
-    )
 
-    # Material master (status + commodity)
-    .join(mara_df.alias("ma"), F.col("ma.matnr") == F.col("a.nha"), "left")
+Step 8 — Historical Consumption
+What it does (business)
+Calculates how much of each RSCXD part has been used in the past from SAP demand history.
+This shows part criticality based on real usage.
 
-    # Plant-specific planning (LEAD TIME)
-    .join(
-        marc_df.alias("mc"),
-        (F.col("mc.matnr") == F.col("a.nha")) &
-        (F.col("mc.werks") == F.col("s.omat_selected_plant")),
-        "left"
-    )
 
-    # Exclude obsolete & out-of-scope parts
-    .filter(~F.col("ma.mstae").isin("OB", "OS", "OP"))
 
-    # Final column set (lineage safe)
-    .select(
-        F.col("a.cmpprtno"),
-        F.col("a.nha"),
-        F.col("a.type"),
-        F.col("a.dash"),
-        F.col("m.maktx").alias("description"),
-        F.col("e.cmpqpa"),
-        F.col("ma.matkl"),
-        F.col("ma.mstae"),
-        F.col("s.omat_selected_suppliercd").alias("vencode"),
-        F.col("s.omat_selected_supplier").alias("venname"),
-        F.col("mc.plifz").alias("lead_time")
-    )
+
+
+partcons = (
+    spark.table(tgt_dtls).alias("a")
+    .join(dmd_df.alias("b"), F.col("a.nha") == F.col("b.hostpartid"))
+    .filter(F.col("b.ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"))
+    .groupBy("a.nha")
+    .agg(F.sum("b.historyamount").cast("int").alias("sprs_cons"))
 )
+
+
+
+
