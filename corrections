@@ -1,103 +1,40 @@
-from pyspark.sql import functions as F
-from pyspark.sql import Window
+spark.sql(f"DELETE FROM {tgt_dtls}")
 
 
-
-
-# ------------------------
-# Source tables
-# ------------------------
-cv_rcsm_material        = "prd_csbg.cv_csbg_rcsm_material"
-cv_buy_nha_dtls         = "prd_gops_omat.cv_omat_obpn_buy_nha_dtls"
-cv_obprtno_dtls         = "prd_gops_omat.cv_omat_obprtno_dtls"
-
-cv_makt                 = "prd_global_ecc.cv_makt"
-cv_buynha_suppliers     = "prd_gops_omat.cv_omat_buynha_suppliers_plant"
-cv_part_ecosystem       = "prd_gops_omat.cv_part_ecosystem"
-cv_mara                 = "prd_global_ecc.cv_mara"
-cv_marc                 = "prd_global_ecc.cv_marc"
-cv_mbew                 = "prd_global_ecc.cv_mbew"
-cv_ausp                 = "prd_global_ecc.cv_ausp"
-cv_supplier_xref        = "prd_global_ecc.cv_zsupplier_xref"
-cv_supp_code            = "prd_global_ecc.cv_zsupp_code_mstr"
-
-cv_dmd_detail           = "prd_global_ecc.cv_zspm_dmd_detail"
-cv_sales_order         = "prd_global_ecc.cv_zspm_sales_order"
-cv_po_hist             = "prd_global_ecc.cv_zpo_hstry"
-cv_ekpo                = "prd_global_ecc.cv_ekpo"
-cv_mard                = "prd_global_ecc.cv_mard"
-
-# ------------------------
-# Target tables
-# ------------------------
-tgt_dtls     = "eng_test.rpt_omat_rscxd_dtls"
-tgt_dmd_cons = "eng_test.rpt_omat_rscxd_dmd_cons"
-
-
-
-
-
-
-mat_df      = spark.table(cv_rcsm_material)
-buy_df      = spark.table(cv_buy_nha_dtls)
-ob_df       = spark.table(cv_obprtno_dtls)
-makt_df     = spark.table(cv_makt)
-sup_df      = spark.table(cv_buynha_suppliers)
-eco_df      = spark.table(cv_part_ecosystem)
-mara_df     = spark.table(cv_mara)
-marc_df     = spark.table(cv_marc)
-mbew_df     = spark.table(cv_mbew)
-ausp_df     = spark.table(cv_ausp)
-xref_df     = spark.table(cv_supplier_xref)
-code_df     = spark.table(cv_supp_code)
-
-dmd_df      = spark.table(cv_dmd_detail)
-so_df       = spark.table(cv_sales_order)
-po_df       = spark.table(cv_po_hist)
-ekpo_df     = spark.table(cv_ekpo)
-mard_df     = spark.table(cv_mard)
-
-
-
-
-
-
-
-
-
-dt1wk = F.date_sub(F.current_date(), F.weekday(F.current_date()))
-dt26wk = F.date_add(
-            F.date_sub(F.date_add(dt1wk, 182), F.weekday(F.date_add(dt1wk, 182))), 6
-         )
-
-
-
-
-
-
-nhalist = (
-    mat_df.alias("a")
-    .join(buy_df.alias("b"), F.col("b.nha") == F.col("a.material"))
-    .join(ob_df.alias("c"), F.col("c.obprtno") == F.col("b.cmpprtno"))
-    .filter(F.upper("c.obpr_state").isin("CONFIRMED","IN REVIEW","IN WORK"))
+final_dtls = (
+    lstdata.alias("a")
+    .join(makt_df.alias("m"), F.col("m.matnr") == F.col("a.nha"), "left")
+    .join(sup_df.alias("s"), F.col("s.nha") == F.col("a.nha"), "left")
+    .join(eco_df.alias("e"), (F.col("e.nha")==F.col("a.dash")) & (F.col("e.obprtno")==F.col("a.cmpprtno")), "left")
+    .join(mara_df.alias("ma"), F.col("ma.matnr")==F.col("a.nha"), "left")
+    .filter(~F.col("ma.mstae").isin("OB","OS","OP"))
     .select(
-        F.col("b.cmpprtno").alias("cmpprtno"),
-        F.col("b.nha").alias("dash"),
-        "a.r_part","a.core_part","a.s_part","a.x_part","a.d_part"
-    ).distinct()
+        "a.cmpprtno","a.nha","a.type","a.dash",
+        F.col("m.maktx").alias("description"),
+        "e.cmpqpa","ma.matkl","ma.mstae",
+        F.col("s.omat_selected_suppliercd").alias("vencode"),
+        F.col("s.omat_selected_supplier").alias("venname"),
+        F.col("s.plifz").alias("lead_time")
+    )
 )
 
 
+final_dtls.write.insertInto(tgt_dtls)
 
 
 
 
 
 
-lstdata = (
-    nhalist.select("cmpprtno","dash",F.col("r_part").alias("nha"),F.lit("R").alias("type")).filter("nha is not null")
-    .unionByName(nhalist.select("cmpprtno","dash",F.col("core_part").alias("nha"),F.lit("C").alias("type")).filter("nha is not null"))
-    .unionByName(nhalist.select("cmpprtno","dash",F.col("s_part").alias("nha"),F.lit("S").alias("type")).filter("nha is not null"))
-    .unionByName(nhalist.select("cmpprtno","dash",F.col("x_part").alias("nha"),F.lit("X").alias("type")).filter("nha is not null"))
-    .unionByName(nhalist.select("cmpprtno","dash",F.col("d_part").alias("nha"),F.lit("D").alias("type")).filter("nha is not null"))
+
+
+
+
+partcons = (
+    spark.table(tgt_dtls).alias("a")
+    .join(dmd_df.alias("b"), F.col("a.nha")==F.col("b.hostpartid"))
+    .filter(F.col("b.ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"))
+    .groupBy("a.nha")
+    .agg(F.sum("b.historyamount").alias("sprs_cons"))
 )
+
