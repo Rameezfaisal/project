@@ -1,30 +1,28 @@
-AnalysisException                         Traceback (most recent call last)
-Cell In[58], line 1
-----> 1 final_dtls.write.insertInto(tgt_dtls)
+final_dtls_insert = (
+    final_dtls
+    .select(
+        F.lit(None).cast("string").alias("ce"),
+        F.col("cmpprtno"),
+        F.col("cmpqpa"),
+        F.lit(None).cast("string").alias("commodity"),
+        F.lit(None).cast("string").alias("critical"),
+        F.lit(None).cast("string").alias("curr_cost"),
+        F.col("dash"),
+        F.col("description"),
+        F.col("lead_time"),
+        F.col("matkl"),
+        F.col("mstae"),
+        F.col("nha"),
+        F.lit(None).cast("string").alias("po_supplier"),
+        F.lit(None).cast("string").alias("po_supplier_code"),
+        F.lit(None).cast("string").alias("sbm"),
+        F.lit(None).cast("string").alias("smg_group"),
+        F.lit(None).cast("string").alias("smg_head"),
+        F.lit(None).cast("string").alias("std_cost"),
+        F.col("type"),
+        F.col("vencode"),
+        F.col("venname")
+    )
+)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/readwriter.py:1513, in DataFrameWriter.insertInto(self, tableName, overwrite)
-   1511 if overwrite is not None:
-   1512     self.mode("overwrite" if overwrite else "append")
--> 1513 self._jwrite.insertInto(tableName)
-
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
-
-AnalysisException: [DELTA_INSERT_COLUMN_ARITY_MISMATCH] Cannot write to 'spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk.rpt_omat_rscxd_dtls', not enough data columns; target table has 21 column(s) but the inserted data has 11 column(s)
+final_dtls_insert.write.insertInto(tgt_dtls)
