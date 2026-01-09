@@ -1,15 +1,14 @@
-final_dmd_cons_insert = (
-    final_dmd_cons
-    .select(
-        F.col("cmpprtno"),
-        F.col("lamqoh"),
-        F.col("last_modified_on"),
-        F.col("nha"),
-        F.col("open_po_qty"),
-        F.col("restricted_all_stock"),
-        F.col("sprs_cons"),
-        F.col("sprs_dmd")
-    )
-)
-
-final_dmd_cons_insert.write.insertInto(tgt_dmd_cons)
+  ;COLUMN_NAME            ;DATA_TYPE_NAME;LENGTH;SCALE;IS_NULLABLE
+1 ;CMPQPA                 ;INTEGER       ;10    ;0    ;TRUE       
+2 ;DESCRIPTION            ;NVARCHAR      ;150   ;?    ;TRUE       
+3 ;LEVEL                  ;INTEGER       ;10    ;0    ;TRUE       
+4 ;MATKL                  ;VARCHAR       ;20    ;?    ;TRUE       
+5 ;MFG_12MNTHS_CONSUMPTION;INTEGER       ;10    ;0    ;TRUE       
+6 ;MFG_5YRS_CONSUMPTION   ;INTEGER       ;10    ;0    ;TRUE       
+7 ;MFG_DMD                ;INTEGER       ;10    ;0    ;TRUE       
+8 ;NHA                    ;VARCHAR       ;20    ;?    ;TRUE       
+9 ;OBPRNO                 ;VARCHAR       ;20    ;?    ;TRUE       
+10;OBPRTNO                ;VARCHAR       ;20    ;?    ;TRUE       
+11;PART_STATUS            ;VARCHAR       ;3     ;?    ;TRUE       
+12;SPRS_5YRS_CONSUMPTION  ;INTEGER       ;10    ;0    ;TRUE       
+13;SPRS_DMD               ;INTEGER       ;10    ;0    ;TRUE       
