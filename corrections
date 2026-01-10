@@ -1,14 +1,88 @@
-  ;COLUMN_NAME            ;DATA_TYPE_NAME;LENGTH;SCALE;IS_NULLABLE
-1 ;CMPQPA                 ;INTEGER       ;10    ;0    ;TRUE       
-2 ;DESCRIPTION            ;NVARCHAR      ;150   ;?    ;TRUE       
-3 ;LEVEL                  ;INTEGER       ;10    ;0    ;TRUE       
-4 ;MATKL                  ;VARCHAR       ;20    ;?    ;TRUE       
-5 ;MFG_12MNTHS_CONSUMPTION;INTEGER       ;10    ;0    ;TRUE       
-6 ;MFG_5YRS_CONSUMPTION   ;INTEGER       ;10    ;0    ;TRUE       
-7 ;MFG_DMD                ;INTEGER       ;10    ;0    ;TRUE       
-8 ;NHA                    ;VARCHAR       ;20    ;?    ;TRUE       
-9 ;OBPRNO                 ;VARCHAR       ;20    ;?    ;TRUE       
-10;OBPRTNO                ;VARCHAR       ;20    ;?    ;TRUE       
-11;PART_STATUS            ;VARCHAR       ;3     ;?    ;TRUE       
-12;SPRS_5YRS_CONSUMPTION  ;INTEGER       ;10    ;0    ;TRUE       
-13;SPRS_DMD               ;INTEGER       ;10    ;0    ;TRUE       
+from pyspark.sql import functions as F
+from pyspark.sql import Window
+
+
+
+
+
+# ===== Source tables from SAP replicated into Fabric Lakehouse =====
+tbl_cv_obprtno_dtls        = "lakehouse.prd_gops_omat_cv_omat_obprtno_dtls"
+tbl_cv_make_nha_dtls      = "lakehouse.prd_gops_omat_cv_omat_obpn_make_nha_dtls"
+tbl_cv_makt               = "lakehouse.prd_global_ecc_cv_makt"
+tbl_make_nha_dmd          = "lakehouse.w_omat_omat_makenha_dmd_consumption_dtls"
+tbl_obpn_make_nha_dtls    = "lakehouse.w_omat_omat_obpn_make_nha_dtls"
+tbl_obpr_info_dtls        = "lakehouse.prd_gops_omat_cv_omat_obpr_info_dtls"
+
+# ===== Target Delta table (Materialized SAP table function) =====
+tbl_target = "lakehouse.w_omat.tf_mknha_part_ecosystem"
+
+# ===== Business control parameters =====
+valid_obpr_states = ["CONFIRMED", "IN WORK", "IN REVIEW"]
+
+
+
+
+
+
+# ---- OBPR base part master ----
+df_obprtno = spark.table(tbl_cv_obprtno_dtls) \
+    .select(
+        F.col("obprno").alias("obprno"),
+        F.col("obprtno").alias("obprtno"),
+        F.upper(F.col("obpr_state")).alias("obpr_state"),
+        F.col("part_status").alias("part_status"),
+        F.col("reltd_ob_pr").cast("string").alias("reltd_ob_pr")
+    )
+
+# ---- OBPN Make–NHA relationships ----
+df_make_nha = spark.table(tbl_cv_make_nha_dtls) \
+    .select(
+        F.col("cmpprtno").alias("cmpprtno"),
+        F.col("cmpqpa").alias("cmpqpa"),
+        F.col("level").alias("level"),
+        F.col("matkl").alias("matkl"),
+        F.col("nha").alias("nha")
+    )
+
+# ---- Material descriptions ----
+df_makt = spark.table(tbl_cv_makt) \
+    .select(
+        F.col("matnr").alias("matnr"),
+        F.col("maktx").alias("description")
+    )
+
+# ---- Demand & consumption measures ----
+df_dmd = spark.table(tbl_make_nha_dmd) \
+    .select(
+        F.col("cmpprtno").alias("cmpprtno"),
+        F.col("nha").alias("nha"),
+        F.col("mfg_12mnths_consumption").alias("mfg_12mnths_consumption"),
+        F.col("mfg_dmd").alias("mfg_dmd"),
+        F.col("sprs_dmd").alias("sprs_dmd"),
+        F.col("mfg_5yrs_consumption").alias("mfg_5yrs_consumption"),
+        F.col("sprs_5yrs_consumption").alias("sprs_5yrs_consumption")
+    )
+
+# ---- OBPN Make–NHA structural details ----
+df_obpn_make = spark.table(tbl_obpn_make_nha_dtls) \
+    .select(
+        F.col("cmpprtno").alias("cmpprtno"),
+        F.col("nha").alias("nha"),
+        F.col("cmpqpa").alias("cmpqpa"),
+        F.col("level").alias("level"),
+        F.col("matkl").alias("matkl")
+    )
+
+# ---- OBPR part descriptions ----
+df_obpr_info = spark.table(tbl_obpr_info_dtls) \
+    .select(
+        F.col("obprno").alias("obprno"),
+        F.col("obprtno").alias("obprtno"),
+        F.col("description").alias("description")
+    )
+
+
+
+
+
+
