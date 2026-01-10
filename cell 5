@@ -1,28 +1,25 @@
-final_dtls_insert = (
-    final_dtls
-    .select(
-        F.lit(None).cast("string").alias("ce"),
-        F.col("cmpprtno"),
-        F.col("cmpqpa"),
-        F.lit(None).cast("string").alias("commodity"),
-        F.lit(None).cast("string").alias("critical"),
-        F.lit(None).cast("string").alias("curr_cost"),
-        F.col("dash"),
-        F.col("description"),
-        F.col("lead_time"),
-        F.col("matkl"),
-        F.col("mstae"),
-        F.col("nha"),
-        F.lit(None).cast("string").alias("po_supplier"),
-        F.lit(None).cast("string").alias("po_supplier_code"),
-        F.lit(None).cast("string").alias("sbm"),
-        F.lit(None).cast("string").alias("smg_group"),
-        F.lit(None).cast("string").alias("smg_head"),
-        F.lit(None).cast("string").alias("std_cost"),
-        F.col("type"),
-        F.col("vencode"),
-        F.col("venname")
-    )
-)
-
-final_dtls_insert.write.insertInto(tgt_dtls)
+_SYS_BIC"."prd.global.ecc/CV_VBUK
+_SYS_BIC"."prd.global.ecc/CVNS_VBAK
+_SYS_BIC"."prd.global.ecc/CV_KNA1
+_SYS_BIC"."prd.global.ecc/CVNS_VBAP
+_SYS_BIC"."prd.gops.GLIS/CV_PART
+_SYS_BIC"."prd.global.ecc/CVNS_VBEP
+_SYS_BIC"."prd.global.ecc/CV_VBUP
+_SYS_BIC"."prd.global.ecc/CV_VBFA
+_SYS_BIC"."prd.global.ecc/CV_VBPA
+_SYS_BIC"."prd.global.ecc/CV_MARA
+_SYS_BIC"."prd.global.ecc/CV_T024X
+_SYS_BIC"."prd.global.ecc/CV_MARD
+_SYS_BIC"."prd.global.ecc/CV_MARC
+_SYS_BIC"."prd.global.ecc/CVNS_LIPS
+_SYS_BIC"."prd.global.ecc/CVNS_LIKP
+_SYS_BIC"."prd.global.ecc/CV_MBEW
+_SYS_BIC"."prd.global.ecc/CVNS_VBKD
+_SYS_BIC"."prd.global.ecc/CV_JEST
+_SYS_BIC"."prd.global.ecc/CV_TJ30T
+_SYS_BIC"."prd.global.ecc/CV_VEKP
+_SYS_BIC"."prd.global.ecc/CV_TCURR
+_SYS_BIC"."prd.global.ecc/CVNS_QMEL
+_SYS_BIC"."prd.csbg/CVNS_CSBG_SPARES_DELIVERIES_NEW
+_SYS_BIC"."prd.global.ecc/CV_AFKO
+_SYS_BIC"."prd.global.ecc/CV_AFVC
