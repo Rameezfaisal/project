@@ -29,3 +29,58 @@ df_dtls_info = (
         .distinct()
 )
 
+
+
+
+
+
+
+
+Cell 6 — Calculate NHA Demand & Consumption (SAP: NHA_INFO)
+Business purpose:
+For every component part and its NHA, calculate:
+Total component quantity
+Highest hierarchy level
+Material group
+12-month and 5-year manufacturing consumption
+Manufacturing and spares demand
+Human-readable NHA description
+
+This df now represents 
+“For each OBPR component and its associated NHA, what is the total quantity, hierarchy position, material type, and historical + forecast demand.
+
+
+
+
+
+
+
+df_nha_info = (
+    df_dmd.alias("b")
+        .join(
+            df_obpn_make.alias("c"),
+            (F.col("b.cmpprtno") == F.col("c.cmpprtno")) &
+            (F.col("b.nha") == F.col("c.nha")),
+            "inner"
+        )
+        .join(
+            df_makt.alias("d"),
+            F.col("b.nha") == F.col("d.matnr"),
+            "left"
+        )
+        .groupBy(
+            F.col("b.cmpprtno").alias("cmpprtno"),
+            F.col("b.nha").alias("nha"),
+            F.col("d.description").alias("description"),
+            F.col("c.matkl").alias("matkl"),
+            F.col("b.mfg_12mnths_consumption").alias("mfg_12mnths_consumption"),
+            F.col("b.mfg_dmd").alias("mfg_dmd"),
+            F.col("b.sprs_dmd").alias("sprs_dmd"),
+            F.col("b.mfg_5yrs_consumption").alias("mfg_5yrs_consumption"),
+            F.col("b.sprs_5yrs_consumption").alias("sprs_5yrs_consumption")
+        )
+        .agg(
+            F.sum(F.col("c.cmpqpa")).alias("cmpqpa"),
+            F.max(F.col("c.level")).alias("level")
+        )
+)
