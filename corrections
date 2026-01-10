@@ -1,24 +1,31 @@
-Cell 4 — Build Active OBPR Base (SAP: BASEDATA)
+Cell 5 — Build Component Structure for Active OBPRs (SAP: DTLS_INFO)
 Business purpose:
-Select only active and valid OBPR parts (Confirmed / In Work / In Review) that are eligible to participate in the Make–NHA ecosystem.
-This corresponds to the first SAP temp table BASEDATA.
+For every active OBPR part, identify its component parts, quantities, levels and material groups that form the Make-NHA hierarchy.
+
+This dataset now represents:
+“For each valid OBPR part, what components exist, at what level, in what quantity, and in what material group.”
 
 
 
 
 
-df_basedata = (
-    df_obprtno
-        .filter(F.col("obpr_state").isin(valid_obpr_states))
+
+
+
+df_dtls_info = (
+    df_make_nha.alias("c")
+        .join(
+            df_obprtno.alias("a"),
+            F.col("c.cmpprtno") == F.col("a.obprtno"),
+            "inner"
+        )
+        .filter(F.col("a.obpr_state").isin(valid_obpr_states))
         .select(
-            F.col("obprno").alias("obprno"),
-            F.col("obprtno").alias("obprtno"),
-            F.col("part_status").alias("part_status"),
-            F.col("reltd_ob_pr").alias("reltd_ob_pr")
+            F.col("c.cmpprtno").alias("cmpprtno"),
+            F.col("c.cmpqpa").alias("cmpqpa"),
+            F.col("c.level").alias("level"),
+            F.col("c.matkl").alias("matkl")
         )
         .distinct()
 )
-
-
-
 
