@@ -1,71 +1,67 @@
-  ;COLUMN_NAME          ;DATA_TYPE_NAME;LENGTH;SCALE;IS_NULLABLE
-1 ;Booking              ;NVARCHAR      ;4     ;?    ;TRUE       
-2 ;CARRIER              ;NVARCHAR      ;10    ;?    ;TRUE       
-3 ;CARRIER_NAME         ;NVARCHAR      ;35    ;?    ;TRUE       
-4 ;DlvStatus            ;NVARCHAR      ;10    ;?    ;TRUE       
-5 ;ETENR                ;NVARCHAR      ;4     ;?    ;FALSE      
-6 ;ExpectedQtyCumulative;DECIMAL       ;13    ;3    ;TRUE       
-7 ;F1_VBELN             ;NVARCHAR      ;10    ;?    ;TRUE       
-8 ;FrontLoad            ;NVARCHAR      ;1     ;?    ;TRUE       
-9 ;LAST_CHANGED         ;TIMESTAMP     ;27    ;7    ;TRUE       
-10;LastPGIDoc           ;NVARCHAR      ;10    ;?    ;TRUE       
-11;MARD_KINSM           ;DECIMAL       ;13    ;3    ;TRUE       
-12;MARD_KLABS           ;DECIMAL       ;13    ;3    ;TRUE       
-13;MARD_LABST           ;DECIMAL       ;13    ;3    ;TRUE       
-14;MARD_LGORT           ;NVARCHAR      ;4     ;?    ;TRUE       
-15;MARD_MATNR           ;NVARCHAR      ;18    ;?    ;TRUE       
-16;MARD_WERKS           ;NVARCHAR      ;4     ;?    ;TRUE       
-17;ORDER_STATUS         ;NVARCHAR      ;6     ;?    ;TRUE       
-18;OpenDlvDoc           ;NVARCHAR      ;10    ;?    ;TRUE       
-19;OpenDlvQty           ;DECIMAL       ;13    ;3    ;TRUE       
-20;PGIDate              ;DATE          ;10    ;?    ;TRUE       
-21;PGIQty               ;DECIMAL       ;15    ;3    ;TRUE       
-22;POReceived           ;NVARCHAR      ;1     ;?    ;TRUE       
-23;POSNR                ;NVARCHAR      ;6     ;?    ;FALSE      
-24;QtyShippedTtLine     ;DECIMAL       ;13    ;3    ;TRUE       
-25;ShipTo               ;NVARCHAR      ;10    ;?    ;TRUE       
-26;ShipToName           ;NVARCHAR      ;35    ;?    ;TRUE       
-27;VBAK_AUART           ;NVARCHAR      ;4     ;?    ;TRUE       
-28;VBAK_AUFNR           ;NVARCHAR      ;12    ;?    ;TRUE       
-29;VBAK_AUTLF           ;NVARCHAR      ;1     ;?    ;TRUE       
-30;VBAK_BSTNK           ;NVARCHAR      ;20    ;?    ;TRUE       
-31;VBAK_ERDAT           ;DATE          ;10    ;?    ;TRUE       
-32;VBAK_ERNAM           ;NVARCHAR      ;12    ;?    ;TRUE       
-33;VBAK_FAKSK           ;NVARCHAR      ;2     ;?    ;TRUE       
-34;VBAK_IHREZ           ;NVARCHAR      ;12    ;?    ;TRUE       
-35;VBAK_KUNNR           ;NVARCHAR      ;10    ;?    ;TRUE       
-36;VBAK_LIFSK           ;NVARCHAR      ;2     ;?    ;TRUE       
-37;VBAK_NETWR           ;DECIMAL       ;15    ;2    ;TRUE       
-38;VBAK_OBJNR           ;NVARCHAR      ;22    ;?    ;TRUE       
-39;VBAK_VKORG           ;NVARCHAR      ;4     ;?    ;TRUE       
-40;VBAK_VSNMR_V         ;NVARCHAR      ;12    ;?    ;TRUE       
-41;VBAK_WAERK           ;NVARCHAR      ;5     ;?    ;TRUE       
-42;VBAP_ABGRU           ;NVARCHAR      ;2     ;?    ;TRUE       
-43;VBAP_AEDAT           ;DATE          ;10    ;?    ;TRUE       
-44;VBAP_ARKTX           ;NVARCHAR      ;40    ;?    ;TRUE       
-45;VBAP_CHARG           ;NVARCHAR      ;10    ;?    ;TRUE       
-46;VBAP_ERDAT           ;DATE          ;10    ;?    ;TRUE       
-47;VBAP_ERNAM           ;NVARCHAR      ;12    ;?    ;TRUE       
-48;VBAP_ERZET           ;TIME          ;8     ;0    ;TRUE       
-49;VBAP_FAKSP           ;NVARCHAR      ;2     ;?    ;TRUE       
-50;VBAP_GRKOR           ;NVARCHAR      ;3     ;?    ;TRUE       
-51;VBAP_KDMAT           ;NVARCHAR      ;35    ;?    ;TRUE       
-52;VBAP_KWMENG          ;DECIMAL       ;15    ;3    ;TRUE       
-53;VBAP_LGORT           ;NVARCHAR      ;4     ;?    ;TRUE       
-54;VBAP_LPRIO           ;NVARCHAR      ;2     ;?    ;TRUE       
-55;VBAP_MATNR           ;NVARCHAR      ;18    ;?    ;TRUE       
-56;VBAP_NETPR           ;DECIMAL       ;11    ;2    ;TRUE       
-57;VBAP_POSEX           ;NVARCHAR      ;6     ;?    ;TRUE       
-58;VBAP_PRODH           ;NVARCHAR      ;18    ;?    ;TRUE       
-59;VBAP_VSTEL           ;NVARCHAR      ;4     ;?    ;TRUE       
-60;VBAP_WERKS           ;NVARCHAR      ;4     ;?    ;TRUE       
-61;VBELN                ;NVARCHAR      ;10    ;?    ;FALSE      
-62;VBEP_BMENG           ;DECIMAL       ;13    ;3    ;TRUE       
-63;VBEP_EDATU           ;DATE          ;10    ;?    ;TRUE       
-64;VBEP_H_EDATU         ;DATE          ;10    ;?    ;TRUE       
-65;VBEP_LIFSP           ;NVARCHAR      ;2     ;?    ;TRUE       
-66;VBEP_MBDAT           ;DATE          ;10    ;?    ;TRUE       
-67;VBUK_LFGSK           ;NVARCHAR      ;1     ;?    ;TRUE       
-68;VBUK_WBSTK           ;NVARCHAR      ;1     ;?    ;TRUE       
-69;VBUP_LFSTA           ;NVARCHAR      ;1     ;?    ;TRUE       
-70;delvd_qty            ;DOUBLE        ;15    ;?    ;TRUE       
+from pyspark.sql import functions as F
+from pyspark.sql import Window
+from pyspark.sql.types import *
+
+
+
+
+
+
+
+
+# ===== Source ECC tables =====
+cv_vbuk      = "prd.global.ecc.cv_vbuk"
+cv_vbak      = "prd.global.ecc.cvns_vbak"
+cv_kna1      = "prd.global.ecc.cv_kna1"
+cv_vbap      = "prd.global.ecc.cvns_vbap"
+cv_part      = "prd.gops.glis.cv_part"
+cv_vbep      = "prd.global.ecc.cvns_vbep"
+cv_vbup      = "prd.global.ecc.cv_vbup"
+cv_vbfa      = "prd.global.ecc.cv_vbfa"
+cv_vbpa      = "prd.global.ecc.cv_vbpa"
+cv_mara      = "prd.global.ecc.cv_mara"
+cv_t024x     = "prd.global.ecc.cv_t024x"
+cv_mard      = "prd.global.ecc.cv_mard"
+cv_marc      = "prd.global.ecc.cv_marc"
+cv_lips      = "prd.global.ecc.cvns_lips"
+cv_likp      = "prd.global.ecc.cvns_likp"
+cv_mbew      = "prd.global.ecc.cv_mbew"
+cv_vbkd      = "prd.global.ecc.cvns_vbkd"
+cv_jest      = "prd.global.ecc.cv_jest"
+cv_tj30t     = "prd.global.ecc.cv_tj30t"
+cv_vekp      = "prd.global.ecc.cv_vekp"
+cv_qmel      = "prd.global.ecc.cvns_qmel"
+cv_csbg      = "prd.csbg.cvns_csbg_spares_deliveries_new"
+
+# ===== Target Delta table =====
+target_table = "lakehouse.sales.zt_m_sales_order_status"
+
+
+
+
+
+
+
+
+vbuk = spark.table(cv_vbuk)
+vbak = spark.table(cv_vbak)
+kna1 = spark.table(cv_kna1)
+vbap = spark.table(cv_vbap)
+vbep = spark.table(cv_vbep)
+vbup = spark.table(cv_vbup)
+vbfa = spark.table(cv_vbfa)
+vbpa = spark.table(cv_vbpa)
+mara = spark.table(cv_mara)
+t024x = spark.table(cv_t024x)
+mard = spark.table(cv_mard)
+marc = spark.table(cv_marc)
+lips = spark.table(cv_lips)
+likp = spark.table(cv_likp)
+mbew = spark.table(cv_mbew)
+vbkd = spark.table(cv_vbkd)
+jest = spark.table(cv_jest)
+tj30t = spark.table(cv_tj30t)
+vekp = spark.table(cv_vekp)
+qmel = spark.table(cv_qmel)
+csbg = spark.table(cv_csbg)
+part = spark.table(cv_part)
