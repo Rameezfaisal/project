@@ -1,64 +1,71 @@
-# ---- Build FINAL_DATA_SET (SAP equivalent) ----
-df_final = (
-    df_basedata.alias("a")
-        .join(
-            df_obpr_info.alias("b"),
-            (F.col("a.obprno") == F.col("b.obprno")) &
-            (F.col("a.obprtno") == F.col("b.obprtno")),
-            "inner"
-        )
-        .join(
-            df_dtls_info.alias("c"),
-            F.col("a.obprtno") == F.col("c.cmpprtno"),
-            "inner"
-        )
-        .join(
-            df_nha_info.alias("e"),
-            F.col("a.obprtno") == F.col("e.cmpprtno"),
-            "left"
-        )
-        .select(
-            F.col("a.obprno").alias("obprno"),
-            F.col("a.obprtno").alias("obprtno"),
-            F.coalesce(F.col("e.nha"), F.col("a.obprtno")).alias("nha"),
-            F.coalesce(F.col("e.description"), F.col("b.description")).alias("description"),
-            F.coalesce(F.col("e.cmpqpa"), F.col("c.cmpqpa")).alias("cmpqpa"),
-            F.coalesce(F.col("e.level"), F.col("c.level")).alias("level"),
-            F.coalesce(F.col("e.matkl"), F.col("c.matkl")).alias("matkl"),
-            F.col("a.part_status").alias("part_status"),
-            F.when(F.col("e.mfg_5yrs_consumption") <= 0, F.lit(0))
-             .otherwise(F.col("e.mfg_5yrs_consumption")).alias("mfg_5yrs_consumption"),
-            F.col("e.sprs_5yrs_consumption").alias("sprs_5yrs_consumption"),
-            F.when(F.col("e.mfg_12mnths_consumption") <= 0, F.lit(0))
-             .otherwise(F.col("e.mfg_12mnths_consumption")).alias("mfg_12mnths_consumption"),
-            F.col("e.mfg_dmd").alias("mfg_dmd"),
-            F.col("e.sprs_dmd").alias("sprs_dmd")
-        )
-        .distinct()
-)
-
-# ---- Enforce SAP schema (types + column order) ----
-df_target = df_final.select(
-    F.col("cmpqpa").cast("int").alias("cmpqpa"),
-    F.col("description").cast("string").alias("description"),
-    F.col("level").cast("int").alias("level"),
-    F.col("matkl").cast("string").alias("matkl"),
-    F.col("mfg_12mnths_consumption").cast("int").alias("mfg_12mnths_consumption"),
-    F.col("mfg_5yrs_consumption").cast("int").alias("mfg_5yrs_consumption"),
-    F.col("mfg_dmd").cast("int").alias("mfg_dmd"),
-    F.col("nha").cast("string").alias("nha"),
-    F.col("obprno").cast("string").alias("obprno"),
-    F.col("obprtno").cast("string").alias("obprtno"),
-    F.col("part_status").cast("string").alias("part_status"),
-    F.col("sprs_5yrs_consumption").cast("int").alias("sprs_5yrs_consumption"),
-    F.col("sprs_dmd").cast("int").alias("sprs_dmd")
-)
-
-# ---- Atomically create / replace the Delta table ----
-(
-    df_target.write
-        .format("delta")
-        .mode("overwrite")
-        .option("overwriteSchema", "true")
-        .saveAsTable(tbl_target)
-)
+  ;COLUMN_NAME          ;DATA_TYPE_NAME;LENGTH;SCALE;IS_NULLABLE
+1 ;Booking              ;NVARCHAR      ;4     ;?    ;TRUE       
+2 ;CARRIER              ;NVARCHAR      ;10    ;?    ;TRUE       
+3 ;CARRIER_NAME         ;NVARCHAR      ;35    ;?    ;TRUE       
+4 ;DlvStatus            ;NVARCHAR      ;10    ;?    ;TRUE       
+5 ;ETENR                ;NVARCHAR      ;4     ;?    ;FALSE      
+6 ;ExpectedQtyCumulative;DECIMAL       ;13    ;3    ;TRUE       
+7 ;F1_VBELN             ;NVARCHAR      ;10    ;?    ;TRUE       
+8 ;FrontLoad            ;NVARCHAR      ;1     ;?    ;TRUE       
+9 ;LAST_CHANGED         ;TIMESTAMP     ;27    ;7    ;TRUE       
+10;LastPGIDoc           ;NVARCHAR      ;10    ;?    ;TRUE       
+11;MARD_KINSM           ;DECIMAL       ;13    ;3    ;TRUE       
+12;MARD_KLABS           ;DECIMAL       ;13    ;3    ;TRUE       
+13;MARD_LABST           ;DECIMAL       ;13    ;3    ;TRUE       
+14;MARD_LGORT           ;NVARCHAR      ;4     ;?    ;TRUE       
+15;MARD_MATNR           ;NVARCHAR      ;18    ;?    ;TRUE       
+16;MARD_WERKS           ;NVARCHAR      ;4     ;?    ;TRUE       
+17;ORDER_STATUS         ;NVARCHAR      ;6     ;?    ;TRUE       
+18;OpenDlvDoc           ;NVARCHAR      ;10    ;?    ;TRUE       
+19;OpenDlvQty           ;DECIMAL       ;13    ;3    ;TRUE       
+20;PGIDate              ;DATE          ;10    ;?    ;TRUE       
+21;PGIQty               ;DECIMAL       ;15    ;3    ;TRUE       
+22;POReceived           ;NVARCHAR      ;1     ;?    ;TRUE       
+23;POSNR                ;NVARCHAR      ;6     ;?    ;FALSE      
+24;QtyShippedTtLine     ;DECIMAL       ;13    ;3    ;TRUE       
+25;ShipTo               ;NVARCHAR      ;10    ;?    ;TRUE       
+26;ShipToName           ;NVARCHAR      ;35    ;?    ;TRUE       
+27;VBAK_AUART           ;NVARCHAR      ;4     ;?    ;TRUE       
+28;VBAK_AUFNR           ;NVARCHAR      ;12    ;?    ;TRUE       
+29;VBAK_AUTLF           ;NVARCHAR      ;1     ;?    ;TRUE       
+30;VBAK_BSTNK           ;NVARCHAR      ;20    ;?    ;TRUE       
+31;VBAK_ERDAT           ;DATE          ;10    ;?    ;TRUE       
+32;VBAK_ERNAM           ;NVARCHAR      ;12    ;?    ;TRUE       
+33;VBAK_FAKSK           ;NVARCHAR      ;2     ;?    ;TRUE       
+34;VBAK_IHREZ           ;NVARCHAR      ;12    ;?    ;TRUE       
+35;VBAK_KUNNR           ;NVARCHAR      ;10    ;?    ;TRUE       
+36;VBAK_LIFSK           ;NVARCHAR      ;2     ;?    ;TRUE       
+37;VBAK_NETWR           ;DECIMAL       ;15    ;2    ;TRUE       
+38;VBAK_OBJNR           ;NVARCHAR      ;22    ;?    ;TRUE       
+39;VBAK_VKORG           ;NVARCHAR      ;4     ;?    ;TRUE       
+40;VBAK_VSNMR_V         ;NVARCHAR      ;12    ;?    ;TRUE       
+41;VBAK_WAERK           ;NVARCHAR      ;5     ;?    ;TRUE       
+42;VBAP_ABGRU           ;NVARCHAR      ;2     ;?    ;TRUE       
+43;VBAP_AEDAT           ;DATE          ;10    ;?    ;TRUE       
+44;VBAP_ARKTX           ;NVARCHAR      ;40    ;?    ;TRUE       
+45;VBAP_CHARG           ;NVARCHAR      ;10    ;?    ;TRUE       
+46;VBAP_ERDAT           ;DATE          ;10    ;?    ;TRUE       
+47;VBAP_ERNAM           ;NVARCHAR      ;12    ;?    ;TRUE       
+48;VBAP_ERZET           ;TIME          ;8     ;0    ;TRUE       
+49;VBAP_FAKSP           ;NVARCHAR      ;2     ;?    ;TRUE       
+50;VBAP_GRKOR           ;NVARCHAR      ;3     ;?    ;TRUE       
+51;VBAP_KDMAT           ;NVARCHAR      ;35    ;?    ;TRUE       
+52;VBAP_KWMENG          ;DECIMAL       ;15    ;3    ;TRUE       
+53;VBAP_LGORT           ;NVARCHAR      ;4     ;?    ;TRUE       
+54;VBAP_LPRIO           ;NVARCHAR      ;2     ;?    ;TRUE       
+55;VBAP_MATNR           ;NVARCHAR      ;18    ;?    ;TRUE       
+56;VBAP_NETPR           ;DECIMAL       ;11    ;2    ;TRUE       
+57;VBAP_POSEX           ;NVARCHAR      ;6     ;?    ;TRUE       
+58;VBAP_PRODH           ;NVARCHAR      ;18    ;?    ;TRUE       
+59;VBAP_VSTEL           ;NVARCHAR      ;4     ;?    ;TRUE       
+60;VBAP_WERKS           ;NVARCHAR      ;4     ;?    ;TRUE       
+61;VBELN                ;NVARCHAR      ;10    ;?    ;FALSE      
+62;VBEP_BMENG           ;DECIMAL       ;13    ;3    ;TRUE       
+63;VBEP_EDATU           ;DATE          ;10    ;?    ;TRUE       
+64;VBEP_H_EDATU         ;DATE          ;10    ;?    ;TRUE       
+65;VBEP_LIFSP           ;NVARCHAR      ;2     ;?    ;TRUE       
+66;VBEP_MBDAT           ;DATE          ;10    ;?    ;TRUE       
+67;VBUK_LFGSK           ;NVARCHAR      ;1     ;?    ;TRUE       
+68;VBUK_WBSTK           ;NVARCHAR      ;1     ;?    ;TRUE       
+69;VBUP_LFSTA           ;NVARCHAR      ;1     ;?    ;TRUE       
+70;delvd_qty            ;DOUBLE        ;15    ;?    ;TRUE       
