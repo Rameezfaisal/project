@@ -1,67 +1,60 @@
-from pyspark.sql import functions as F
-from pyspark.sql import Window
-from pyspark.sql.types import *
-
-
-
-
-
-
-
-
 # ===== Source ECC tables =====
-cv_vbuk      = "prd.global.ecc.cv_vbuk"
-cv_vbak      = "prd.global.ecc.cvns_vbak"
-cv_kna1      = "prd.global.ecc.cv_kna1"
-cv_vbap      = "prd.global.ecc.cvns_vbap"
-cv_part      = "prd.gops.glis.cv_part"
-cv_vbep      = "prd.global.ecc.cvns_vbep"
-cv_vbup      = "prd.global.ecc.cv_vbup"
-cv_vbfa      = "prd.global.ecc.cv_vbfa"
-cv_vbpa      = "prd.global.ecc.cv_vbpa"
-cv_mara      = "prd.global.ecc.cv_mara"
-cv_t024x     = "prd.global.ecc.cv_t024x"
-cv_mard      = "prd.global.ecc.cv_mard"
-cv_marc      = "prd.global.ecc.cv_marc"
-cv_lips      = "prd.global.ecc.cvns_lips"
-cv_likp      = "prd.global.ecc.cvns_likp"
-cv_mbew      = "prd.global.ecc.cv_mbew"
-cv_vbkd      = "prd.global.ecc.cvns_vbkd"
-cv_jest      = "prd.global.ecc.cv_jest"
-cv_tj30t     = "prd.global.ecc.cv_tj30t"
-cv_vekp      = "prd.global.ecc.cv_vekp"
-cv_qmel      = "prd.global.ecc.cvns_qmel"
-cv_csbg      = "prd.csbg.cvns_csbg_spares_deliveries_new"
+cv_vbuk   = "prd.global.ecc.cv_vbuk"
+cv_vbak   = "prd.global.ecc.cvns_vbak"
+cv_kna1   = "prd.global.ecc.cv_kna1"
+cv_vbap   = "prd.global.ecc.cvns_vbap"
+cv_part   = "prd.gops.glis.cv_part"
+cv_vbep   = "prd.global.ecc.cvns_vbep"
+cv_vbup   = "prd.global.ecc.cv_vbup"
+cv_vbfa   = "prd.global.ecc.cv_vbfa"
+cv_vbpa   = "prd.global.ecc.cv_vbpa"
+cv_mara   = "prd.global.ecc.cv_mara"
+cv_t024x  = "prd.global.ecc.cv_t024x"
+cv_mard   = "prd.global.ecc.cv_mard"
+cv_marc   = "prd.global.ecc.cv_marc"
+cv_lips   = "prd.global.ecc.cvns_lips"
+cv_likp   = "prd.global.ecc.cvns_likp"
+cv_mbew   = "prd.global.ecc.cv_mbew"
+cv_vbkd   = "prd.global.ecc.cvns_vbkd"
+cv_jest   = "prd.global.ecc.cv_jest"
+cv_tj30t  = "prd.global.ecc.cv_tj30t"
+cv_vekp   = "prd.global.ecc.cv_vekp"
+cv_tcurr  = "prd.global.ecc.cv_tcurr"
+cv_qmel   = "prd.global.ecc.cvns_qmel"
+cv_csbg   = "prd.csbg.cvns_csbg_spares_deliveries_new"
+cv_afko   = "prd.global.ecc.cv_afko"
+cv_afvc   = "prd.global.ecc.cv_afvc"
 
 # ===== Target Delta table =====
-target_table = "lakehouse.sales.zt_m_sales_order_status"
+target_table = "cdm.sales_order"
 
 
 
 
 
 
-
-
-vbuk = spark.table(cv_vbuk)
-vbak = spark.table(cv_vbak)
-kna1 = spark.table(cv_kna1)
-vbap = spark.table(cv_vbap)
-vbep = spark.table(cv_vbep)
-vbup = spark.table(cv_vbup)
-vbfa = spark.table(cv_vbfa)
-vbpa = spark.table(cv_vbpa)
-mara = spark.table(cv_mara)
+vbuk  = spark.table(cv_vbuk)
+vbak  = spark.table(cv_vbak)
+kna1  = spark.table(cv_kna1)
+vbap  = spark.table(cv_vbap)
+part  = spark.table(cv_part)
+vbep  = spark.table(cv_vbep)
+vbup  = spark.table(cv_vbup)
+vbfa  = spark.table(cv_vbfa)
+vbpa  = spark.table(cv_vbpa)
+mara  = spark.table(cv_mara)
 t024x = spark.table(cv_t024x)
-mard = spark.table(cv_mard)
-marc = spark.table(cv_marc)
-lips = spark.table(cv_lips)
-likp = spark.table(cv_likp)
-mbew = spark.table(cv_mbew)
-vbkd = spark.table(cv_vbkd)
-jest = spark.table(cv_jest)
+mard  = spark.table(cv_mard)
+marc  = spark.table(cv_marc)
+lips  = spark.table(cv_lips)
+likp  = spark.table(cv_likp)
+mbew  = spark.table(cv_mbew)
+vbkd  = spark.table(cv_vbkd)
+jest  = spark.table(cv_jest)
 tj30t = spark.table(cv_tj30t)
-vekp = spark.table(cv_vekp)
-qmel = spark.table(cv_qmel)
-csbg = spark.table(cv_csbg)
-part = spark.table(cv_part)
+vekp  = spark.table(cv_vekp)
+tcurr = spark.table(cv_tcurr)
+qmel  = spark.table(cv_qmel)
+csbg  = spark.table(cv_csbg)
+afko  = spark.table(cv_afko)
+afvc  = spark.table(cv_afvc)
