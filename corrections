@@ -1,49 +1,12 @@
-Cell 8: Assemble the full SAP business dataset
+Apply pricing, FX, region, shipment & High-Dollar logic**
 Business meaning:
-This reproduces the giant SELECT inside CV_SQL_SO_OPTIMIZED —
-joining:
-PRST (cdm.sales_order)
-Costs
-Incoterms
-Tracking
-Lab office
-Activity type
-Service notification
-
-
-
-
-
-
-
-
-Cell 9: Apply SAP pricing, FX, region & flags
-Business meaning:
-This reproduces the last 60% of CV_SQL_SO_OPTIMIZED —
-all derived business columns:
-USD prices
-Extended values
-FX
-Region
-Tool type
-Shipment due
-Gross SO value
-High-dollar flag
-
-
-
-
-
-
-
-
-
-Cell 9
-Build SAP order status flags (JEST → FrontLoad, POReceived, Booking)**
-Business meaning
-This reproduces the SAP block:
-CV_JEST + CV_TJ30T → FrontLoad, POReceived, Booking
-These drive shipment flags, backlog logic and reporting.
+This reproduces the SAP xyzz outer select:
+currency conversions
+extended prices
+shipment due flag
+regions
+tool type
+high-dollar flag
 
 
 
@@ -52,42 +15,105 @@ These drive shipment flags, backlog logic and reporting.
 
 from pyspark.sql import functions as F
 
-# --- Filter JEST to only relevant active status rows ---
-jest_filt = (
-    jest
-    .filter(
-        (F.col("inact") != "X") &
-        (F.col("stat").isin("E0001", "E0004", "E0005", "E0008", "E0009"))
+so_calc = (
+    so
+    # ---- Standard cost ----
+    .withColumn(
+        "stdcost",
+        F.coalesce(F.col("stprs_2000"), F.col("stprs_3120"), F.lit(0))
+    )
+
+    # ---- Unit price local currency ----
+    .withColumn(
+        "unitpricelocalcurr",
+        F.when(F.col("vbak_waerk").isin("JPY","TWD","KRW"), F.col("vbap_netpr") * 100)
+         .otherwise(F.col("vbap_netpr"))
+    )
+
+    # ---- Extended local currency ----
+    .withColumn(
+        "extpricelocalcurr",
+        F.col("unitpricelocalcurr") * F.col("vbep_bmeng")
+    )
+
+    # ---- FX (KURSK) ----
+    .withColumn(
+        "fx",
+        F.when((F.col("kursk").isNull()) | (F.col("kursk") == 0) | (F.col("vbak_waerk") == "USD"), 1)
+         .otherwise(F.col("kursk"))
+    )
+
+    # ---- USD Unit price ----
+    .withColumn(
+        "unitpriceusd",
+        F.when(F.col("vbak_waerk").isin("JPY","TWD"), F.col("vbap_netpr") * 100)
+         .otherwise(F.col("vbap_netpr")) * F.col("fx")
+    )
+
+    # ---- USD Extended price ----
+    .withColumn(
+        "extpriceusd",
+        F.col("unitpriceusd") * F.col("vbep_bmeng")
+    )
+
+    # ---- Extended cost ----
+    .withColumn(
+        "extcost",
+        F.col("stdcost") * F.col("vbep_bmeng")
+    )
+
+    # ---- Exchange rate ----
+    .withColumn(
+        "exchangerate",
+        F.when(F.col("vbak_waerk") == "KRW", 1 / F.col("kursk") * 100)
+         .otherwise(1 / F.col("kursk"))
+    )
+
+    # ---- Pricing date ----
+    .withColumn("pricingdate", F.col("prsdt").cast("string"))
+
+    # ---- Region ----
+    .withColumn(
+        "region",
+        F.when(F.col("vbak_vkorg") == "9000","NA")
+         .when(F.col("vbak_vkorg").between("2000","2900"),"EU")
+         .when(F.col("vbak_vkorg").between("3000","3001"),"JP")
+         .when(F.col("vbak_vkorg")=="3100","TW")
+         .when(F.col("vbak_vkorg")=="3200","KR")
+         .when(F.col("vbak_vkorg").isin("3300","3600"),"SEA")
+         .when(F.col("vbak_vkorg").isin("3400","3410","1000"),"CN")
+         .otherwise("NEW")
+    )
+
+    # ---- Tool type ----
+    .withColumn(
+        "tooltype",
+        F.when(F.col("labor")=="023","SPIN")
+         .when(F.col("labor")=="024","DEP")
+         .otherwise("ETCH+")
+    )
+
+    # ---- Shipment due ----
+    .withColumn(
+        "shipmentdueflag",
+        F.when((F.current_date() >= F.col("vbep_edatu")) & (F.col("poreceived")=="X"),"True")
+         .otherwise("False")
+    )
+
+    # ---- Gross SO Price USD ----
+    .withColumn(
+        "grosssopriceusd",
+        F.col("vbak_netwr") *
+        F.when(F.col("vbak_waerk").isin("JPY","TWD"),
+               F.when(F.col("kursk")==0,1).otherwise(F.col("kursk")) * 100)
+         .otherwise(F.when(F.col("kursk")==0,1).otherwise(F.col("kursk")))
+    )
+
+    # ---- High dollar flag ----
+    .withColumn(
+        "highdollarflag",
+        F.when(F.col("grosssopriceusd") > 50000,"True").otherwise("False")
     )
 )
 
-# --- Join to TJ30T to get status text ---
-jest_join = (
-    jest_filt.alias("a")
-    .join(
-        tj30t.alias("b"),
-        (F.col("a.stat") == F.col("b.estat")) &
-        (F.col("b.stsma") == "Z0000003") &
-        (F.col("b.spras") == "E"),
-        "left"
-    )
-)
-
-# --- Aggregate per SAP OBJNR ---
-jest_agg = (
-    jest_join
-    .groupBy("a.objnr")
-    .agg(
-        F.max(F.when(F.col("a.stat") == "E0008", F.lit("X"))).alias("frontload"),
-        F.max(F.when(F.col("a.stat") == "E0009", F.lit("X"))).alias("poreceived"),
-        F.max(
-            F.when(F.col("a.stat").isin("E0001","E0004","E0005"), F.col("b.txt04"))
-        ).alias("booking")
-    )
-)
-
-jest_agg.createOrReplaceTempView("jest_status")
-
-
-
-
+so_calc.createOrReplaceTempView("so_calc")
