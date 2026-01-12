@@ -1,44 +1,27 @@
-vbkd_base = (
-    vbkd
-    .select(
-        vbkd["vbeln"].alias("vbeln_cd"),
-        vbkd["posnr"].alias("posnr_cd"),
-        vbkd["ihrez"],
-        vbkd["inco1"],
-        vbkd["zterm"],
-        vbkd["kursk"],
-        vbkd["prsdt"]
-    )
+so = (
+    prst_run
+    # ---- Standard cost ----
+    .join(mbew_2000, prst_run["vbap_matnr"] == mbew_2000["matnr_cd"], "left")
+    .join(mbew_3120, prst_run["vbap_matnr"] == mbew_3120["matnr_cd"], "left")
+
+    # ---- Tracking ----
+    .join(vekp_track, prst_run["f1_vbeln"] == vekp_track["vpobjkey"], "left")
+
+    # ---- Incoterms ----
+    .join(hd_incoterm, prst_run["vbeln"] == hd_incoterm["vbeln_cd"], "left")
+    .join(ln_incoterm,
+          (prst_run["vbeln"] == ln_incoterm["vbeln_cd"]) &
+          (prst_run["posnr"] == ln_incoterm["posnr_cd"]),
+          "left")
+
+    # ---- Lab office ----
+    .join(lab, prst_run["vbap_matnr"] == lab["labor"], "left")
+
+    # ---- Activity ----
+    .join(afvc_act, prst_run["vbak_aufnr"] == afvc_act["aufpl"], "left")
+
+    # ---- Service Notification ----
+    .join(qmel_notif, prst_run["vbeln"] == qmel_notif["vbeln"], "left")
 )
 
-vbkd_pruned = (
-    vbkd_base
-    .join(
-        prst_run.select("vbeln","posnr").distinct(),
-        (vbkd_base["vbeln_cd"] == prst_run["vbeln"]) &
-        (vbkd_base["posnr_cd"] == prst_run["posnr"]),
-        "inner"
-    )
-    .filter(F.lit(vbkd_flag) == "Y")
-)
-
-
-
-
-
-
-
-
-
-
-
-
-# ---- Header Incoterm ----
-hd_incoterm = (
-    vbkd_pruned
-    .filter(F.col("posnr_cd") == "000000")
-    .select("vbeln_cd","inco1","kursk","prsdt")
-)
-
-# ---- Line Incoterm ----
-ln_incoterm = vbkd_pruned.select("vbeln_cd","posnr_cd","ihrez","inco1","zterm")
+so.createOrReplaceTempView("so")
