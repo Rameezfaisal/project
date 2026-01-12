@@ -1,33 +1,33 @@
-from pyspark.sql import functions as F
+---------------------------------------------------------------------------
+AttributeError                            Traceback (most recent call last)
+Cell In[133], line 10
+      1 # Rebuild JEST status
+      2 jest_status = (
+      3     jest
+      4     .filter(
+      5         (F.col("inact") != "X") &
+      6         (F.col("stat").isin("E0001", "E0004", "E0005", "E0008", "E0009"))
+      7     )
+      8     .alias("a")
+      9     .join(
+---> 10         cv_tj30t.alias("b"),
+     11         (F.col("a.stat") == F.col("b.estat")) &
+     12         (F.col("b.stsma") == "Z0000003") &
+     13         (F.col("b.spras") == "E"),
+     14         "left"
+     15     )
+     16     .groupBy("a.objnr")
+     17     .agg(
+     18         F.max(F.when(F.col("a.stat") == "E0008", F.lit("X"))).alias("frontload"),
+     19         F.max(F.when(F.col("a.stat") == "E0009", F.lit("X"))).alias("poreceived"),
+     20         F.max(F.when(F.col("a.stat").isin("E0001","E0004","E0005"), F.col("b.txt04"))).alias("booking")
+     21     )
+     22 )
+     24 # Join into SO (SAP: a.OBJNR = j.OBJNR)
+     25 so = (
+     26     so
+     27     .join(jest_status, so["vbak_objnr"] == jest_status["objnr"], "left")
+     28     .drop(jest_status["objnr"])
+     29 )
 
-# Rebuild JEST status
-jest_status = (
-    cv_jest
-    .filter(
-        (F.col("inact") != "X") &
-        (F.col("stat").isin("E0001", "E0004", "E0005", "E0008", "E0009"))
-    )
-    .alias("a")
-    .join(
-        cv_tj30t.alias("b"),
-        (F.col("a.stat") == F.col("b.estat")) &
-        (F.col("b.stsma") == "Z0000003") &
-        (F.col("b.spras") == "E"),
-        "left"
-    )
-    .groupBy("a.objnr")
-    .agg(
-        F.max(F.when(F.col("a.stat") == "E0008", F.lit("X"))).alias("frontload"),
-        F.max(F.when(F.col("a.stat") == "E0009", F.lit("X"))).alias("poreceived"),
-        F.max(F.when(F.col("a.stat").isin("E0001","E0004","E0005"), F.col("b.txt04"))).alias("booking")
-    )
-)
-
-# Join into SO (SAP: a.OBJNR = j.OBJNR)
-so = (
-    so
-    .join(jest_status, so["vbak_objnr"] == jest_status["objnr"], "left")
-    .drop(jest_status["objnr"])
-)
-
-so.createOrReplaceTempView("so")
+AttributeError: 'str' object has no attribute 'alias'
