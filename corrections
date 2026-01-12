@@ -1,46 +1,70 @@
-prst = (
-    core_full
-    # schedule cumulative
-    .join(
-        vbep_cum,
-        (core_full["vbeln_cd"] == vbep_cum["vbeln_cd"]) &
-        (core_full["posnr_cd"] == vbep_cum["posnr_cd"]) &
-        (core_full["etenr_cd"] == vbep_cum["etenr_cd"]),
-        "left"
-    )
-    # delivered qty
-    .join(
-        delivered,
-        (core_full["vbeln_cd"] == delivered["vbelv_cd"]) &
-        (core_full["posnr_cd"] == delivered["posnv_cd"]),
-        "left"
-    )
-    # last PGI doc
-    .join(
-        pgi,
-        (core_full["vbeln_cd"] == pgi["vbelv_cd"]) &
-        (core_full["posnr_cd"] == pgi["posnv_cd"]),
-        "left"
-    )
-    # delivery status
-    .join(
-        delivery,
-        (core_full["vbeln_cd"] == delivery["vgbel_cd"]) &
-        (core_full["posnr_cd"] == delivery["vgpos_cd"]),
-        "left"
-    )
+# -------------------------
+# VBEP Header schedule line (ETENR = '0001')
+# -------------------------
+vbep_header = (
+    vbep
+    .filter(F.col("etenr") == "0001")
     .select(
-        core_full["*"],
-        vbep_cum["expectedqtycumulative_cd"],
-        delivered["delvd_qty_cd"],
-        delivered["f1_vbeln_cd"],
-        pgi["lastpgidoc_cd"],
-        delivery["opendlvdoc_cd"],
-        delivery["opendlvqty_cd"],
-        delivery["qtyshippedttline_cd"],
-        delivery["pgidate_cd"],
-        delivery["dlvstatus_cd"]
+        F.col("vbeln").alias("vbeln_cd"),
+        F.col("posnr").alias("posnr_cd"),
+        F.col("edatu").alias("vbep_h_edatu")
     )
 )
 
-prst.createOrReplaceTempView("prst")
+# -------------------------
+# Enrich PRST → CALC
+# -------------------------
+calc = (
+    prst
+    .join(
+        vbep_header,
+        (prst["vbeln_cd"] == vbep_header["vbeln_cd"]) &
+        (prst["posnr_cd"] == vbep_header["posnr_cd"]),
+        "left"
+    )
+    .drop(vbep_header["vbeln_cd"])
+    .drop(vbep_header["posnr_cd"])
+)
+
+# -------------------------
+# PGI & Open Qty logic (SAP CV_SQL_SO)
+# -------------------------
+calc = (
+    calc
+    .withColumn(
+        "pgiqty_cd",
+        F.when(
+            F.coalesce(F.col("delvd_qty_cd"), F.lit(0)) >= F.coalesce(F.col("expectedqtycumulative_cd"), F.lit(0)),
+            F.coalesce(F.col("vbep_bmeng"), F.lit(0))
+        ).otherwise(
+            F.greatest(
+                F.coalesce(F.col("vbep_bmeng"), F.lit(0)) -
+                (F.coalesce(F.col("expectedqtycumulative_cd"), F.lit(0)) -
+                 F.coalesce(F.col("delvd_qty_cd"), F.lit(0))),
+                F.lit(0)
+            )
+        )
+    )
+    .withColumn(
+        "openqty_cd",
+        F.when(
+            (F.coalesce(F.col("vbep_bmeng"), F.lit(0)) > 0) &
+            (F.coalesce(F.col("delvd_qty_cd"), F.lit(0)) < F.coalesce(F.col("vbep_bmeng"), F.lit(0))),
+            F.when(
+                F.coalesce(F.col("expectedqtycumulative_cd"), F.lit(0)) <= F.coalesce(F.col("delvd_qty_cd"), F.lit(0)),
+                F.lit(0)
+            ).otherwise(
+                F.least(
+                    F.col("vbep_bmeng"),
+                    F.col("expectedqtycumulative_cd") - F.coalesce(F.col("delvd_qty_cd"), F.lit(0))
+                )
+            )
+        ).otherwise(F.lit(0))
+    )
+    .withColumn(
+        "order_status_cd",
+        F.when(F.col("openqty_cd") > 0, F.lit("Open")).otherwise(F.lit("Closed"))
+    )
+)
+
+calc.createOrReplaceTempView("calc")
