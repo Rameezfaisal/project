@@ -1,25 +1,12 @@
-_SYS_BIC"."prd.global.ecc/CV_VBUK
-_SYS_BIC"."prd.global.ecc/CVNS_VBAK
-_SYS_BIC"."prd.global.ecc/CV_KNA1
-_SYS_BIC"."prd.global.ecc/CVNS_VBAP
-_SYS_BIC"."prd.gops.GLIS/CV_PART
-_SYS_BIC"."prd.global.ecc/CVNS_VBEP
-_SYS_BIC"."prd.global.ecc/CV_VBUP
-_SYS_BIC"."prd.global.ecc/CV_VBFA
-_SYS_BIC"."prd.global.ecc/CV_VBPA
-_SYS_BIC"."prd.global.ecc/CV_MARA
-_SYS_BIC"."prd.global.ecc/CV_T024X
-_SYS_BIC"."prd.global.ecc/CV_MARD
-_SYS_BIC"."prd.global.ecc/CV_MARC
-_SYS_BIC"."prd.global.ecc/CVNS_LIPS
-_SYS_BIC"."prd.global.ecc/CVNS_LIKP
-_SYS_BIC"."prd.global.ecc/CV_MBEW
-_SYS_BIC"."prd.global.ecc/CVNS_VBKD
-_SYS_BIC"."prd.global.ecc/CV_JEST
-_SYS_BIC"."prd.global.ecc/CV_TJ30T
-_SYS_BIC"."prd.global.ecc/CV_VEKP
-_SYS_BIC"."prd.global.ecc/CV_TCURR
-_SYS_BIC"."prd.global.ecc/CVNS_QMEL
-_SYS_BIC"."prd.csbg/CVNS_CSBG_SPARES_DELIVERIES_NEW
-_SYS_BIC"."prd.global.ecc/CV_AFKO
-_SYS_BIC"."prd.global.ecc/CV_AFVC
+
+
+cell - 2
+
+cv_jest      = "wsf_silk_glb_da_dev.lhs_glb.ecc.jest"
+cv_tj30t     = "wsf_silk_glb_da_dev.lhs_glb.ecc.tj30t"
+
+cell -3
+
+
+jest  = spark.table(cv_jest)
+tj30t = spark.table(cv_tj30t)
