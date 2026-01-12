@@ -1,12 +1,112 @@
-date_cond = (
-    ((F.lit(ip_date_flag) == 'L') & prst_filt["vbap_erdat"].between(ip_erdat_from, ip_erdat_to)) |
-    ((F.lit(ip_date_flag) == 'P') & prst_filt["pgidate"].between(ip_erdat_from, ip_erdat_to)) |
-    ((F.lit(ip_date_flag) == 'C') & prst_filt["vbak_erdat"].between(ip_erdat_from, ip_erdat_to)) |
-    ((F.lit(ip_date_flag) == 'F') & prst_filt["vbep_mbdat"].between(ip_erdat_from, ip_erdat_to)) |
-    ((F.lit(ip_date_flag) == 'A') & prst_filt["vbap_aedat"].between(ip_erdat_from, ip_erdat_to)) |
-    (F.lit(ip_date_flag) == 'R') |   # SAP lets R pass through PRST
-    (F.lit(ip_date_flag) == 'N')
+Cell 6: Data-pruning of ECC tables
+Business meaning:
+SAP does not join ECC tables on all rows —
+it first limits them to only the sales orders & materials that appear in PRST.
+This is the biggest performance win in the optimized design.
+We now reproduce that.
+
+
+
+
+Build PRST key sets
+
+
+prst_keys = prst_run.select("vbeln","posnr","vbap_matnr","vbap_werks").distinct()
+
+prst_keys.createOrReplaceTempView("prst_keys")
+
+
+
+
+MARC (Material-Plant)
+
+
+marc_pruned = (
+    marc
+    .join(prst_keys,
+          (marc["matnr"] == prst_keys["vbap_matnr"]) &
+          (marc["werks"] == prst_keys["vbap_werks"]),
+          "inner")
+    .filter(F.lit(marc_flag) == "Y")
 )
 
-prst_run = prst_filt.filter(date_cond)
-prst_run.createOrReplaceTempView("prst_run")
+
+
+ MBEW (standard cost – 2000 & 3120)
+
+
+mbew_pruned = (
+    mbew
+    .join(prst_keys, mbew["matnr"] == prst_keys["vbap_matnr"], "inner")
+    .filter((F.lit(mbew_flag) == "Y") & (mbew["bwkey"].isin("2000","3120")))
+)
+
+
+
+
+VEKP (Tracking)
+
+
+vekp_pruned = (
+    vekp
+    .join(prst_run.select("f1_vbeln").distinct(),
+          vekp["vpobjkey"] == prst_run["f1_vbeln"],
+          "inner")
+    .filter(F.lit(vekp_flag) == "Y")
+)
+
+
+
+
+VBKD (Incoterms)
+
+
+vbkd_pruned = (
+    vbkd
+    .join(prst_run.select("vbeln","posnr").distinct(),
+          (vbkd["vbeln"] == prst_run["vbeln"]) &
+          (vbkd["posnr"] == prst_run["posnr"]),
+          "inner")
+    .filter(F.lit(vbkd_flag) == "Y")
+)
+
+
+
+
+
+AFVC (Activity Type)
+
+
+afvc_pruned = (
+    afko
+    .join(prst_run.select("vbak_aufnr").distinct(),
+          afko["aufnr"] == prst_run["vbak_aufnr"],
+          "inner")
+    .join(afvc, "aufpl")
+    .filter(F.lit(afvc_flag) == "Y")
+)
+
+
+
+
+QMEL (Service notification)
+
+
+qmel_pruned = (
+    qmel
+    .join(prst_run.select("vbeln").distinct(),
+          qmel["aufnr"] == prst_run["vbeln"],
+          "inner")
+    .filter(F.lit(qmel_flag) == "Y")
+)
+
+
+
+
+T024X (Lab office)
+
+
+t024x_pruned = (
+    t024x
+    .filter((t024x["spras"] == "E") & (F.lit(t024x_flag) == "Y"))
+)
