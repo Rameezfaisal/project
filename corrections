@@ -1,39 +1,51 @@
-calc = (
-    prst
-    .withColumn(
-        "pgiqty_cd",
-        F.when(
-            F.coalesce(F.col("delvd_qty_cd"), F.lit(0)) >= F.coalesce(F.col("expectedqtycumulative_cd"), F.lit(0)),
-            F.coalesce(F.col("vbep_bmeng"), F.lit(0))
-        ).otherwise(
-            F.greatest(
-                F.coalesce(F.col("vbep_bmeng"), F.lit(0)) -
-                (F.coalesce(F.col("expectedqtycumulative_cd"), F.lit(0)) -
-                 F.coalesce(F.col("delvd_qty_cd"), F.lit(0))),
-                F.lit(0)
-            )
-        )
+final_df = (
+    calc
+    .select(
+        # Keys
+        "vbeln_cd","posnr_cd","etenr_cd",
+
+        # VBAK
+        "vbak_auart","vbak_aufnr","vbak_autlf","vbak_bstnk","vbak_erdat","vbak_ernam",
+        "vbak_faksk","vbak_ihrez","vbak_kunnr","vbak_lifsk","vbak_netwr","vbak_objnr",
+        "vbak_vkorg","vbak_vsnmr_v","vbak_waerk",
+
+        # VBAP
+        "vbap_abgru","vbap_aedat","vbap_arktx","vbap_charg","vbap_erdat","vbap_ernam",
+        "vbap_erzet","vbap_faksp","vbap_grkor","vbap_kdmat","vbap_kwmeng","vbap_lgort",
+        "vbap_lprio","vbap_matnr","vbap_netpr","vbap_posex","vbap_prodh","vbap_vstel",
+        "vbap_werks",
+
+        # VBEP
+        "vbep_bmeng","vbep_edatu","vbep_lifsp","vbep_mbdat",
+
+        # VBUK / VBUP
+        "vbuk_lfgsk","vbuk_wbstk","vbup_lfsta",
+
+        # Inventory snapshot
+        "mard_labst_cd","mard_klabs_cd","mard_kinsm_cd",
+
+        # Delivery & PGI
+        "f1_vbeln_cd","lastpgidoc_cd","opendlvdoc_cd","opendlvqty_cd",
+        "qtyshippedttline_cd","pgidate_cd","dlvstatus_cd",
+
+        # Schedule math
+        "expectedqtycumulative_cd","delvd_qty_cd","pgiqty_cd","openqty_cd","order_status_cd",
+
+        F.current_timestamp().alias("last_changed")
     )
-    .withColumn(
-        "openqty_cd",
-        F.when(
-            (F.coalesce(F.col("vbep_bmeng"), F.lit(0)) > 0) &
-            (F.coalesce(F.col("delvd_qty_cd"), F.lit(0)) < F.coalesce(F.col("vbep_bmeng"), F.lit(0))),
-            F.when(
-                F.coalesce(F.col("expectedqtycumulative_cd"), F.lit(0)) <= F.coalesce(F.col("delvd_qty_cd"), F.lit(0)),
-                F.lit(0)
-            ).otherwise(
-                F.least(
-                    F.col("vbep_bmeng"),
-                    F.col("expectedqtycumulative_cd") - F.coalesce(F.col("delvd_qty_cd"), F.lit(0))
-                )
-            )
-        ).otherwise(F.lit(0))
-    )
-    .withColumn(
-        "order_status_cd",
-        F.when(F.col("openqty_cd") > 0, F.lit("Open")).otherwise(F.lit("Closed"))
+    # SAP NOT NULL columns
+    .filter(
+        F.col("vbeln_cd").isNotNull() &
+        F.col("posnr_cd").isNotNull() &
+        F.col("etenr_cd").isNotNull()
     )
 )
 
-calc.createOrReplaceTempView("calc")
+(
+    final_df
+    .write
+    .format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema","true")
+    .saveAsTable(target_table)
+)
