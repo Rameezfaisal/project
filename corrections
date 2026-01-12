@@ -1,63 +1,52 @@
-final_df = (
-    calc.select(
-        # Keys
-        F.col("vbeln_cd").alias("vbeln"),
-        F.col("posnr_cd").alias("posnr"),
-        F.col("etenr_cd").alias("etenr"),
+from pyspark.sql import functions as F
+from pyspark.sql import Window
 
-        # VBAK
-        "vbak_auart","vbak_aufnr","vbak_autlf","vbak_bstnk","vbak_erdat","vbak_ernam",
-        "vbak_faksk","vbak_ihrez","vbak_kunnr","vbak_lifsk","vbak_netwr","vbak_objnr",
-        "vbak_vkorg","vbak_vsnmr_v","vbak_waerk",
 
-        # VBAP
-        "vbap_abgru","vbap_aedat","vbap_arktx","vbap_charg","vbap_erdat","vbap_ernam",
-        "vbap_erzet","vbap_faksp","vbap_grkor","vbap_kdmat","vbap_kwmeng","vbap_lgort",
-        "vbap_lprio","vbap_matnr","vbap_netpr","vbap_posex","vbap_prodh","vbap_vstel",
-        "vbap_werks",
 
-        # VBEP
-        "vbep_bmeng","vbep_edatu","vbep_lifsp","vbep_mbdat",
 
-        # VBUK / VBUP
-        "vbuk_lfgsk","vbuk_wbstk","vbup_lfsta",
 
-        # Inventory snapshot
-        F.col("mard_labst_cd").alias("mard_labst"),
-        F.col("mard_klabs_cd").alias("mard_klabs"),
-        F.col("mard_kinsm_cd").alias("mard_kinsm"),
+# ===== Control parameters =====
+ip_sales_org   = "ALL"        # example: '1000,2000' or 'ALL'
+ip_order_type  = "ALL"        # example: 'ZSO,ZFO' or 'ALL'
+ip_erdat_from  = "2023-01-01"
+ip_erdat_to    = "2025-12-31"
+ip_date_flag   = "N"          # L,P,R,C,F,A,N
+ip_data_pruning_flag = "YYYYYYY"  # MARC, MBEW, VEKP, VBKD, AFVC, QMEL, T024X
 
-        # Delivery
-        F.col("f1_vbeln_cd").alias("f1_vbeln"),
-        F.col("lastpgidoc_cd").alias("lastpgidoc"),
-        F.col("opendlvdoc_cd").alias("opendlvdoc"),
-        F.col("opendlvqty_cd").alias("opendlvqty"),
-        F.col("qtyshippedttline_cd").alias("qtyshippedttline"),
-        F.col("pgidate_cd").alias("pgidate"),
-        F.col("dlvstatus_cd").alias("dlvstatus"),
+# ===== Source PRST =====
+prst_table = "cdm.sales_order"
 
-        # Schedule math
-        "expectedqtycumulative_cd",
-        F.col("delvd_qty_cd").alias("delvd_qty"),
-        "pgiqty_cd",
-        "openqty_cd",
-        "order_status_cd",
+# ===== ECC sources =====
+cv_marc   = "prd.global.ecc.cv_marc"
+cv_mbew   = "prd.global.ecc.cv_mbew"
+cv_vekp   = "prd.global.ecc.cv_vekp"
+cv_vbkd   = "prd.global.ecc.cvns_vbkd"
+cv_afko   = "prd.global.ecc.cv_afko"
+cv_afvc   = "prd.global.ecc.cv_afvc"
+cv_qmel   = "prd.global.ecc.cvns_qmel"
+cv_t024x  = "prd.global.ecc.cv_t024x"
+cv_mara   = "prd.global.ecc.cv_mara"
+cv_kna1   = "prd.global.ecc.cv_kna1"
+cv_part   = "prd.gops.glis.cv_part"
 
-        F.current_timestamp().alias("last_changed")
-    )
-    # enforce SAP NOT NULL
-    .filter(
-        F.col("vbeln").isNotNull() &
-        F.col("posnr").isNotNull() &
-        F.col("etenr").isNotNull()
-    )
-)
+# ===== Target =====
+target_table = "cdm.sales_order"
 
-(
-    final_df
-    .write
-    .format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema","true")
-    .saveAsTable(target_table)
-)
+
+
+
+
+
+prst = spark.table(prst_table)
+
+marc  = spark.table(cv_marc)
+mbew  = spark.table(cv_mbew)
+vekp  = spark.table(cv_vekp)
+vbkd  = spark.table(cv_vbkd)
+afko  = spark.table(cv_afko)
+afvc  = spark.table(cv_afvc)
+qmel  = spark.table(cv_qmel)
+t024x = spark.table(cv_t024x)
+mara  = spark.table(cv_mara)
+kna1  = spark.table(cv_kna1)
+part  = spark.table(cv_part)
