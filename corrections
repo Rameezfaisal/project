@@ -1,37 +1,72 @@
-Cell 4 — Build cumulative committed quantity per schedule line
+Cell 5 — Delivered quantity and last PGI document
 Business meaning:
-Calculate, for every order line and schedule line, how much quantity has been committed up to that schedule, which SAP uses to decide backorders, PGIQty and OpenQty.
+Calculate how much quantity has actually been delivered for each sales-order line and identify the latest PGI document, exactly like SAP’s VBFA logic.
 
 
 
 
 
 
-
-# keep only positive committed schedule lines
-vbep_pos = (
-    vbep
-    .filter(F.col("bmeng") > 0)
+# --- Delivered quantity (f1) ---
+vbfa_f1 = (
+    vbfa
+    .filter(
+        (F.col("stufe") == "00") &
+        (F.col("vbtyp_n").isin("T", "J"))
+    )
     .select(
+        F.col("vbelv").alias("vbelv_cd"),
+        F.col("posnv").alias("posnv_cd"),
         F.col("vbeln").alias("vbeln_cd"),
-        F.col("posnr").alias("posnr_cd"),
-        F.col("etenr").alias("etenr_cd"),
-        F.col("bmeng").alias("bmeng_cd")
+        F.col("vbtyp_n").alias("vbtyp_n_cd"),
+        F.col("plmin").alias("plmin_cd"),
+        F.col("rfmng_flo").alias("rfmng_flo_cd")
     )
 )
 
-# cumulative committed qty per sales order line
-w_sched = (
-    Window
-    .partitionBy("vbeln_cd", "posnr_cd")
-    .orderBy("etenr_cd")
-    .rowsBetween(Window.unboundedPreceding, Window.currentRow)
+delivered = (
+    vbfa_f1
+    .groupBy("vbelv_cd", "posnv_cd")
+    .agg(
+        F.sum(
+            F.when((F.col("vbtyp_n_cd") == "R") & (F.col("plmin_cd") == "+"), F.col("rfmng_flo_cd"))
+             .when(F.col("vbtyp_n_cd") == "h", -F.col("rfmng_flo_cd"))
+             .otherwise(F.lit(0))
+        ).alias("delvd_qty_cd"),
+        F.max("vbeln_cd").alias("f1_vbeln_cd")
+    )
 )
 
-vbep_cum = (
-    vbep_pos
-    .withColumn("expectedqtycumulative_cd", F.sum("bmeng_cd").over(w_sched))
+delivered.createOrReplaceTempView("delivered")
+
+# --- Last PGI document (f2) ---
+vbfa_f2 = (
+    vbfa
+    .filter(
+        (F.col("stufe") == "00") &
+        (F.col("vbtyp_n").isin("T", "J")) &
+        (F.col("vbeln").startswith("49"))
+    )
+    .select(
+        F.col("vbelv").alias("vbelv_cd"),
+        F.col("posnv").alias("posnv_cd"),
+        F.col("vbeln").alias("vbeln_cd"),
+        F.col("vbtyp_n").alias("vbtyp_n_cd"),
+        F.col("rfmng").alias("rfmng_cd")
+    )
 )
 
-# this replaces SAP temp table "t"
-vbep_cum.createOrReplaceTempView("vbep_cum")
+pgi = (
+    vbfa_f2
+    .groupBy("vbelv_cd", "posnv_cd")
+    .agg(
+        F.max("vbeln_cd").alias("lastpgidoc_cd"),
+        F.sum(
+            F.when(F.col("vbtyp_n_cd") == "R", F.col("rfmng_cd"))
+             .when(F.col("vbtyp_n_cd") == "h", -F.col("rfmng_cd"))
+             .otherwise(F.lit(0))
+        ).alias("pgiqty_cd")
+    )
+)
+
+pgi.createOrReplaceTempView("pgi")
