@@ -1,55 +1,84 @@
-# -----------------------------
-# Re-flatten business keys
-# -----------------------------
-calc_flat = (
-    calc
-    .select(
-        F.col("vbeln_cd").alias("vbeln"),
-        F.col("posnr_cd").alias("posnr"),
-        F.col("etenr_cd").alias("etenr"),
-        "*"
-    )
-    .drop("vbeln_cd","posnr_cd","etenr_cd")
-)
+---------------------------------------------------------------------------
+AnalysisException                         Traceback (most recent call last)
+Cell In[127], line 19
+      4 calc_flat = (
+      5     calc
+      6     .select(
+   (...)
+     12     .drop("vbeln_cd","posnr_cd","etenr_cd")
+     13 )
+     15 # -----------------------------
+     16 # Final PRST projection (SAP ZT_M_SALES_ORDER_STATUS_V2 – Phase 1)
+     17 # -----------------------------
+     18 prst_out = (
+---> 19     calc_flat
+     20     .select(
+     21         "vbeln","posnr","etenr",
+     22 
+     23         # VBAK
+     24         "vbak_auart","vbak_aufnr","vbak_autlf","vbak_bstnk","vbak_erdat","vbak_ernam",
+     25         "vbak_faksk","vbak_ihrez","vbak_kunnr","vbak_lifsk","vbak_netwr","vbak_objnr",
+     26         "vbak_vkorg","vbak_vsnmr_v","vbak_waerk",
+     27 
+     28         # VBAP
+     29         "vbap_abgru","vbap_aedat","vbap_arktx","vbap_charg","vbap_erdat","vbap_ernam",
+     30         "vbap_erzet","vbap_faksp","vbap_grkor","vbap_kdmat","vbap_kwmeng","vbap_lgort",
+     31         "vbap_lprio","vbap_matnr","vbap_netpr","vbap_posex","vbap_prodh","vbap_vstel",
+     32         "vbap_werks",
+     33 
+     34         # VBEP
+     35         "vbep_bmeng","vbep_edatu","vbep_h_edatu","vbep_lifsp","vbep_mbdat",
+     36 
+     37         # VBUK / VBUP
+     38         "vbuk_lfgsk","vbuk_wbstk","vbup_lfsta",
+     39 
+     40         # Inventory
+     41         "mard_labst_cd","mard_klabs_cd","mard_kinsm_cd","mard_lgort_cd","mard_matnr_cd","mard_werks_cd",
+     42 
+     43         # Delivery spine
+     44         "f1_vbeln_cd","lastpgidoc_cd","opendlvdoc_cd","opendlvqty_cd",
+     45         "qtyshippedttline_cd","pgidate_cd","dlvstatus_cd",
+     46 
+     47         # Schedule math
+     48         "expectedqtycumulative_cd","delvd_qty_cd","pgiqty_cd","openqty_cd","order_status_cd",
+     49 
+     50         F.current_timestamp().alias("last_changed")
+     51     )
+     52     .filter("vbeln is not null and posnr is not null and etenr is not null")
+     53 )
+     55 prst_out.createOrReplaceTempView("prst_out")
 
-# -----------------------------
-# Final PRST projection (SAP ZT_M_SALES_ORDER_STATUS_V2 – Phase 1)
-# -----------------------------
-prst_out = (
-    calc_flat
-    .select(
-        "vbeln","posnr","etenr",
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3229, in DataFrame.select(self, *cols)
+   3184 def select(self, *cols: "ColumnOrName") -> "DataFrame":  # type: ignore[misc]
+   3185     """Projects a set of expressions and returns a new :class:`DataFrame`.
+   3186 
+   3187     .. versionadded:: 1.3.0
+   (...)
+   3227     +-----+---+
+   3228     """
+-> 3229     jdf = self._jdf.select(self._jcols(*cols))
+   3230     return DataFrame(jdf, self.sparkSession)
 
-        # VBAK
-        "vbak_auart","vbak_aufnr","vbak_autlf","vbak_bstnk","vbak_erdat","vbak_ernam",
-        "vbak_faksk","vbak_ihrez","vbak_kunnr","vbak_lifsk","vbak_netwr","vbak_objnr",
-        "vbak_vkorg","vbak_vsnmr_v","vbak_waerk",
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
-        # VBAP
-        "vbap_abgru","vbap_aedat","vbap_arktx","vbap_charg","vbap_erdat","vbap_ernam",
-        "vbap_erzet","vbap_faksp","vbap_grkor","vbap_kdmat","vbap_kwmeng","vbap_lgort",
-        "vbap_lprio","vbap_matnr","vbap_netpr","vbap_posex","vbap_prodh","vbap_vstel",
-        "vbap_werks",
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-        # VBEP
-        "vbep_bmeng","vbep_edatu","vbep_h_edatu","vbep_lifsp","vbep_mbdat",
-
-        # VBUK / VBUP
-        "vbuk_lfgsk","vbuk_wbstk","vbup_lfsta",
-
-        # Inventory
-        "mard_labst_cd","mard_klabs_cd","mard_kinsm_cd","mard_lgort_cd","mard_matnr_cd","mard_werks_cd",
-
-        # Delivery spine
-        "f1_vbeln_cd","lastpgidoc_cd","opendlvdoc_cd","opendlvqty_cd",
-        "qtyshippedttline_cd","pgidate_cd","dlvstatus_cd",
-
-        # Schedule math
-        "expectedqtycumulative_cd","delvd_qty_cd","pgiqty_cd","openqty_cd","order_status_cd",
-
-        F.current_timestamp().alias("last_changed")
-    )
-    .filter("vbeln is not null and posnr is not null and etenr is not null")
-)
-
-prst_out.createOrReplaceTempView("prst_out")
+AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `mard_lgort_cd` cannot be resolved. Did you mean one of the following? [`mard_labst_cd`, `mard_kinsm_cd`, `mard_klabs_cd`, `vbap_lgort`, `delvd_qty_cd`].;
+'Project [vbeln#89854, posnr#89855, etenr#89856, vbak_auart#88526, vbak_aufnr#88527, vbak_autlf#88528, vbak_bstnk#88529, vbak_erdat#88530, vbak_ernam#88531, vbak_faksk#88532, vbak_ihrez#88533, vbak_kunnr#88534, vbak_lifsk#88535, vbak_netwr#88536, vbak_objnr#88537, vbak_vkorg#88538, vbak_vsnmr_v#88539, vbak_waerk#88540, vbap_abgru#88541, vbap_aedat#88542, vbap_arktx#88543, vbap_charg#88544, vbap_erdat#88545, vbap_ernam#88546, ... 40 more fields]
++- Project [vbeln#89854, posnr#89855, etenr#89856, vbak_auart#88526, vbak_aufnr#88527, vbak_autlf#88528, vbak_bstnk#88529, vbak_erdat#88530, vbak_ernam#88531, vbak_faksk#88532, vbak_ihrez#88533, vbak_kunnr#88534, vbak_lifsk#88535, vbak_netwr#88536, vbak_objnr#88537, vbak_vkorg#88538, vbak_vsnmr_v#88539, vbak_waerk#88540, vbap_abgru#88541, vbap_aedat#88542, vbap_arktx#88543, vbap_charg#88544, vbap_erdat#88545, vbap_ernam#88546, ... 37 more fields]
