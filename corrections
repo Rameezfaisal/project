@@ -1,90 +1,64 @@
-# Isolate keys from catalog pollution
-prst_iso = (
-    so_calc
-    .withColumn("vbeln_iso", F.col("vbeln"))
-    .withColumn("posnr_iso", F.col("posnr"))
-    .withColumn("etenr_iso", F.col("etenr"))
-    .drop("vbeln","posnr","etenr")
+
+final_df = (
+    calc.select(
+        # Keys
+        F.col("vbeln_cd").alias("vbeln"),
+        F.col("posnr_cd").alias("posnr"),
+        F.col("etenr_cd").alias("etenr"),
+
+        # VBAK
+        "vbak_auart","vbak_aufnr","vbak_autlf","vbak_bstnk","vbak_erdat","vbak_ernam",
+        "vbak_faksk","vbak_ihrez","vbak_kunnr","vbak_lifsk","vbak_netwr","vbak_objnr",
+        "vbak_vkorg","vbak_vsnmr_v","vbak_waerk",
+
+        # VBAP
+        "vbap_abgru","vbap_aedat","vbap_arktx","vbap_charg","vbap_erdat","vbap_ernam",
+        "vbap_erzet","vbap_faksp","vbap_grkor","vbap_kdmat","vbap_kwmeng","vbap_lgort",
+        "vbap_lprio","vbap_matnr","vbap_netpr","vbap_posex","vbap_prodh","vbap_vstel",
+        "vbap_werks",
+
+        # VBEP
+        "vbep_bmeng","vbep_edatu","vbep_lifsp","vbep_mbdat",
+
+        # VBUK / VBUP
+        "vbuk_lfgsk","vbuk_wbstk","vbup_lfsta",
+
+        # Inventory snapshot
+        F.col("mard_labst_cd").alias("mard_labst"),
+        F.col("mard_klabs_cd").alias("mard_klabs"),
+        F.col("mard_kinsm_cd").alias("mard_kinsm"),
+
+        # Delivery
+        F.col("f1_vbeln_cd").alias("f1_vbeln"),
+        F.col("lastpgidoc_cd").alias("lastpgidoc"),
+        F.col("opendlvdoc_cd").alias("opendlvdoc"),
+        F.col("opendlvqty_cd").alias("opendlvqty"),
+        F.col("qtyshippedttline_cd").alias("qtyshippedttline"),
+        F.col("pgidate_cd").alias("pgidate"),
+        F.col("dlvstatus_cd").alias("dlvstatus"),
+
+        # Schedule math
+        "expectedqtycumulative_cd",
+        F.col("delvd_qty_cd").alias("delvd_qty"),
+        "pgiqty_cd",
+        "openqty_cd",
+        "order_status_cd",
+
+        F.current_timestamp().alias("last_changed")
+    )
+    # enforce SAP NOT NULL
+    .filter(
+        F.col("vbeln").isNotNull() &
+        F.col("posnr").isNotNull() &
+        F.col("etenr").isNotNull()
+    )
 )
 
-# Build PRST table exactly like SAP
-prst_out = prst_iso.select(
-    "vbeln_iso",
-    "posnr_iso",
-    "etenr_iso",
-
-    "vbak_auart",
-    "vbak_aufnr",
-    "vbak_autlf",
-    "vbak_bstnk",
-    "vbak_erdat",
-    "vbak_ernam",
-    "vbak_faksk",
-    "vbak_ihrez",
-    "vbak_kunnr",
-    "vbak_lifsk",
-    "vbak_netwr",
-    "vbak_objnr",
-    "vbak_vkorg",
-    "vbak_vsnmr_v",
-    "vbak_waerk",
-
-    "vbap_abgru",
-    "vbap_aedat",
-    "vbap_arktx",
-    "vbap_charg",
-    "vbap_erdat",
-    "vbap_ernam",
-    "vbap_erzet",
-    "vbap_faksp",
-    "vbap_grkor",
-    "vbap_kdmat",
-    "vbap_kwmeng",
-    "vbap_lgort",
-    "vbap_lprio",
-    "vbap_matnr",
-    "vbap_netpr",
-    "vbap_posex",
-    "vbap_prodh",
-    "vbap_vstel",
-    "vbap_werks",
-
-    "vbep_bmeng",
-    "vbep_edatu",
-    "vbep_lifsp",
-    "vbep_mbdat",
-
-    "vbuk_lfgsk",
-    "vbuk_wbstk",
-    "vbup_lfsta",
-
-    "mard_labst",
-    "mard_klabs",
-    "mard_kinsm",
-
-    "f1_vbeln",
-    "lastpgidoc",
-    "opendlvdoc",
-    "opendlvqty",
-    "qtyshippedttline",
-    "pgidate",
-    "dlvstatus",
-
-    "expectedqtycumulative_cd",
-    "delvd_qty",
-    "pgiqty_cd",
-    "openqty_cd",
-    "order_status_cd",
-
-    F.current_timestamp().alias("last_changed")
+(
+    final_df
+    .write
+    .format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema","true")
+    .saveAsTable(target_table)
 )
-
-# Rename keys back
-prst_final = (
-    prst_out
-    .withColumnRenamed("vbeln_iso","vbeln")
-    .withColumnRenamed("posnr_iso","posnr")
-    .withColumnRenamed("etenr_iso","etenr")
-)
-
-prst_final.createOrReplaceTempView("prst_final")
