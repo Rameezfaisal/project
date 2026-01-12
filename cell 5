@@ -1,106 +1,60 @@
-AnalysisException                         Traceback (most recent call last)
-Cell In[196], line 3
-      1 sc = so_calc.alias("s")
-----> 3 final_df = sc.selectExpr(
-      4     "s.vbeln as vbeln",
-      5     "s.posnr as posnr",
-      6     "s.etenr as etenr",
-      7 
-      8     "s.order_status_cd as order_status",
-      9 
-     10     "s.vbak_auart",
-     11     "s.vbak_aufnr",
-     12     "s.vbak_autlf",
-     13     "s.vbak_bstnk",
-     14     "s.vbak_erdat",
-     15     "s.vbak_ernam",
-     16     "s.vbak_faksk",
-     17     "s.vbak_ihrez",
-     18     "s.vbak_kunnr",
-     19     "s.vbak_lifsk",
-     20     "s.vbak_netwr",
-     21     "s.vbak_objnr",
-     22     "s.vbak_vkorg",
-     23     "s.vbak_vsnmr_v",
-     24     "s.vbak_waerk",
-     25 
-     26     "s.vbap_abgru",
-     27     "s.vbap_aedat",
-     28     "s.vbap_arktx",
-     29     "s.vbap_charg",
-     30     "s.vbap_erdat",
-     31     "s.vbap_ernam",
-     32     "s.vbap_erzet",
-     33     "s.vbap_faksp",
-     34     "s.vbap_grkor",
-     35     "s.vbap_kdmat",
-     36     "s.vbap_kwmeng",
-     37     "s.vbap_lgort",
-     38     "s.vbap_lprio",
-     39     "s.vbap_matnr",
-     40     "s.vbap_netpr",
-     41     "s.vbap_posex",
-     42     "s.vbap_prodh",
-     43     "s.vbap_vstel",
-     44     "s.vbap_werks",
-     45 
-     46     "s.vbep_bmeng",
-     47     "s.vbep_edatu",
-     48     "s.vbep_h_edatu",
-     49     "s.vbep_lifsp",
-     50     "s.vbep_mbdat",
-     51 
-     52     "s.vbuk_lfgsk",
-     53     "s.vbuk_wbstk",
-     54     "s.vbup_lfsta",
-     55 
-     56     "s.delvd_qty",
-     57     "s.expectedqtycumulative_cd as expectedqtycumulative",
-     58 
-     59     "s.f1_vbeln",
-     60     "s.lastpgidoc",
-     61     "s.mard_labst",
-     62     "s.mard_klabs",
-     63     "s.mard_kinsm",
-     64     "s.mard_lgort",
-     65     "s.mard_matnr",
-     66     "s.mard_werks",
-     67     "s.opendlvdoc",
-     68     "s.opendlvqty",
-     69     "s.pgidate",
-     70     "s.pgiqty_cd as pgiqty",
-     71     "s.qtyshippedttline",
-     72     "s.shipto",
-     73     "s.shiptoname",
-     74     "s.frontload",
-     75     "s.poreceived",
-     76     "current_timestamp() as last_changed"
-     77 )
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3269, in DataFrame.selectExpr(self, *expr)
-   3267 if len(expr) == 1 and isinstance(expr[0], list):
-   3268     expr = expr[0]  # type: ignore[assignment]
--> 3269 jdf = self._jdf.selectExpr(self._jseq(expr))
-   3270 return DataFrame(jdf, self.sparkSession)
-
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
-
-AnalysisException: [AMBIGUOUS_REFERENCE] Reference `s`.`vbeln` is ambiguous, could be: [`s`.`vbeln`, `s`.`vbeln`].; line 1 pos 0
+vbeln	string	null
+posnr	string	null
+etenr	string	null
+vbak_auart	string	null
+vbak_aufnr	string	null
+vbak_autlf	string	null
+vbak_bstnk	string	null
+vbak_erdat	string	null
+vbak_ernam	string	null
+vbak_faksk	string	null
+vbak_ihrez	string	null
+vbak_kunnr	string	null
+vbak_lifsk	string	null
+vbak_netwr	decimal(15,2)	null
+vbak_objnr	string	null
+vbak_vkorg	string	null
+vbak_vsnmr_v	string	null
+vbak_waerk	string	null
+vbap_abgru	string	null
+vbap_aedat	string	null
+vbap_arktx	string	null
+vbap_charg	string	null
+vbap_erdat	string	null
+vbap_ernam	string	null
+vbap_erzet	string	null
+vbap_faksp	string	null
+vbap_grkor	string	null
+vbap_kdmat	string	null
+vbap_kwmeng	decimal(15,3)	null
+vbap_lgort	string	null
+vbap_lprio	string	null
+vbap_matnr	string	null
+vbap_netpr	decimal(11,2)	null
+vbap_posex	string	null
+vbap_prodh	string	null
+vbap_vstel	string	null
+vbap_werks	string	null
+vbep_bmeng	decimal(13,3)	null
+vbep_edatu	string	null
+vbep_lifsp	string	null
+vbep_mbdat	string	null
+vbuk_lfgsk	string	null
+vbuk_wbstk	string	null
+vbup_lfsta	string	null
+mard_labst	decimal(13,3)	null
+mard_klabs	decimal(13,3)	null
+mard_kinsm	decimal(13,3)	null
+f1_vbeln	string	null
+lastpgidoc	string	null
+opendlvdoc	string	null
+opendlvqty	decimal(23,3)	null
+qtyshippedttline	decimal(23,3)	null
+pgidate	string	null
+dlvstatus	string	null
+expectedqtycumulative_cd	decimal(23,3)	null
+delvd_qty	double	null
+pgiqty_cd	double	null
+openqty_cd	double	null
+order_status_cd	string	null
+last_changed	timestamp	null
