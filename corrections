@@ -1,66 +1,69 @@
-# --- Ship-to partner ---
-shipto = (
-    vbpa
-    .filter((F.col("posnr") == "000000") & (F.col("parvw") == "WE"))
-    .join(kna1, vbpa["kunnr"] == kna1["kunnr"], "inner")
+Cell 8 — Assemble PRST (the SAP snapshot rows)
+Business meaning:
+This is where we rebuild exactly what SAP calls
+ZT_M_SALES_ORDER_STATUS_V2 —
+the full order-line-schedule snapshot that drives both reporting and the incremental engine.
+We now combine:
+Commercial spine (Cell 7)
+Schedule cumulative qty (Cell 4)
+Delivered & PGI (Cell 5)
+Delivery status (Cell 6)
+
+
+
+
+
+
+
+
+
+prst = (
+    core
+    .join(vbep_cum,
+          (core["vbeln_cd"] == vbep_cum["vbeln_cd"]) &
+          (core["posnr_cd"] == vbep_cum["posnr_cd"]) &
+          (core["etenr_cd"] == vbep_cum["etenr_cd"]),
+          "left")
+    .join(delivered,
+          (core["vbeln_cd"] == delivered["vbelv_cd"]) &
+          (core["posnr_cd"] == delivered["posnv_cd"]),
+          "left")
+    .join(pgi,
+          (core["vbeln_cd"] == pgi["vbelv_cd"]) &
+          (core["posnr_cd"] == pgi["posnv_cd"]),
+          "left")
+    .join(delivery,
+          (core["vbeln_cd"] == delivery["vgbel_cd"]) &
+          (core["posnr_cd"] == delivery["vgpos_cd"]),
+          "left")
     .select(
-        vbpa["vbeln"].alias("vbeln_cd"),
-        vbpa["kunnr"].alias("shipto_cd"),
-        kna1["name1"].alias("shiptoname_cd")
+        core["vbeln_cd"],
+        core["posnr_cd"],
+        core["etenr_cd"],
+        core["vbak_auart"],
+        core["vbak_kunnr"],
+        core["soldtoname_cd"],
+        core["shipto_cd"],
+        core["shiptoname_cd"],
+        core["vbap_matnr"],
+        core["vbap_werks"],
+        core["mard_labst_cd"],
+        core["mard_klabs_cd"],
+        core["mard_kinsm_cd"],
+        core["qoh_cd"],
+        core["mrpv_cd"],
+        core["purchasegrp_cd"],
+        vbep_cum["bmeng_cd"],
+        vbep_cum["expectedqtycumulative_cd"],
+        delivered["delvd_qty_cd"],
+        delivered["f1_vbeln_cd"],
+        pgi["lastpgidoc_cd"],
+        delivery["opendlvdoc_cd"],
+        delivery["opendlvqty_cd"],
+        delivery["qtyshippedttline_cd"],
+        delivery["pgidate_cd"],
+        delivery["dlvstatus_cd"]
     )
 )
 
-# --- Inventory (MARD) ---
-mard_flat = (
-    mard
-    .select(
-        F.col("werks").alias("werks_cd"),
-        F.col("lgort").alias("lgort_cd"),
-        F.col("matnr").alias("matnr_cd"),
-        F.col("labst").alias("mard_labst_cd"),
-        F.col("klabs").alias("mard_klabs_cd"),
-        F.col("kinsm").alias("mard_kinsm_cd"),
-        (F.coalesce(F.col("labst"),F.lit(0)) +
-         F.coalesce(F.col("klabs"),F.lit(0)) +
-         F.coalesce(F.col("kinsm"),F.lit(0))).alias("qoh_cd")
-    )
-)
-
-# --- Main commercial spine ---
-core = (
-    vbak
-    .join(vbuk, vbak["vbeln"] == vbuk["vbeln"], "inner")
-    .join(vbap, vbak["vbeln"] == vbap["vbeln"], "inner")
-    .join(vbep, (vbap["vbeln"] == vbep["vbeln"]) & (vbap["posnr"] == vbep["posnr"]), "inner")
-    .join(vbup, (vbap["vbeln"] == vbup["vbeln"]) & (vbap["posnr"] == vbup["posnr"]), "inner")
-    .join(kna1, vbak["kunnr"] == kna1["kunnr"], "inner")
-    .join(shipto, vbak["vbeln"] == shipto["vbeln_cd"], "left")
-    .join(mara, vbap["matnr"] == mara["matnr"], "inner")
-    .join(
-        mard_flat,
-        (vbap["werks"] == mard_flat["werks_cd"]) &
-        (vbap["matnr"] == mard_flat["matnr_cd"]),
-        "left"
-    )
-    .join(marc, (vbap["werks"] == marc["werks"]) & (vbap["matnr"] == marc["matnr"]), "left")
-    .select(
-        vbak["vbeln"].alias("vbeln_cd"),
-        vbap["posnr"].alias("posnr_cd"),
-        vbep["etenr"].alias("etenr_cd"),
-        vbak["auart"].alias("vbak_auart"),
-        vbak["kunnr"].alias("vbak_kunnr"),
-        kna1["name1"].alias("soldtoname_cd"),
-        shipto["shipto_cd"],
-        shipto["shiptoname_cd"],
-        vbap["matnr"].alias("vbap_matnr"),
-        vbap["werks"].alias("vbap_werks"),
-        mard_flat["mard_labst_cd"],
-        mard_flat["mard_klabs_cd"],
-        mard_flat["mard_kinsm_cd"],
-        mard_flat["qoh_cd"],
-        marc["dispo"].alias("mrpv_cd"),
-        marc["ekgrp"].alias("purchasegrp_cd")
-    )
-)
-
-core.createOrReplaceTempView("core")
+prst.createOrReplaceTempView("prst")
