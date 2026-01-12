@@ -1,72 +1,51 @@
-Cell 5 — Delivered quantity and last PGI document
+Cell 6 — Build delivery status and shipped quantities
 Business meaning:
-Calculate how much quantity has actually been delivered for each sales-order line and identify the latest PGI document, exactly like SAP’s VBFA logic.
+Determine for every sales-order line:
+how much quantity is already shipped
+the open delivery document
+the PGI date
+and whether the line is only Created or already Shipped
+This reproduces SAP block l (LIPS + LIKP).
 
 
 
 
 
 
-# --- Delivered quantity (f1) ---
-vbfa_f1 = (
-    vbfa
+
+# join deliveries to shipment headers
+lips_likp = (
+    lips
+    .join(likp, lips["vbeln"] == likp["vbeln"], "inner")
     .filter(
-        (F.col("stufe") == "00") &
-        (F.col("vbtyp_n").isin("T", "J"))
+        (lips["vgbel"] != "") &
+        (~lips["vgbel"].startswith("4")) &
+        (~lips["vgbel"].startswith("3")) &
+        (likp["wadat_ist"] != "")
     )
     .select(
-        F.col("vbelv").alias("vbelv_cd"),
-        F.col("posnv").alias("posnv_cd"),
-        F.col("vbeln").alias("vbeln_cd"),
-        F.col("vbtyp_n").alias("vbtyp_n_cd"),
-        F.col("plmin").alias("plmin_cd"),
-        F.col("rfmng_flo").alias("rfmng_flo_cd")
+        lips["vgbel"].alias("vgbel_cd"),
+        lips["vgpos"].alias("vgpos_cd"),
+        lips["vbeln"].alias("dlv_vbeln_cd"),
+        lips["lgmng"].alias("lgmng_cd"),
+        lips["lfimg"].alias("lfimg_cd"),
+        likp["wadat_ist"].alias("pgidate_cd")
     )
 )
 
-delivered = (
-    vbfa_f1
-    .groupBy("vbelv_cd", "posnv_cd")
+delivery = (
+    lips_likp
+    .groupBy("vgbel_cd", "vgpos_cd")
     .agg(
-        F.sum(
-            F.when((F.col("vbtyp_n_cd") == "R") & (F.col("plmin_cd") == "+"), F.col("rfmng_flo_cd"))
-             .when(F.col("vbtyp_n_cd") == "h", -F.col("rfmng_flo_cd"))
-             .otherwise(F.lit(0))
-        ).alias("delvd_qty_cd"),
-        F.max("vbeln_cd").alias("f1_vbeln_cd")
+        F.max("dlv_vbeln_cd").alias("opendlvdoc_cd"),
+        F.sum("lgmng_cd").alias("opendlvqty_cd"),
+        F.sum("lfimg_cd").alias("qtyshippedttline_cd"),
+        F.max("pgidate_cd").alias("pgidate_cd")
+    )
+    .withColumn(
+        "dlvstatus_cd",
+        F.when(F.col("pgidate_cd").isNull(), F.lit("Created")).otherwise(F.lit("Shipped"))
     )
 )
 
-delivered.createOrReplaceTempView("delivered")
-
-# --- Last PGI document (f2) ---
-vbfa_f2 = (
-    vbfa
-    .filter(
-        (F.col("stufe") == "00") &
-        (F.col("vbtyp_n").isin("T", "J")) &
-        (F.col("vbeln").startswith("49"))
-    )
-    .select(
-        F.col("vbelv").alias("vbelv_cd"),
-        F.col("posnv").alias("posnv_cd"),
-        F.col("vbeln").alias("vbeln_cd"),
-        F.col("vbtyp_n").alias("vbtyp_n_cd"),
-        F.col("rfmng").alias("rfmng_cd")
-    )
-)
-
-pgi = (
-    vbfa_f2
-    .groupBy("vbelv_cd", "posnv_cd")
-    .agg(
-        F.max("vbeln_cd").alias("lastpgidoc_cd"),
-        F.sum(
-            F.when(F.col("vbtyp_n_cd") == "R", F.col("rfmng_cd"))
-             .when(F.col("vbtyp_n_cd") == "h", -F.col("rfmng_cd"))
-             .otherwise(F.lit(0))
-        ).alias("pgiqty_cd")
-    )
-)
-
-pgi.createOrReplaceTempView("pgi")
+delivery.createOrReplaceTempView("delivery")
