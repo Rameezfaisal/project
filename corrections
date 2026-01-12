@@ -1,10 +1,32 @@
-so = (
-    so
+from pyspark.sql import functions as F
+
+# Rebuild JEST status
+jest_status = (
+    cv_jest
+    .filter(
+        (F.col("inact") != "X") &
+        (F.col("stat").isin("E0001", "E0004", "E0005", "E0008", "E0009"))
+    )
+    .alias("a")
     .join(
-        jest_status,
-        so["vbak_objnr"] == jest_status["objnr"],
+        cv_tj30t.alias("b"),
+        (F.col("a.stat") == F.col("b.estat")) &
+        (F.col("b.stsma") == "Z0000003") &
+        (F.col("b.spras") == "E"),
         "left"
     )
+    .groupBy("a.objnr")
+    .agg(
+        F.max(F.when(F.col("a.stat") == "E0008", F.lit("X"))).alias("frontload"),
+        F.max(F.when(F.col("a.stat") == "E0009", F.lit("X"))).alias("poreceived"),
+        F.max(F.when(F.col("a.stat").isin("E0001","E0004","E0005"), F.col("b.txt04"))).alias("booking")
+    )
+)
+
+# Join into SO (SAP: a.OBJNR = j.OBJNR)
+so = (
+    so
+    .join(jest_status, so["vbak_objnr"] == jest_status["objnr"], "left")
     .drop(jest_status["objnr"])
 )
 
