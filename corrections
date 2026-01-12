@@ -1,70 +1,55 @@
-# -------------------------
-# VBEP Header schedule line (ETENR = '0001')
-# -------------------------
-vbep_header = (
-    vbep
-    .filter(F.col("etenr") == "0001")
-    .select(
-        F.col("vbeln").alias("vbeln_cd"),
-        F.col("posnr").alias("posnr_cd"),
-        F.col("edatu").alias("vbep_h_edatu")
-    )
-)
-
-# -------------------------
-# Enrich PRST → CALC
-# -------------------------
-calc = (
-    prst
-    .join(
-        vbep_header,
-        (prst["vbeln_cd"] == vbep_header["vbeln_cd"]) &
-        (prst["posnr_cd"] == vbep_header["posnr_cd"]),
-        "left"
-    )
-    .drop(vbep_header["vbeln_cd"])
-    .drop(vbep_header["posnr_cd"])
-)
-
-# -------------------------
-# PGI & Open Qty logic (SAP CV_SQL_SO)
-# -------------------------
-calc = (
+prst_out = (
     calc
-    .withColumn(
+    .select(
+        # SAP keys
+        F.col("vbeln_cd").alias("vbeln"),
+        F.col("posnr_cd").alias("posnr"),
+        F.col("etenr_cd").alias("etenr"),
+
+        # VBAK
+        "vbak_auart","vbak_aufnr","vbak_autlf","vbak_bstnk","vbak_erdat","vbak_ernam",
+        "vbak_faksk","vbak_ihrez","vbak_kunnr","vbak_lifsk","vbak_netwr","vbak_objnr",
+        "vbak_vkorg","vbak_vsnmr_v","vbak_waerk",
+
+        # VBAP
+        "vbap_abgru","vbap_aedat","vbap_arktx","vbap_charg","vbap_erdat","vbap_ernam",
+        "vbap_erzet","vbap_faksp","vbap_grkor","vbap_kdmat","vbap_kwmeng","vbap_lgort",
+        "vbap_lprio","vbap_matnr","vbap_netpr","vbap_posex","vbap_prodh","vbap_vstel",
+        "vbap_werks",
+
+        # VBEP
+        "vbep_bmeng","vbep_edatu","vbep_h_edatu","vbep_lifsp","vbep_mbdat",
+
+        # VBUK / VBUP
+        "vbuk_lfgsk","vbuk_wbstk","vbup_lfsta",
+
+        # Inventory
+        F.col("mard_labst_cd").alias("mard_labst"),
+        F.col("mard_klabs_cd").alias("mard_klabs"),
+        F.col("mard_kinsm_cd").alias("mard_kinsm"),
+        F.col("mard_lgort_cd").alias("mard_lgort"),
+        F.col("mard_matnr_cd").alias("mard_matnr"),
+        F.col("mard_werks_cd").alias("mard_werks"),
+
+        # Delivery spine
+        F.col("f1_vbeln_cd").alias("f1_vbeln"),
+        F.col("lastpgidoc_cd").alias("lastpgidoc"),
+        F.col("opendlvdoc_cd").alias("opendlvdoc"),
+        F.col("opendlvqty_cd").alias("opendlvqty"),
+        F.col("qtyshippedttline_cd").alias("qtyshippedttline"),
+        F.col("pgidate_cd").alias("pgidate"),
+        F.col("dlvstatus_cd").alias("dlvstatus"),
+
+        # Schedule math
+        "expectedqtycumulative_cd",
+        F.col("delvd_qty_cd").alias("delvd_qty"),
         "pgiqty_cd",
-        F.when(
-            F.coalesce(F.col("delvd_qty_cd"), F.lit(0)) >= F.coalesce(F.col("expectedqtycumulative_cd"), F.lit(0)),
-            F.coalesce(F.col("vbep_bmeng"), F.lit(0))
-        ).otherwise(
-            F.greatest(
-                F.coalesce(F.col("vbep_bmeng"), F.lit(0)) -
-                (F.coalesce(F.col("expectedqtycumulative_cd"), F.lit(0)) -
-                 F.coalesce(F.col("delvd_qty_cd"), F.lit(0))),
-                F.lit(0)
-            )
-        )
-    )
-    .withColumn(
         "openqty_cd",
-        F.when(
-            (F.coalesce(F.col("vbep_bmeng"), F.lit(0)) > 0) &
-            (F.coalesce(F.col("delvd_qty_cd"), F.lit(0)) < F.coalesce(F.col("vbep_bmeng"), F.lit(0))),
-            F.when(
-                F.coalesce(F.col("expectedqtycumulative_cd"), F.lit(0)) <= F.coalesce(F.col("delvd_qty_cd"), F.lit(0)),
-                F.lit(0)
-            ).otherwise(
-                F.least(
-                    F.col("vbep_bmeng"),
-                    F.col("expectedqtycumulative_cd") - F.coalesce(F.col("delvd_qty_cd"), F.lit(0))
-                )
-            )
-        ).otherwise(F.lit(0))
-    )
-    .withColumn(
         "order_status_cd",
-        F.when(F.col("openqty_cd") > 0, F.lit("Open")).otherwise(F.lit("Closed"))
+
+        F.current_timestamp().alias("last_changed")
     )
+    .filter("vbeln is not null and posnr is not null and etenr is not null")
 )
 
-calc.createOrReplaceTempView("calc")
+prst_out.createOrReplaceTempView("prst_out")
