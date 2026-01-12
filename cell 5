@@ -1,34 +1,105 @@
-from pyspark.sql import functions as F
+AnalysisException                         Traceback (most recent call last)
+Cell In[193], line 1
+----> 1 final_df = so_calc.selectExpr(
+      2     "vbeln as vbeln",
+      3     "posnr as posnr",
+      4     "etenr as etenr",
+      5 
+      6     "order_status_cd as order_status",
+      7 
+      8     "vbak_auart",
+      9     "vbak_aufnr",
+     10     "vbak_autlf",
+     11     "vbak_bstnk",
+     12     "vbak_erdat",
+     13     "vbak_ernam",
+     14     "vbak_faksk",
+     15     "vbak_ihrez",
+     16     "vbak_kunnr",
+     17     "vbak_lifsk",
+     18     "vbak_netwr",
+     19     "vbak_objnr",
+     20     "vbak_vkorg",
+     21     "vbak_vsnmr_v",
+     22     "vbak_waerk",
+     23 
+     24     "vbap_abgru",
+     25     "vbap_aedat",
+     26     "vbap_arktx",
+     27     "vbap_charg",
+     28     "vbap_erdat",
+     29     "vbap_ernam",
+     30     "vbap_erzet",
+     31     "vbap_faksp",
+     32     "vbap_grkor",
+     33     "vbap_kdmat",
+     34     "vbap_kwmeng",
+     35     "vbap_lgort",
+     36     "vbap_lprio",
+     37     "vbap_matnr",
+     38     "vbap_netpr",
+     39     "vbap_posex",
+     40     "vbap_prodh",
+     41     "vbap_vstel",
+     42     "vbap_werks",
+     43 
+     44     "vbep_bmeng",
+     45     "vbep_edatu",
+     46     "vbep_h_edatu",
+     47     "vbep_lifsp",
+     48     "vbep_mbdat",
+     49 
+     50     "vbuk_lfgsk",
+     51     "vbuk_wbstk",
+     52     "vbup_lfsta",
+     53 
+     54     "delvd_qty",
+     55     "expectedqtycumulative_cd as expectedqtycumulative",
+     56 
+     57     "f1_vbeln",
+     58     "lastpgidoc",
+     59     "mard_labst",
+     60     "mard_klabs",
+     61     "mard_kinsm",
+     62     "mard_lgort",
+     63     "mard_matnr",
+     64     "mard_werks",
+     65     "opendlvdoc",
+     66     "opendlvqty",
+     67     "pgidate",
+     68     "pgiqty_cd as pgiqty",
+     69     "qtyshippedttline",
+     70     "shipto",
+     71     "shiptoname",
+     72     "frontload",
+     73     "poreceived",
+     74     "current_timestamp() as last_changed"
+     75 )
 
-jest_status = (
-    jest
-    .filter(
-        (F.col("inact") != "X") &
-        (F.col("stat").isin("E0001", "E0004", "E0005", "E0008", "E0009"))
-    )
-    .alias("a")
-    .join(
-        tj30t.alias("b"),
-        (F.col("a.stat") == F.col("b.estat")) &
-        (F.col("b.stsma") == "Z0000003") &
-        (F.col("b.spras") == "E"),
-        "left"
-    )
-    .groupBy("a.objnr")
-    .agg(
-        F.max(F.when(F.col("a.stat") == "E0008", F.lit("X"))).alias("frontload"),
-        F.max(F.when(F.col("a.stat") == "E0009", F.lit("X"))).alias("poreceived"),
-        F.max(
-            F.when(F.col("a.stat").isin("E0001","E0004","E0005"), F.col("b.txt04"))
-        ).alias("booking")
-    )
-)
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3269, in DataFrame.selectExpr(self, *expr)
+   3267 if len(expr) == 1 and isinstance(expr[0], list):
+   3268     expr = expr[0]  # type: ignore[assignment]
+-> 3269 jdf = self._jdf.selectExpr(self._jseq(expr))
+   3270 return DataFrame(jdf, self.sparkSession)
 
-# SAP: LEFT JOIN j ON a.OBJNR = j.OBJNR
-so = (
-    so
-    .join(jest_status, so["vbak_objnr"] == jest_status["objnr"], "left")
-    .drop(jest_status["objnr"])
-)
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
-so.createOrReplaceTempView("so")
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
+
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `vbeln` is ambiguous, could be: [`spark_catalog`.`chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk`.`sales_order`.`vbeln`, `vbeln`].; line 1 pos 0
