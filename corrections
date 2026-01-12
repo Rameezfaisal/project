@@ -1,71 +1,66 @@
-AnalysisException                         Traceback (most recent call last)
-Cell In[52], line 37
-     14 mard_flat = (
-     15     mard
-     16     .select(
-   (...)
-     26     )
-     27 )
-     29 # --- Main commercial spine ---
-     30 core = (
-     31     vbak
-     32     .join(vbuk, "vbeln", "inner")
-     33     .join(vbap, "vbeln", "inner")
-     34     .join(vbep, ["vbeln","posnr"], "inner")
-     35     .join(vbup, ["vbeln","posnr"], "inner")
-     36     .join(kna1, vbak["kunnr"] == kna1["kunnr"], "inner")
----> 37     .join(shipto, "vbeln", "left")
-     38     .join(mara, vbap["matnr"] == mara["matnr"], "inner")
-     39     .join(mard_flat,
-     40           (vbap["werks"] == mard_flat["werks_cd"]) &
-     41           (vbap["matnr"] == mard_flat["matnr_cd"]),
-     42           "left")
-     43     .join(marc, (vbap["werks"] == marc["werks"]) & (vbap["matnr"] == marc["matnr"]), "left")
-     44     .selectExpr(
-     45         "vbak.vbeln as vbeln_cd",
-     46         "vbap.posnr as posnr_cd",
-     47         "vbep.etenr as etenr_cd",
-     48         "vbak.auart as vbak_auart",
-     49         "vbak.kunnr as vbak_kunnr",
-     50         "kna1.name1 as soldtoname",
-     51         "shipto_cd",
-     52         "shiptoname_cd",
-     53         "vbap.matnr as vbap_matnr",
-     54         "vbap.werks as vbap_werks",
-     55         "mard_labst_cd",
-     56         "mard_klabs_cd",
-     57         "mard_kinsm_cd",
-     58         "qoh_cd",
-     59         "marc.dispo as mrpv",
-     60         "marc.ekgrp as purchasegrp"
-     61     )
-     62 )
-     64 core.createOrReplaceTempView("core")
+# --- Ship-to partner ---
+shipto = (
+    vbpa
+    .filter((F.col("posnr") == "000000") & (F.col("parvw") == "WE"))
+    .join(kna1, vbpa["kunnr"] == kna1["kunnr"], "inner")
+    .select(
+        vbpa["vbeln"].alias("vbeln_cd"),
+        vbpa["kunnr"].alias("shipto_cd"),
+        kna1["name1"].alias("shiptoname_cd")
+    )
+)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:2493, in DataFrame.join(self, other, on, how)
-   2491         on = self._jseq([])
-   2492     assert isinstance(how, str), "how should be a string"
--> 2493     jdf = self._jdf.join(other._jdf, on, how)
-   2494 return DataFrame(jdf, self.sparkSession)
+# --- Inventory (MARD) ---
+mard_flat = (
+    mard
+    .select(
+        F.col("werks").alias("werks_cd"),
+        F.col("lgort").alias("lgort_cd"),
+        F.col("matnr").alias("matnr_cd"),
+        F.col("labst").alias("mard_labst_cd"),
+        F.col("klabs").alias("mard_klabs_cd"),
+        F.col("kinsm").alias("mard_kinsm_cd"),
+        (F.coalesce(F.col("labst"),F.lit(0)) +
+         F.coalesce(F.col("klabs"),F.lit(0)) +
+         F.coalesce(F.col("kinsm"),F.lit(0))).alias("qoh_cd")
+    )
+)
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
+# --- Main commercial spine ---
+core = (
+    vbak
+    .join(vbuk, vbak["vbeln"] == vbuk["vbeln"], "inner")
+    .join(vbap, vbak["vbeln"] == vbap["vbeln"], "inner")
+    .join(vbep, (vbap["vbeln"] == vbep["vbeln"]) & (vbap["posnr"] == vbep["posnr"]), "inner")
+    .join(vbup, (vbap["vbeln"] == vbup["vbeln"]) & (vbap["posnr"] == vbup["posnr"]), "inner")
+    .join(kna1, vbak["kunnr"] == kna1["kunnr"], "inner")
+    .join(shipto, vbak["vbeln"] == shipto["vbeln_cd"], "left")
+    .join(mara, vbap["matnr"] == mara["matnr"], "inner")
+    .join(
+        mard_flat,
+        (vbap["werks"] == mard_flat["werks_cd"]) &
+        (vbap["matnr"] == mard_flat["matnr_cd"]),
+        "left"
+    )
+    .join(marc, (vbap["werks"] == marc["werks"]) & (vbap["matnr"] == marc["matnr"]), "left")
+    .select(
+        vbak["vbeln"].alias("vbeln_cd"),
+        vbap["posnr"].alias("posnr_cd"),
+        vbep["etenr"].alias("etenr_cd"),
+        vbak["auart"].alias("vbak_auart"),
+        vbak["kunnr"].alias("vbak_kunnr"),
+        kna1["name1"].alias("soldtoname_cd"),
+        shipto["shipto_cd"],
+        shipto["shiptoname_cd"],
+        vbap["matnr"].alias("vbap_matnr"),
+        vbap["werks"].alias("vbap_werks"),
+        mard_flat["mard_labst_cd"],
+        mard_flat["mard_klabs_cd"],
+        mard_flat["mard_kinsm_cd"],
+        mard_flat["qoh_cd"],
+        marc["dispo"].alias("mrpv_cd"),
+        marc["ekgrp"].alias("purchasegrp_cd")
+    )
+)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
-
-AnalysisException: [UNRESOLVED_USING_COLUMN_FOR_JOIN] USING column `vbeln` cannot be resolved on the right side of the join. The right-side columns: [`shipto_cd`, `shiptoname_cd`, `vbeln_cd`].
+core.createOrReplaceTempView("core")
