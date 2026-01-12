@@ -1,14 +1,53 @@
-INSERT OVERWRITE cdm.sales_order
-SELECT
-  vbeln,posnr,etenr,
-  vbak_auart,vbak_aufnr,vbak_autlf,vbak_bstnk,vbak_erdat,vbak_ernam,vbak_faksk,vbak_ihrez,
-  vbak_kunnr,vbak_lifsk,vbak_netwr,vbak_objnr,vbak_vkorg,vbak_vsnmr_v,vbak_waerk,
-  vbap_abgru,vbap_aedat,vbap_arktx,vbap_charg,vbap_erdat,vbap_ernam,vbap_erzet,vbap_faksp,
-  vbap_grkor,vbap_kdmat,vbap_kwmeng,vbap_lgort,vbap_lprio,vbap_matnr,vbap_netpr,vbap_posex,
-  vbap_prodh,vbap_vstel,vbap_werks,
-  vbep_bmeng,vbep_edatu,vbep_h_edatu,vbep_lifsp,vbep_mbdat,
-  vbuk_lfgsk,vbuk_wbstk,vbup_lfsta,
-  mard_labst,mard_klabs,mard_kinsm,
-  f1_vbeln,lastpgidoc,opendlvdoc,opendlvqty,qtyshippedttline,pgidate,dlvstatus,
-  expectedqtycumulative,delvd_qty,pgiqty,openqty,order_status,last_changed
-FROM prst_out
+AnalysisException                         Traceback (most recent call last)
+Cell In[187], line 1
+----> 1 spark.sql(f""" INSERT OVERWRITE {target_table}
+      2 SELECT
+      3   vbeln,posnr,etenr,
+      4   vbak_auart,vbak_aufnr,vbak_autlf,vbak_bstnk,vbak_erdat,vbak_ernam,vbak_faksk,vbak_ihrez,
+      5   vbak_kunnr,vbak_lifsk,vbak_netwr,vbak_objnr,vbak_vkorg,vbak_vsnmr_v,vbak_waerk,
+      6   vbap_abgru,vbap_aedat,vbap_arktx,vbap_charg,vbap_erdat,vbap_ernam,vbap_erzet,vbap_faksp,
+      7   vbap_grkor,vbap_kdmat,vbap_kwmeng,vbap_lgort,vbap_lprio,vbap_matnr,vbap_netpr,vbap_posex,
+      8   vbap_prodh,vbap_vstel,vbap_werks,
+      9   vbep_bmeng,vbep_edatu,vbep_h_edatu,vbep_lifsp,vbep_mbdat,
+     10   vbuk_lfgsk,vbuk_wbstk,vbup_lfsta,
+     11   mard_labst,mard_klabs,mard_kinsm,
+     12   f1_vbeln,lastpgidoc,opendlvdoc,opendlvqty,qtyshippedttline,pgidate,dlvstatus,
+     13   expectedqtycumulative,delvd_qty,pgiqty,openqty,order_status,last_changed
+     14 FROM prst_out """)
+
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1631, in SparkSession.sql(self, sqlQuery, args, **kwargs)
+   1627         assert self._jvm is not None
+   1628         litArgs = self._jvm.PythonUtils.toArray(
+   1629             [_to_java_column(lit(v)) for v in (args or [])]
+   1630         )
+-> 1631     return DataFrame(self._jsparkSession.sql(sqlQuery, litArgs), self)
+   1632 finally:
+   1633     if len(kwargs) > 0:
+
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
+
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
+
+AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `mard_labst` cannot be resolved. Did you mean one of the following? [`mard_labst_cd`, `mard_klabs_cd`, `mard_kinsm_cd`, `vbak_faksk`, `vbak_lifsk`].; line 11 pos 2;
+'InsertIntoStatement RelationV2[booking#122096, carrier#122097, carrier_name#122098, dlvstatus#122099, etenr#122100, expectedqtycumulative#122101, f1_vbeln#122102, frontload#122103, last_changed#122104, lastpgidoc#122105, mard_kinsm#122106, mard_klabs#122107, mard_labst#122108, mard_lgort#122109, mard_matnr#122110, mard_werks#122111, order_status#122112, opendlvdoc#122113, opendlvqty#122114, pgidate#122115, pgiqty#122116, poreceived#122117, posnr#122118, qtyshippedttline#122119, ... 46 more fields] spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk.sales_order spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk.sales_order, true, false, false
++- 'Project [vbeln#121596, posnr#121597, etenr#121598, vbak_auart#120361, vbak_aufnr#120362, vbak_autlf#120363, vbak_bstnk#120364, vbak_erdat#120365, vbak_ernam#120366, vbak_faksk#120367, vbak_ihrez#120368, vbak_kunnr#120369, vbak_lifsk#120370, vbak_netwr#120371, vbak_objnr#120372, vbak_vkorg#120373, vbak_vsnmr_v#120374, vbak_waerk#120375, vbap_abgru#120376, vbap_aedat#120377, vbap_arktx#120378, vbap_charg#120379, vbap_erdat#120380, vbap_ernam#120381, ... 37 more fields]
+   +- SubqueryAlias prst_out
+      +- View (`prst_out`, [vbeln#121596,posnr#121597,etenr#121598,vbak_auart#120361,vbak_aufnr#120362,vbak_autlf#120363,vbak_bstnk#120364,vbak_erdat#120365,vbak_ernam#120366,vbak_faksk#120367,vbak_ihrez#120368,vbak_kunnr#120369,vbak_lifsk#120370,vbak_netwr#120371,vbak_objnr#120372,vbak_vkorg#120373,vbak_vsnmr_v#120374,vbak_waerk#120375,vbap_abgru#120376,vbap_aedat#120377,vbap_arktx#120378,vbap_charg#120379,vbap_erdat#120380,vbap_ernam#120381,vbap_erzet#120382,vbap_faksp#120383,vbap_grkor#120384,vbap_kdmat#120385,vbap_kwmeng#120386,vbap_lgort#120387,vbap_lprio#120388,vbap_matnr#120389,vbap_netpr#120390,vbap_posex#120391,vbap_prodh#120392,vbap_vstel#120393,vbap_werks#120394,vbep_bmeng#120395,vbep_edatu#120396,vbep_h_edatu#121103,vbep_lifsp#120397,vbep_mbdat#120398,vbuk_lfgsk#120399,vbuk_wbstk#120400,vbup_lfsta#120401,mard_labst_cd#97492,mard_klabs_cd#97493,mard_kinsm_cd#97494,f1_vbeln_cd#95961,lastpgidoc_cd#95982,opendlvdoc_cd#97028,opendlvqty_cd#97030,qtyshippedttline_cd#97032,pgidate_cd#97034,dlvstatus_cd#97041,expectedqtycumulative_cd#95933,delvd_qty_cd#95959,pgiqty_cd#121413,openqty_cd#121473,order_status_cd#121534,last_changed#121724])
+         +- Filter ((isnotnull(vbeln#121596) AND isnotnull(posnr#121597)) AND isnotnull(etenr#121598))
+            +- Project [vbeln#121596, posnr#121597, etenr#121598, vbak_auart#120361, vbak_aufnr#120362, vbak_autlf#120363, vbak_bstnk#120364, vbak_erdat#120365, vbak_ernam#120366, vbak_faksk#120367, vbak_ihrez#120368, vbak_kunnr#120369, vbak_lifsk#120370, vbak_netwr#120371, vbak_objnr#120372, vbak_vkorg#120373, vbak_vsnmr_v#120374, vbak_waerk#120375, vbap_abgru#120376, vbap_aedat#120377, vbap_arktx#120378, vbap_charg#120379, vbap_erdat#120380, vbap_ernam#120381, ... 37 more fields]
