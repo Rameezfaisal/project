@@ -1,74 +1,90 @@
-AnalysisException                         Traceback (most recent call last)
-Cell In[52], line 3
-      1 # Force a single copy of each business key
-      2 so_flat = (
-----> 3     so_calc
-      4     .select(
-      5         F.col("vbeln"),
-      6         F.col("posnr"),
-      7         F.col("etenr"),
-      8 
-      9         F.col("order_status_cd").alias("order_status"),
-     10 
-     11         "vbak_auart","vbak_aufnr","vbak_autlf","vbak_bstnk",
-     12         "vbak_erdat","vbak_ernam","vbak_faksk","vbak_ihrez",
-     13         "vbak_kunnr","vbak_lifsk","vbak_netwr","vbak_objnr",
-     14         "vbak_vkorg","vbak_vsnmr_v","vbak_waerk",
-     15 
-     16         "vbap_abgru","vbap_aedat","vbap_arktx","vbap_charg",
-     17         "vbap_erdat","vbap_ernam","vbap_erzet","vbap_faksp",
-     18         "vbap_grkor","vbap_kdmat","vbap_kwmeng","vbap_lgort",
-     19         "vbap_lprio","vbap_matnr","vbap_netpr","vbap_posex",
-     20         "vbap_prodh","vbap_vstel","vbap_werks",
-     21 
-     22         "vbep_bmeng","vbep_edatu","vbep_h_edatu","vbep_lifsp","vbep_mbdat",
-     23 
-     24         "vbuk_lfgsk","vbuk_wbstk","vbup_lfsta",
-     25 
-     26         "delvd_qty","expectedqtycumulative_cd",
-     27 
-     28         "f1_vbeln","lastpgidoc",
-     29 
-     30         "mard_labst","mard_klabs","mard_kinsm","mard_lgort","mard_matnr","mard_werks",
-     31 
-     32         "opendlvdoc","opendlvqty","pgidate","pgiqty_cd","qtyshippedttline",
-     33 
-     34         "shipto","shiptoname","frontload","poreceived",
-     35 
-     36         F.current_timestamp().alias("last_changed")
-     37     )
-     38 )
-     40 so_flat.createOrReplaceTempView("so_flat")
+# Isolate keys from catalog pollution
+prst_iso = (
+    so_calc
+    .withColumn("vbeln_iso", F.col("vbeln"))
+    .withColumn("posnr_iso", F.col("posnr"))
+    .withColumn("etenr_iso", F.col("etenr"))
+    .drop("vbeln","posnr","etenr")
+)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3229, in DataFrame.select(self, *cols)
-   3184 def select(self, *cols: "ColumnOrName") -> "DataFrame":  # type: ignore[misc]
-   3185     """Projects a set of expressions and returns a new :class:`DataFrame`.
-   3186 
-   3187     .. versionadded:: 1.3.0
-   (...)
-   3227     +-----+---+
-   3228     """
--> 3229     jdf = self._jdf.select(self._jcols(*cols))
-   3230     return DataFrame(jdf, self.sparkSession)
+# Build PRST table exactly like SAP
+prst_out = prst_iso.select(
+    "vbeln_iso",
+    "posnr_iso",
+    "etenr_iso",
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
+    "vbak_auart",
+    "vbak_aufnr",
+    "vbak_autlf",
+    "vbak_bstnk",
+    "vbak_erdat",
+    "vbak_ernam",
+    "vbak_faksk",
+    "vbak_ihrez",
+    "vbak_kunnr",
+    "vbak_lifsk",
+    "vbak_netwr",
+    "vbak_objnr",
+    "vbak_vkorg",
+    "vbak_vsnmr_v",
+    "vbak_waerk",
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
+    "vbap_abgru",
+    "vbap_aedat",
+    "vbap_arktx",
+    "vbap_charg",
+    "vbap_erdat",
+    "vbap_ernam",
+    "vbap_erzet",
+    "vbap_faksp",
+    "vbap_grkor",
+    "vbap_kdmat",
+    "vbap_kwmeng",
+    "vbap_lgort",
+    "vbap_lprio",
+    "vbap_matnr",
+    "vbap_netpr",
+    "vbap_posex",
+    "vbap_prodh",
+    "vbap_vstel",
+    "vbap_werks",
 
-AnalysisException: [AMBIGUOUS_REFERENCE] Reference `vbeln` is ambiguous, could be: [`spark_catalog`.`chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk`.`sales_order`.`vbeln`, `vbeln`].
+    "vbep_bmeng",
+    "vbep_edatu",
+    "vbep_lifsp",
+    "vbep_mbdat",
+
+    "vbuk_lfgsk",
+    "vbuk_wbstk",
+    "vbup_lfsta",
+
+    "mard_labst",
+    "mard_klabs",
+    "mard_kinsm",
+
+    "f1_vbeln",
+    "lastpgidoc",
+    "opendlvdoc",
+    "opendlvqty",
+    "qtyshippedttline",
+    "pgidate",
+    "dlvstatus",
+
+    "expectedqtycumulative_cd",
+    "delvd_qty",
+    "pgiqty_cd",
+    "openqty_cd",
+    "order_status_cd",
+
+    F.current_timestamp().alias("last_changed")
+)
+
+# Rename keys back
+prst_final = (
+    prst_out
+    .withColumnRenamed("vbeln_iso","vbeln")
+    .withColumnRenamed("posnr_iso","posnr")
+    .withColumnRenamed("etenr_iso","etenr")
+)
+
+prst_final.createOrReplaceTempView("prst_final")
