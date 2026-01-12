@@ -1,7 +1,25 @@
-— Cell 4: Implement PARSE_20 + build filter tables
+Cell 5: Apply SAP date-driven row filtering
 Business meaning:
-SAP passes comma-separated Sales Orgs and Order Types into the procedure and converts them into tables using PARSE_20.
-We replicate that so filtering works exactly the same in Fabric.
+SAP does not process all rows every run.
+It filters PRST rows based on the Date Flag (IP_DATE_FLAG) and date window.
+We reproduce the same logic here.
+🔹 Map SAP Date-Flag logic
+Flag
+Column used
+L
+vbap_erdat (line create)
+P
+pgidate
+R
+vbep_h_edatu
+C
+vbak_erdat
+F
+vbep_mbdat
+A
+vbap_aedat
+N
+No date filter
 
 
 
@@ -10,50 +28,22 @@ We replicate that so filtering works exactly the same in Fabric.
 
 
 
-def parse_20(csv_string):
-    return (
-        spark
-        .createDataFrame([(csv_string,)], ["raw"])
-        .select(F.explode(F.split(F.regexp_replace("raw","'",""), ",")))
-        .select(F.trim(F.col("col")).alias("object"))
-        .filter(F.col("object") != "")
-    )
 
 
 
-
-input_sales_org  = parse_20(ip_sales_org)
-input_order_type = parse_20(ip_order_type)
-
-input_sales_org.createOrReplaceTempView("input_sales_org")
-input_order_type.createOrReplaceTempView("input_order_type")
-
-
-
-
-
-marc_flag  = ip_data_pruning_flag[0]
-mbew_flag  = ip_data_pruning_flag[1]
-vekp_flag  = ip_data_pruning_flag[2]
-vbkd_flag  = ip_data_pruning_flag[3]
-afvc_flag  = ip_data_pruning_flag[4]
-qmel_flag  = ip_data_pruning_flag[5]
-t024x_flag = ip_data_pruning_flag[6]
-
-
-
-
-prst_filt = (
-    prst
-    .join(input_sales_org,
-          (prst["vbak_vkorg"] == input_sales_org["object"]) |
-          (input_sales_org["object"] == F.lit("ALL")),
-          "inner")
-    .join(input_order_type,
-          (prst["vbak_auart"] == input_order_type["object"]) |
-          (input_order_type["object"] == F.lit("ALL")),
-          "inner")
+date_cond = (
+    ( (F.lit(ip_date_flag) == 'L') & (prst_filt["vbap_erdat"].between(ip_erdat_from, ip_erdat_to)) ) |
+    ( (F.lit(ip_date_flag) == 'P') & (prst_filt["pgidate"].between(ip_erdat_from, ip_erdat_to)) ) |
+    ( (F.lit(ip_date_flag) == 'R') & (prst_filt["vbep_h_edatu"].between(ip_erdat_from, ip_erdat_to)) ) |
+    ( (F.lit(ip_date_flag) == 'C') & (prst_filt["vbak_erdat"].between(ip_erdat_from, ip_erdat_to)) ) |
+    ( (F.lit(ip_date_flag) == 'F') & (prst_filt["vbep_mbdat"].between(ip_erdat_from, ip_erdat_to)) ) |
+    ( (F.lit(ip_date_flag) == 'A') & (prst_filt["vbap_aedat"].between(ip_erdat_from, ip_erdat_to)) ) |
+    (F.lit(ip_date_flag) == 'N')
 )
+
+prst_run = prst_filt.filter(date_cond)
+prst_run.createOrReplaceTempView("prst_run")
+
 
 
 
