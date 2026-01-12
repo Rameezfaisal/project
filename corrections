@@ -1,11 +1,7 @@
-Cell 6 — Build delivery status and shipped quantities
+Cell 7 — Build order-header, customer, plant & inventory view
 Business meaning:
-Determine for every sales-order line:
-how much quantity is already shipped
-the open delivery document
-the PGI date
-and whether the line is only Created or already Shipped
-This reproduces SAP block l (LIPS + LIKP).
+Assemble the core commercial object:
+Sales order + line + customer + plant + inventory + shipping partner — this is the backbone on which all KPIs are calculated.
 
 
 
@@ -13,39 +9,67 @@ This reproduces SAP block l (LIPS + LIKP).
 
 
 
-# join deliveries to shipment headers
-lips_likp = (
-    lips
-    .join(likp, lips["vbeln"] == likp["vbeln"], "inner")
-    .filter(
-        (lips["vgbel"] != "") &
-        (~lips["vgbel"].startswith("4")) &
-        (~lips["vgbel"].startswith("3")) &
-        (likp["wadat_ist"] != "")
-    )
+# --- Ship-to partner ---
+shipto = (
+    vbpa
+    .filter((F.col("posnr") == "000000") & (F.col("parvw") == "WE"))
+    .join(kna1, "kunnr", "inner")
     .select(
-        lips["vgbel"].alias("vgbel_cd"),
-        lips["vgpos"].alias("vgpos_cd"),
-        lips["vbeln"].alias("dlv_vbeln_cd"),
-        lips["lgmng"].alias("lgmng_cd"),
-        lips["lfimg"].alias("lfimg_cd"),
-        likp["wadat_ist"].alias("pgidate_cd")
+        F.col("vbeln").alias("vbeln_cd"),
+        F.col("kunnr").alias("shipto_cd"),
+        F.col("name1").alias("shiptoname_cd")
     )
 )
 
-delivery = (
-    lips_likp
-    .groupBy("vgbel_cd", "vgpos_cd")
-    .agg(
-        F.max("dlv_vbeln_cd").alias("opendlvdoc_cd"),
-        F.sum("lgmng_cd").alias("opendlvqty_cd"),
-        F.sum("lfimg_cd").alias("qtyshippedttline_cd"),
-        F.max("pgidate_cd").alias("pgidate_cd")
-    )
-    .withColumn(
-        "dlvstatus_cd",
-        F.when(F.col("pgidate_cd").isNull(), F.lit("Created")).otherwise(F.lit("Shipped"))
+# --- Inventory (MARD) ---
+mard_flat = (
+    mard
+    .select(
+        F.col("werks").alias("werks_cd"),
+        F.col("lgort").alias("lgort_cd"),
+        F.col("matnr").alias("matnr_cd"),
+        F.col("labst").alias("mard_labst_cd"),
+        F.col("klabs").alias("mard_klabs_cd"),
+        F.col("kinsm").alias("mard_kinsm_cd"),
+        (F.coalesce(F.col("labst"),F.lit(0)) +
+         F.coalesce(F.col("klabs"),F.lit(0)) +
+         F.coalesce(F.col("kinsm"),F.lit(0))).alias("qoh_cd")
     )
 )
 
-delivery.createOrReplaceTempView("delivery")
+# --- Main commercial spine ---
+core = (
+    vbak
+    .join(vbuk, "vbeln", "inner")
+    .join(vbap, "vbeln", "inner")
+    .join(vbep, ["vbeln","posnr"], "inner")
+    .join(vbup, ["vbeln","posnr"], "inner")
+    .join(kna1, vbak["kunnr"] == kna1["kunnr"], "inner")
+    .join(shipto, "vbeln", "left")
+    .join(mara, vbap["matnr"] == mara["matnr"], "inner")
+    .join(mard_flat,
+          (vbap["werks"] == mard_flat["werks_cd"]) &
+          (vbap["matnr"] == mard_flat["matnr_cd"]),
+          "left")
+    .join(marc, (vbap["werks"] == marc["werks"]) & (vbap["matnr"] == marc["matnr"]), "left")
+    .selectExpr(
+        "vbak.vbeln as vbeln_cd",
+        "vbap.posnr as posnr_cd",
+        "vbep.etenr as etenr_cd",
+        "vbak.auart as vbak_auart",
+        "vbak.kunnr as vbak_kunnr",
+        "kna1.name1 as soldtoname",
+        "shipto_cd",
+        "shiptoname_cd",
+        "vbap.matnr as vbap_matnr",
+        "vbap.werks as vbap_werks",
+        "mard_labst_cd",
+        "mard_klabs_cd",
+        "mard_kinsm_cd",
+        "qoh_cd",
+        "marc.dispo as mrpv",
+        "marc.ekgrp as purchasegrp"
+    )
+)
+
+core.createOrReplaceTempView("core")
