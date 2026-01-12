@@ -1,33 +1,111 @@
----------------------------------------------------------------------------
-AttributeError                            Traceback (most recent call last)
-Cell In[133], line 10
-      1 # Rebuild JEST status
-      2 jest_status = (
-      3     jest
-      4     .filter(
-      5         (F.col("inact") != "X") &
-      6         (F.col("stat").isin("E0001", "E0004", "E0005", "E0008", "E0009"))
-      7     )
-      8     .alias("a")
-      9     .join(
----> 10         cv_tj30t.alias("b"),
-     11         (F.col("a.stat") == F.col("b.estat")) &
-     12         (F.col("b.stsma") == "Z0000003") &
-     13         (F.col("b.spras") == "E"),
-     14         "left"
-     15     )
-     16     .groupBy("a.objnr")
-     17     .agg(
-     18         F.max(F.when(F.col("a.stat") == "E0008", F.lit("X"))).alias("frontload"),
-     19         F.max(F.when(F.col("a.stat") == "E0009", F.lit("X"))).alias("poreceived"),
-     20         F.max(F.when(F.col("a.stat").isin("E0001","E0004","E0005"), F.col("b.txt04"))).alias("booking")
-     21     )
-     22 )
-     24 # Join into SO (SAP: a.OBJNR = j.OBJNR)
-     25 so = (
-     26     so
-     27     .join(jest_status, so["vbak_objnr"] == jest_status["objnr"], "left")
-     28     .drop(jest_status["objnr"])
-     29 )
+Cell 11
+Write final SAP-equivalent output to cdm.sales_order**
+Business meaning
+This reproduces the final INSERT INTO ZT_M_SALES_ORDER_STATUS of SAP —
+persisting the fully enriched sales-order view for reporting.
 
-AttributeError: 'str' object has no attribute 'alias'
+
+
+
+
+
+final_df = so_calc.selectExpr(
+    "vbeln as vbeln",
+    "posnr as posnr",
+    "etenr as etenr",
+
+    "order_status_cd as order_status",
+
+    "vbak_auart",
+    "vbak_aufnr",
+    "vbak_autlf",
+    "vbak_bstnk",
+    "vbak_erdat",
+    "vbak_ernam",
+    "vbak_faksk",
+    "vbak_ihrez",
+    "vbak_kunnr",
+    "vbak_lifsk",
+    "vbak_netwr",
+    "vbak_objnr",
+    "vbak_vkorg",
+    "vbak_vsnmr_v",
+    "vbak_waerk",
+
+    "vbap_abgru",
+    "vbap_aedat",
+    "vbap_arktx",
+    "vbap_charg",
+    "vbap_erdat",
+    "vbap_ernam",
+    "vbap_erzet",
+    "vbap_faksp",
+    "vbap_grkor",
+    "vbap_kdmat",
+    "vbap_kwmeng",
+    "vbap_lgort",
+    "vbap_lprio",
+    "vbap_matnr",
+    "vbap_netpr",
+    "vbap_posex",
+    "vbap_prodh",
+    "vbap_vstel",
+    "vbap_werks",
+
+    "vbep_bmeng",
+    "vbep_edatu",
+    "vbep_h_edatu",
+    "vbep_lifsp",
+    "vbep_mbdat",
+
+    "vbuk_lfgsk",
+    "vbuk_wbstk",
+    "vbup_lfsta",
+
+    "delvd_qty",
+    "expectedqtycumulative_cd as expectedqtycumulative",
+
+    "f1_vbeln",
+    "lastpgidoc",
+    "mard_labst",
+    "mard_klabs",
+    "mard_kinsm",
+    "mard_lgort",
+    "mard_matnr",
+    "mard_werks",
+    "opendlvdoc",
+    "opendlvqty",
+    "pgidate",
+    "pgiqty_cd as pgiqty",
+    "qtyshippedttline",
+    "shipto",
+    "shiptoname",
+    "frontload",
+    "poreceived",
+    "current_timestamp() as last_changed"
+)
+
+
+
+
+final_df = final_df.filter(
+    F.col("vbeln").isNotNull() &
+    F.col("posnr").isNotNull() &
+    F.col("etenr").isNotNull()
+)
+
+
+
+
+
+
+final_df.write.format("delta") \
+    .mode("overwrite") \
+    .option("overwriteSchema", "true") \
+    .saveAsTable("cdm.sales_order")
+
+
+
+
+
+
