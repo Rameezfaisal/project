@@ -1,52 +1,60 @@
-from pyspark.sql import functions as F
-from pyspark.sql import Window
-
-
-
-
-
-# ===== Control parameters =====
-ip_sales_org   = "ALL"        # example: '1000,2000' or 'ALL'
-ip_order_type  = "ALL"        # example: 'ZSO,ZFO' or 'ALL'
-ip_erdat_from  = "2023-01-01"
-ip_erdat_to    = "2025-12-31"
-ip_date_flag   = "N"          # L,P,R,C,F,A,N
-ip_data_pruning_flag = "YYYYYYY"  # MARC, MBEW, VEKP, VBKD, AFVC, QMEL, T024X
-
-# ===== Source PRST =====
-prst_table = "cdm.sales_order"
-
-# ===== ECC sources =====
-cv_marc   = "prd.global.ecc.cv_marc"
-cv_mbew   = "prd.global.ecc.cv_mbew"
-cv_vekp   = "prd.global.ecc.cv_vekp"
-cv_vbkd   = "prd.global.ecc.cvns_vbkd"
-cv_afko   = "prd.global.ecc.cv_afko"
-cv_afvc   = "prd.global.ecc.cv_afvc"
-cv_qmel   = "prd.global.ecc.cvns_qmel"
-cv_t024x  = "prd.global.ecc.cv_t024x"
-cv_mara   = "prd.global.ecc.cv_mara"
-cv_kna1   = "prd.global.ecc.cv_kna1"
-cv_part   = "prd.gops.glis.cv_part"
-
-# ===== Target =====
-target_table = "cdm.sales_order"
+— Cell 4: Implement PARSE_20 + build filter tables
+Business meaning:
+SAP passes comma-separated Sales Orgs and Order Types into the procedure and converts them into tables using PARSE_20.
+We replicate that so filtering works exactly the same in Fabric.
 
 
 
 
 
 
-prst = spark.table(prst_table)
 
-marc  = spark.table(cv_marc)
-mbew  = spark.table(cv_mbew)
-vekp  = spark.table(cv_vekp)
-vbkd  = spark.table(cv_vbkd)
-afko  = spark.table(cv_afko)
-afvc  = spark.table(cv_afvc)
-qmel  = spark.table(cv_qmel)
-t024x = spark.table(cv_t024x)
-mara  = spark.table(cv_mara)
-kna1  = spark.table(cv_kna1)
-part  = spark.table(cv_part)
+
+def parse_20(csv_string):
+    return (
+        spark
+        .createDataFrame([(csv_string,)], ["raw"])
+        .select(F.explode(F.split(F.regexp_replace("raw","'",""), ",")))
+        .select(F.trim(F.col("col")).alias("object"))
+        .filter(F.col("object") != "")
+    )
+
+
+
+
+input_sales_org  = parse_20(ip_sales_org)
+input_order_type = parse_20(ip_order_type)
+
+input_sales_org.createOrReplaceTempView("input_sales_org")
+input_order_type.createOrReplaceTempView("input_order_type")
+
+
+
+
+
+marc_flag  = ip_data_pruning_flag[0]
+mbew_flag  = ip_data_pruning_flag[1]
+vekp_flag  = ip_data_pruning_flag[2]
+vbkd_flag  = ip_data_pruning_flag[3]
+afvc_flag  = ip_data_pruning_flag[4]
+qmel_flag  = ip_data_pruning_flag[5]
+t024x_flag = ip_data_pruning_flag[6]
+
+
+
+
+prst_filt = (
+    prst
+    .join(input_sales_org,
+          (prst["vbak_vkorg"] == input_sales_org["object"]) |
+          (input_sales_org["object"] == F.lit("ALL")),
+          "inner")
+    .join(input_order_type,
+          (prst["vbak_auart"] == input_order_type["object"]) |
+          (input_order_type["object"] == F.lit("ALL")),
+          "inner")
+)
+
+
+
+
