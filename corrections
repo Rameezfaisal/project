@@ -1,111 +1,40 @@
-Cell 11
-Write final SAP-equivalent output to cdm.sales_order**
-Business meaning
-This reproduces the final INSERT INTO ZT_M_SALES_ORDER_STATUS of SAP —
-persisting the fully enriched sales-order view for reporting.
+# Force a single copy of each business key
+so_flat = (
+    so_calc
+    .select(
+        F.col("vbeln"),
+        F.col("posnr"),
+        F.col("etenr"),
 
+        F.col("order_status_cd").alias("order_status"),
 
+        "vbak_auart","vbak_aufnr","vbak_autlf","vbak_bstnk",
+        "vbak_erdat","vbak_ernam","vbak_faksk","vbak_ihrez",
+        "vbak_kunnr","vbak_lifsk","vbak_netwr","vbak_objnr",
+        "vbak_vkorg","vbak_vsnmr_v","vbak_waerk",
 
+        "vbap_abgru","vbap_aedat","vbap_arktx","vbap_charg",
+        "vbap_erdat","vbap_ernam","vbap_erzet","vbap_faksp",
+        "vbap_grkor","vbap_kdmat","vbap_kwmeng","vbap_lgort",
+        "vbap_lprio","vbap_matnr","vbap_netpr","vbap_posex",
+        "vbap_prodh","vbap_vstel","vbap_werks",
 
+        "vbep_bmeng","vbep_edatu","vbep_h_edatu","vbep_lifsp","vbep_mbdat",
 
+        "vbuk_lfgsk","vbuk_wbstk","vbup_lfsta",
 
-final_df = so_calc.selectExpr(
-    "vbeln as vbeln",
-    "posnr as posnr",
-    "etenr as etenr",
+        "delvd_qty","expectedqtycumulative_cd",
 
-    "order_status_cd as order_status",
+        "f1_vbeln","lastpgidoc",
 
-    "vbak_auart",
-    "vbak_aufnr",
-    "vbak_autlf",
-    "vbak_bstnk",
-    "vbak_erdat",
-    "vbak_ernam",
-    "vbak_faksk",
-    "vbak_ihrez",
-    "vbak_kunnr",
-    "vbak_lifsk",
-    "vbak_netwr",
-    "vbak_objnr",
-    "vbak_vkorg",
-    "vbak_vsnmr_v",
-    "vbak_waerk",
+        "mard_labst","mard_klabs","mard_kinsm","mard_lgort","mard_matnr","mard_werks",
 
-    "vbap_abgru",
-    "vbap_aedat",
-    "vbap_arktx",
-    "vbap_charg",
-    "vbap_erdat",
-    "vbap_ernam",
-    "vbap_erzet",
-    "vbap_faksp",
-    "vbap_grkor",
-    "vbap_kdmat",
-    "vbap_kwmeng",
-    "vbap_lgort",
-    "vbap_lprio",
-    "vbap_matnr",
-    "vbap_netpr",
-    "vbap_posex",
-    "vbap_prodh",
-    "vbap_vstel",
-    "vbap_werks",
+        "opendlvdoc","opendlvqty","pgidate","pgiqty_cd","qtyshippedttline",
 
-    "vbep_bmeng",
-    "vbep_edatu",
-    "vbep_h_edatu",
-    "vbep_lifsp",
-    "vbep_mbdat",
+        "shipto","shiptoname","frontload","poreceived",
 
-    "vbuk_lfgsk",
-    "vbuk_wbstk",
-    "vbup_lfsta",
-
-    "delvd_qty",
-    "expectedqtycumulative_cd as expectedqtycumulative",
-
-    "f1_vbeln",
-    "lastpgidoc",
-    "mard_labst",
-    "mard_klabs",
-    "mard_kinsm",
-    "mard_lgort",
-    "mard_matnr",
-    "mard_werks",
-    "opendlvdoc",
-    "opendlvqty",
-    "pgidate",
-    "pgiqty_cd as pgiqty",
-    "qtyshippedttline",
-    "shipto",
-    "shiptoname",
-    "frontload",
-    "poreceived",
-    "current_timestamp() as last_changed"
+        F.current_timestamp().alias("last_changed")
+    )
 )
 
-
-
-
-final_df = final_df.filter(
-    F.col("vbeln").isNotNull() &
-    F.col("posnr").isNotNull() &
-    F.col("etenr").isNotNull()
-)
-
-
-
-
-
-
-final_df.write.format("delta") \
-    .mode("overwrite") \
-    .option("overwriteSchema", "true") \
-    .saveAsTable("cdm.sales_order")
-
-
-
-
-
-
+so_flat.createOrReplaceTempView("so_flat")
