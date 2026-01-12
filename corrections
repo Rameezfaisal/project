@@ -1,50 +1,54 @@
-Cell 9 — Compute SAP order status, open quantity and PGI quantity
+Cell 10 — Create & write the Delta snapshot (cdm.sales_order)
 Business meaning:
-Apply SAP’s exact business rules to decide for every schedule line:
-Is the line Open or Closed
-How much is PGI quantity
-How much is still Open (back-ordered)
+Materialize the first SAP snapshot of all sales-order schedule lines into Fabric, exactly like
+ZT_M_SALES_ORDER_STATUS_V2 does in HANA.
 
 
 
 
 
 
-calc = (
-    prst
-    .withColumn(
-        "pgiqty",
-        F.when(F.coalesce(F.col("delvd_qty_cd"),F.lit(0)) >= F.coalesce(F.col("expectedqtycumulative_cd"),F.lit(0)),
-               F.coalesce(F.col("bmeng_cd"),F.lit(0)))
-         .otherwise(
-             F.greatest(
-                 F.coalesce(F.col("bmeng_cd"),F.lit(0)) -
-                 (F.coalesce(F.col("expectedqtycumulative_cd"),F.lit(0)) -
-                  F.coalesce(F.col("delvd_qty_cd"),F.lit(0))),
-                 F.lit(0)
-             )
-         )
+
+
+final_df = (
+    calc
+    .select(
+        F.col("vbeln_cd").alias("vbeln"),
+        F.col("posnr_cd").alias("posnr"),
+        F.col("etenr_cd").alias("etenr"),
+        F.col("order_status").alias("order_status"),
+        F.col("vbap_matnr").alias("vbap_matnr"),
+        F.col("vbap_werks").alias("vbap_werks"),
+        F.col("bmeng_cd").cast("decimal(13,3)").alias("vbep_bmeng"),
+        F.col("expectedqtycumulative_cd").cast("decimal(13,3)").alias("expectedqtycumulative"),
+        F.col("delvd_qty_cd").cast("double").alias("delvd_qty"),
+        F.col("pgiqty").cast("decimal(15,3)").alias("pgiqty"),
+        F.col("openqty").cast("decimal(15,3)").alias("opendlvqty"),
+        F.col("lastpgidoc_cd").alias("lastpgidoc"),
+        F.col("opendlvdoc_cd").alias("opendlvdoc"),
+        F.col("pgidate_cd").alias("pgidate"),
+        F.col("dlvstatus_cd").alias("dlvstatus"),
+        F.col("shipto_cd").alias("shipto"),
+        F.col("shiptoname_cd").alias("shiptoname"),
+        F.col("vbak_kunnr").alias("vbak_kunnr"),
+        F.col("soldtoname_cd").alias("soldtoname"),
+        F.col("mrpv_cd").alias("mrpv"),
+        F.col("purchasegrp_cd").alias("purchasegrp"),
+        F.current_timestamp().alias("last_changed")
     )
-    .withColumn(
-        "openqty",
-        F.when(
-            (F.col("bmeng_cd") > 0) &
-            (F.coalesce(F.col("delvd_qty_cd"),F.lit(0)) < F.col("bmeng_cd")),
-            F.when(
-                F.coalesce(F.col("expectedqtycumulative_cd"),F.lit(0)) <= F.coalesce(F.col("delvd_qty_cd"),F.lit(0)),
-                F.lit(0)
-            ).otherwise(
-                F.least(
-                    F.col("bmeng_cd"),
-                    F.col("expectedqtycumulative_cd") - F.coalesce(F.col("delvd_qty_cd"),F.lit(0))
-                )
-            )
-        ).otherwise(F.lit(0))
-    )
-    .withColumn(
-        "order_status",
-        F.when(F.col("openqty") > 0, F.lit("Open")).otherwise(F.lit("Closed"))
+    .filter(
+        F.col("vbeln").isNotNull() &
+        F.col("posnr").isNotNull() &
+        F.col("etenr").isNotNull()
     )
 )
 
-calc.createOrReplaceTempView("calc")
+# Create / overwrite the snapshot
+(
+    final_df
+    .write
+    .format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema","true")
+    .saveAsTable(target_table)
+)
