@@ -1,48 +1,100 @@
-# --- rename incoterm keys so they never collide ---
-hd_incoterm_rn = (
-    hd_incoterm
-    .select(
-        F.col("vbeln_cd").alias("hd_vbeln_cd"),
-        "inco1","kursk","prsdt"
+so_calc = (
+    so
+    # ---- Standard cost fallback ----
+    .withColumn(
+        "stdcost",
+        F.coalesce(F.col("stprs_2000"), F.col("stprs_3120"), F.lit(0))
+    )
+
+    # ---- Unit price local ----
+    .withColumn(
+        "unitpricelocalcurr",
+        F.when(F.col("vbak_waerk").isin("JPY","TWD","KRW"), F.col("vbap_netpr") * 100)
+         .otherwise(F.col("vbap_netpr"))
+    )
+
+    # ---- Ext local ----
+    .withColumn(
+        "extpricelocalcurr",
+        F.col("unitpricelocalcurr") * F.col("vbep_bmeng")
+    )
+
+    # ---- USD FX ----
+    .withColumn(
+        "fx",
+        F.when((F.col("kursk").isNull()) | (F.col("kursk") == 0) | (F.col("vbak_waerk") == "USD"), 1)
+         .otherwise(F.col("kursk"))
+    )
+
+    # ---- USD prices ----
+    .withColumn(
+        "unitpriceusd",
+        F.when(F.col("vbak_waerk").isin("JPY","TWD"), F.col("vbap_netpr") * 100)
+         .otherwise(F.col("vbap_netpr")) * F.col("fx")
+    )
+    .withColumn(
+        "extpriceusd",
+        F.col("unitpriceusd") * F.col("vbep_bmeng")
+    )
+
+    # ---- Ext cost ----
+    .withColumn(
+        "extcost",
+        F.col("stdcost") * F.col("vbep_bmeng")
+    )
+
+    # ---- Exchange rate ----
+    .withColumn(
+        "exchangerate",
+        F.when(F.col("vbak_waerk") == "KRW", 1 / F.col("kursk") * 100)
+         .otherwise(1 / F.col("kursk"))
+    )
+
+    # ---- Pricing date ----
+    .withColumn("pricingdate", F.col("prsdt").cast("string"))
+
+    # ---- Region ----
+    .withColumn(
+        "region",
+        F.when(F.col("vbak_vkorg") == "9000","NA")
+         .when(F.col("vbak_vkorg").between("2000","2900"),"EU")
+         .when(F.col("vbak_vkorg").between("3000","3001"),"JP")
+         .when(F.col("vbak_vkorg")=="3100","TW")
+         .when(F.col("vbak_vkorg")=="3200","KR")
+         .when(F.col("vbak_vkorg").isin("3300","3600"),"SEA")
+         .when(F.col("vbak_vkorg").isin("3400","3410","1000"),"CN")
+         .otherwise("NEW")
+    )
+
+    # ---- Tool type ----
+    .withColumn(
+        "tooltype",
+        F.when(F.col("labor")=="023","SPIN")
+         .when(F.col("labor")=="024","DEP")
+         .otherwise("ETCH+")
+    )
+
+    # ---- Shipment due ----
+    .withColumn(
+        "shipmentdueflag",
+        F.when((F.current_date() >= F.col("vbep_edatu")) & (F.col("poreceived")=="X"),"True")
+         .otherwise("False")
+    )
+
+    # ---- Gross SO USD ----
+    .withColumn(
+        "grosssopriceusd",
+        F.col("vbak_netwr") *
+        F.when(F.col("vbak_waerk").isin("JPY","TWD"),
+               F.when(F.col("kursk")==0,1).otherwise(F.col("kursk")) * 100)
+         .otherwise(F.when(F.col("kursk")==0,1).otherwise(F.col("kursk")))
+    )
+
+    # ---- High dollar ----
+    .withColumn(
+        "highdollarflag",
+        F.when(F.col("grosssopriceusd") > 50000,"True").otherwise("False")
     )
 )
 
-ln_incoterm_rn = (
-    ln_incoterm
-    .select(
-        F.col("vbeln_cd").alias("ln_vbeln_cd"),
-        F.col("posnr_cd").alias("ln_posnr_cd"),
-        "ihrez","inco1","zterm"
-    )
-)
-
-so = (
-    prst_run
-
-    # ---- Standard cost ----
-    .join(mbew_2000, prst_run["vbap_matnr"] == mbew_2000["matnr_cd"], "left")
-    .join(mbew_3120, prst_run["vbap_matnr"] == mbew_3120["matnr_cd"], "left")
-
-    # ---- Tracking ----
-    .join(vekp_track, prst_run["f1_vbeln"] == vekp_track["vpobjkey"], "left")
-
-    # ---- Header Incoterm ----
-    .join(hd_incoterm_rn, prst_run["vbeln"] == hd_incoterm_rn["hd_vbeln_cd"], "left")
-
-    # ---- Line Incoterm ----
-    .join(ln_incoterm_rn,
-          (prst_run["vbeln"] == ln_incoterm_rn["ln_vbeln_cd"]) &
-          (prst_run["posnr"] == ln_incoterm_rn["ln_posnr_cd"]),
-          "left")
-
-    # ---- Lab office ----
-    .join(lab, prst_run["vbap_matnr"] == lab["labor"], "left")
-
-    # ---- Activity ----
-    .join(afvc_act, prst_run["vbak_aufnr"] == afvc_act["aufpl"], "left")
-
-    # ---- Service Notification ----
-    .join(qmel_notif, prst_run["vbeln"] == qmel_notif["vbeln"], "left")
-)
-
-so.createOrReplaceTempView("so")
+so_calc.createOrReplaceTempView("so_calc")
