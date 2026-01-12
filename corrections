@@ -1,10 +1,24 @@
-prst_out = (
+# -----------------------------
+# Re-flatten business keys
+# -----------------------------
+calc_flat = (
     calc
     .select(
-        # SAP keys
         F.col("vbeln_cd").alias("vbeln"),
         F.col("posnr_cd").alias("posnr"),
         F.col("etenr_cd").alias("etenr"),
+        "*"
+    )
+    .drop("vbeln_cd","posnr_cd","etenr_cd")
+)
+
+# -----------------------------
+# Final PRST projection (SAP ZT_M_SALES_ORDER_STATUS_V2 – Phase 1)
+# -----------------------------
+prst_out = (
+    calc_flat
+    .select(
+        "vbeln","posnr","etenr",
 
         # VBAK
         "vbak_auart","vbak_aufnr","vbak_autlf","vbak_bstnk","vbak_erdat","vbak_ernam",
@@ -24,28 +38,14 @@ prst_out = (
         "vbuk_lfgsk","vbuk_wbstk","vbup_lfsta",
 
         # Inventory
-        F.col("mard_labst_cd").alias("mard_labst"),
-        F.col("mard_klabs_cd").alias("mard_klabs"),
-        F.col("mard_kinsm_cd").alias("mard_kinsm"),
-        F.col("mard_lgort_cd").alias("mard_lgort"),
-        F.col("mard_matnr_cd").alias("mard_matnr"),
-        F.col("mard_werks_cd").alias("mard_werks"),
+        "mard_labst_cd","mard_klabs_cd","mard_kinsm_cd","mard_lgort_cd","mard_matnr_cd","mard_werks_cd",
 
         # Delivery spine
-        F.col("f1_vbeln_cd").alias("f1_vbeln"),
-        F.col("lastpgidoc_cd").alias("lastpgidoc"),
-        F.col("opendlvdoc_cd").alias("opendlvdoc"),
-        F.col("opendlvqty_cd").alias("opendlvqty"),
-        F.col("qtyshippedttline_cd").alias("qtyshippedttline"),
-        F.col("pgidate_cd").alias("pgidate"),
-        F.col("dlvstatus_cd").alias("dlvstatus"),
+        "f1_vbeln_cd","lastpgidoc_cd","opendlvdoc_cd","opendlvqty_cd",
+        "qtyshippedttline_cd","pgidate_cd","dlvstatus_cd",
 
         # Schedule math
-        "expectedqtycumulative_cd",
-        F.col("delvd_qty_cd").alias("delvd_qty"),
-        "pgiqty_cd",
-        "openqty_cd",
-        "order_status_cd",
+        "expectedqtycumulative_cd","delvd_qty_cd","pgiqty_cd","openqty_cd","order_status_cd",
 
         F.current_timestamp().alias("last_changed")
     )
