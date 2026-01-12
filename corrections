@@ -1,8 +1,9 @@
 final_df = (
-    calc
-    .select(
+    calc.select(
         # Keys
-        "vbeln_cd","posnr_cd","etenr_cd",
+        F.col("vbeln_cd").alias("vbeln"),
+        F.col("posnr_cd").alias("posnr"),
+        F.col("etenr_cd").alias("etenr"),
 
         # VBAK
         "vbak_auart","vbak_aufnr","vbak_autlf","vbak_bstnk","vbak_erdat","vbak_ernam",
@@ -22,22 +23,33 @@ final_df = (
         "vbuk_lfgsk","vbuk_wbstk","vbup_lfsta",
 
         # Inventory snapshot
-        "mard_labst_cd","mard_klabs_cd","mard_kinsm_cd",
+        F.col("mard_labst_cd").alias("mard_labst"),
+        F.col("mard_klabs_cd").alias("mard_klabs"),
+        F.col("mard_kinsm_cd").alias("mard_kinsm"),
 
-        # Delivery & PGI
-        "f1_vbeln_cd","lastpgidoc_cd","opendlvdoc_cd","opendlvqty_cd",
-        "qtyshippedttline_cd","pgidate_cd","dlvstatus_cd",
+        # Delivery
+        F.col("f1_vbeln_cd").alias("f1_vbeln"),
+        F.col("lastpgidoc_cd").alias("lastpgidoc"),
+        F.col("opendlvdoc_cd").alias("opendlvdoc"),
+        F.col("opendlvqty_cd").alias("opendlvqty"),
+        F.col("qtyshippedttline_cd").alias("qtyshippedttline"),
+        F.col("pgidate_cd").alias("pgidate"),
+        F.col("dlvstatus_cd").alias("dlvstatus"),
 
         # Schedule math
-        "expectedqtycumulative_cd","delvd_qty_cd","pgiqty_cd","openqty_cd","order_status_cd",
+        "expectedqtycumulative_cd",
+        F.col("delvd_qty_cd").alias("delvd_qty"),
+        "pgiqty_cd",
+        "openqty_cd",
+        "order_status_cd",
 
         F.current_timestamp().alias("last_changed")
     )
-    # SAP NOT NULL columns
+    # enforce SAP NOT NULL
     .filter(
-        F.col("vbeln_cd").isNotNull() &
-        F.col("posnr_cd").isNotNull() &
-        F.col("etenr_cd").isNotNull()
+        F.col("vbeln").isNotNull() &
+        F.col("posnr").isNotNull() &
+        F.col("etenr").isNotNull()
     )
 )
 
