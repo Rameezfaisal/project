@@ -1,19 +1,14 @@
-spark.sql(f"""
-INSERT OVERWRITE {target_table}
-(
+INSERT OVERWRITE cdm.sales_order
+SELECT
   vbeln,posnr,etenr,
   vbak_auart,vbak_aufnr,vbak_autlf,vbak_bstnk,vbak_erdat,vbak_ernam,vbak_faksk,vbak_ihrez,
   vbak_kunnr,vbak_lifsk,vbak_netwr,vbak_objnr,vbak_vkorg,vbak_vsnmr_v,vbak_waerk,
   vbap_abgru,vbap_aedat,vbap_arktx,vbap_charg,vbap_erdat,vbap_ernam,vbap_erzet,vbap_faksp,
   vbap_grkor,vbap_kdmat,vbap_kwmeng,vbap_lgort,vbap_lprio,vbap_matnr,vbap_netpr,vbap_posex,
   vbap_prodh,vbap_vstel,vbap_werks,
-  vbep_bmeng,vbep_edatu,vbep_h_edatu,vbep_lifsp,vbep_mbdat,
+  vbep_bmeng,vbep_edatu,vbep_lifsp,vbep_mbdat,
   vbuk_lfgsk,vbuk_wbstk,vbup_lfsta,
-  mard_labst,mard_klabs,mard_kinsm,mard_lgort,mard_matnr,mard_werks,
+  mard_labst,mard_klabs,mard_kinsm,
   f1_vbeln,lastpgidoc,opendlvdoc,opendlvqty,qtyshippedttline,pgidate,dlvstatus,
-  expectedqtycumulative,delvd_qty,pgiqty,openqty,order_status,last_changed
-)
-SELECT
-  *
+  expectedqtycumulative_cd,delvd_qty,pgiqty_cd,openqty_cd,order_status_cd,last_changed
 FROM prst_out
-""")
