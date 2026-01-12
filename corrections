@@ -1,54 +1,75 @@
-Cell 10 — Create & write the Delta snapshot (cdm.sales_order)
-Business meaning:
-Materialize the first SAP snapshot of all sales-order schedule lines into Fabric, exactly like
-ZT_M_SALES_ORDER_STATUS_V2 does in HANA.
-
-
-
-
-
-
-
-
-final_df = (
-    calc
+core_full = (
+    vbak
+    .join(vbuk, vbak["vbeln"] == vbuk["vbeln"], "inner")
+    .join(vbap, vbak["vbeln"] == vbap["vbeln"], "inner")
+    .join(vbep, (vbap["vbeln"] == vbep["vbeln"]) & (vbap["posnr"] == vbep["posnr"]), "inner")
+    .join(vbup, (vbap["vbeln"] == vbup["vbeln"]) & (vbap["posnr"] == vbup["posnr"]), "inner")
+    .join(mara, vbap["matnr"] == mara["matnr"], "inner")
+    .join(mard_flat,
+          (vbap["werks"] == mard_flat["werks_cd"]) &
+          (vbap["matnr"] == mard_flat["matnr_cd"]),
+          "left")
     .select(
-        F.col("vbeln_cd").alias("vbeln"),
-        F.col("posnr_cd").alias("posnr"),
-        F.col("etenr_cd").alias("etenr"),
-        F.col("order_status").alias("order_status"),
-        F.col("vbap_matnr").alias("vbap_matnr"),
-        F.col("vbap_werks").alias("vbap_werks"),
-        F.col("bmeng_cd").cast("decimal(13,3)").alias("vbep_bmeng"),
-        F.col("expectedqtycumulative_cd").cast("decimal(13,3)").alias("expectedqtycumulative"),
-        F.col("delvd_qty_cd").cast("double").alias("delvd_qty"),
-        F.col("pgiqty").cast("decimal(15,3)").alias("pgiqty"),
-        F.col("openqty").cast("decimal(15,3)").alias("opendlvqty"),
-        F.col("lastpgidoc_cd").alias("lastpgidoc"),
-        F.col("opendlvdoc_cd").alias("opendlvdoc"),
-        F.col("pgidate_cd").alias("pgidate"),
-        F.col("dlvstatus_cd").alias("dlvstatus"),
-        F.col("shipto_cd").alias("shipto"),
-        F.col("shiptoname_cd").alias("shiptoname"),
-        F.col("vbak_kunnr").alias("vbak_kunnr"),
-        F.col("soldtoname_cd").alias("soldtoname"),
-        F.col("mrpv_cd").alias("mrpv"),
-        F.col("purchasegrp_cd").alias("purchasegrp"),
-        F.current_timestamp().alias("last_changed")
-    )
-    .filter(
-        F.col("vbeln").isNotNull() &
-        F.col("posnr").isNotNull() &
-        F.col("etenr").isNotNull()
+        # Keys
+        vbak["vbeln"].alias("vbeln_cd"),
+        vbap["posnr"].alias("posnr_cd"),
+        vbep["etenr"].alias("etenr_cd"),
+
+        # VBAK
+        vbak["auart"].alias("vbak_auart"),
+        vbak["aufnr"].alias("vbak_aufnr"),
+        vbak["autlf"].alias("vbak_autlf"),
+        vbak["bstnk"].alias("vbak_bstnk"),
+        vbak["erdat"].alias("vbak_erdat"),
+        vbak["ernam"].alias("vbak_ernam"),
+        vbak["faksk"].alias("vbak_faksk"),
+        vbak["ihrez"].alias("vbak_ihrez"),
+        vbak["kunnr"].alias("vbak_kunnr"),
+        vbak["lifsk"].alias("vbak_lifsk"),
+        vbak["netwr"].alias("vbak_netwr"),
+        vbak["objnr"].alias("vbak_objnr"),
+        vbak["vkorg"].alias("vbak_vkorg"),
+        vbak["vsnmr_v"].alias("vbak_vsnmr_v"),
+        vbak["waerk"].alias("vbak_waerk"),
+
+        # VBAP
+        vbap["abgru"].alias("vbap_abgru"),
+        vbap["aedat"].alias("vbap_aedat"),
+        vbap["arktx"].alias("vbap_arktx"),
+        vbap["charg"].alias("vbap_charg"),
+        vbap["erdat"].alias("vbap_erdat"),
+        vbap["ernam"].alias("vbap_ernam"),
+        vbap["erzet"].alias("vbap_erzet"),
+        vbap["faksp"].alias("vbap_faksp"),
+        vbap["grkor"].alias("vbap_grkor"),
+        vbap["kdmat"].alias("vbap_kdmat"),
+        vbap["kwmeng"].alias("vbap_kwmeng"),
+        vbap["lgort"].alias("vbap_lgort"),
+        vbap["lprio"].alias("vbap_lprio"),
+        vbap["matnr"].alias("vbap_matnr"),
+        vbap["netpr"].alias("vbap_netpr"),
+        vbap["posex"].alias("vbap_posex"),
+        vbap["prodh"].alias("vbap_prodh"),
+        vbap["vstel"].alias("vbap_vstel"),
+        vbap["werks"].alias("vbap_werks"),
+
+        # VBEP
+        vbep["bmeng"].alias("vbep_bmeng"),
+        vbep["edatu"].alias("vbep_edatu"),
+        vbep["lifsp"].alias("vbep_lifsp"),
+        vbep["mbdat"].alias("vbep_mbdat"),
+
+        # VBUK / VBUP
+        vbuk["lfgsk"].alias("vbuk_lfgsk"),
+        vbuk["wbstk"].alias("vbuk_wbstk"),
+        vbup["lfsta"].alias("vbup_lfsta"),
+
+        # Inventory snapshot
+        mard_flat["mard_labst_cd"],
+        mard_flat["mard_klabs_cd"],
+        mard_flat["mard_kinsm_cd"],
+        mard_flat["qoh_cd"]
     )
 )
 
-# Create / overwrite the snapshot
-(
-    final_df
-    .write
-    .format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema","true")
-    .saveAsTable(target_table)
-)
+core_full.createOrReplaceTempView("core_full")
