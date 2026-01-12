@@ -1,12 +1,34 @@
+from pyspark.sql import functions as F
 
+jest_status = (
+    jest
+    .filter(
+        (F.col("inact") != "X") &
+        (F.col("stat").isin("E0001", "E0004", "E0005", "E0008", "E0009"))
+    )
+    .alias("a")
+    .join(
+        tj30t.alias("b"),
+        (F.col("a.stat") == F.col("b.estat")) &
+        (F.col("b.stsma") == "Z0000003") &
+        (F.col("b.spras") == "E"),
+        "left"
+    )
+    .groupBy("a.objnr")
+    .agg(
+        F.max(F.when(F.col("a.stat") == "E0008", F.lit("X"))).alias("frontload"),
+        F.max(F.when(F.col("a.stat") == "E0009", F.lit("X"))).alias("poreceived"),
+        F.max(
+            F.when(F.col("a.stat").isin("E0001","E0004","E0005"), F.col("b.txt04"))
+        ).alias("booking")
+    )
+)
 
-cell - 2
+# SAP: LEFT JOIN j ON a.OBJNR = j.OBJNR
+so = (
+    so
+    .join(jest_status, so["vbak_objnr"] == jest_status["objnr"], "left")
+    .drop(jest_status["objnr"])
+)
 
-cv_jest      = "wsf_silk_glb_da_dev.lhs_glb.ecc.jest"
-cv_tj30t     = "wsf_silk_glb_da_dev.lhs_glb.ecc.tj30t"
-
-cell -3
-
-
-jest  = spark.table(cv_jest)
-tj30t = spark.table(cv_tj30t)
+so.createOrReplaceTempView("so")
