@@ -1,77 +1,106 @@
-sc = so_calc.alias("s")
+AnalysisException                         Traceback (most recent call last)
+Cell In[196], line 3
+      1 sc = so_calc.alias("s")
+----> 3 final_df = sc.selectExpr(
+      4     "s.vbeln as vbeln",
+      5     "s.posnr as posnr",
+      6     "s.etenr as etenr",
+      7 
+      8     "s.order_status_cd as order_status",
+      9 
+     10     "s.vbak_auart",
+     11     "s.vbak_aufnr",
+     12     "s.vbak_autlf",
+     13     "s.vbak_bstnk",
+     14     "s.vbak_erdat",
+     15     "s.vbak_ernam",
+     16     "s.vbak_faksk",
+     17     "s.vbak_ihrez",
+     18     "s.vbak_kunnr",
+     19     "s.vbak_lifsk",
+     20     "s.vbak_netwr",
+     21     "s.vbak_objnr",
+     22     "s.vbak_vkorg",
+     23     "s.vbak_vsnmr_v",
+     24     "s.vbak_waerk",
+     25 
+     26     "s.vbap_abgru",
+     27     "s.vbap_aedat",
+     28     "s.vbap_arktx",
+     29     "s.vbap_charg",
+     30     "s.vbap_erdat",
+     31     "s.vbap_ernam",
+     32     "s.vbap_erzet",
+     33     "s.vbap_faksp",
+     34     "s.vbap_grkor",
+     35     "s.vbap_kdmat",
+     36     "s.vbap_kwmeng",
+     37     "s.vbap_lgort",
+     38     "s.vbap_lprio",
+     39     "s.vbap_matnr",
+     40     "s.vbap_netpr",
+     41     "s.vbap_posex",
+     42     "s.vbap_prodh",
+     43     "s.vbap_vstel",
+     44     "s.vbap_werks",
+     45 
+     46     "s.vbep_bmeng",
+     47     "s.vbep_edatu",
+     48     "s.vbep_h_edatu",
+     49     "s.vbep_lifsp",
+     50     "s.vbep_mbdat",
+     51 
+     52     "s.vbuk_lfgsk",
+     53     "s.vbuk_wbstk",
+     54     "s.vbup_lfsta",
+     55 
+     56     "s.delvd_qty",
+     57     "s.expectedqtycumulative_cd as expectedqtycumulative",
+     58 
+     59     "s.f1_vbeln",
+     60     "s.lastpgidoc",
+     61     "s.mard_labst",
+     62     "s.mard_klabs",
+     63     "s.mard_kinsm",
+     64     "s.mard_lgort",
+     65     "s.mard_matnr",
+     66     "s.mard_werks",
+     67     "s.opendlvdoc",
+     68     "s.opendlvqty",
+     69     "s.pgidate",
+     70     "s.pgiqty_cd as pgiqty",
+     71     "s.qtyshippedttline",
+     72     "s.shipto",
+     73     "s.shiptoname",
+     74     "s.frontload",
+     75     "s.poreceived",
+     76     "current_timestamp() as last_changed"
+     77 )
 
-final_df = sc.selectExpr(
-    "s.vbeln as vbeln",
-    "s.posnr as posnr",
-    "s.etenr as etenr",
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3269, in DataFrame.selectExpr(self, *expr)
+   3267 if len(expr) == 1 and isinstance(expr[0], list):
+   3268     expr = expr[0]  # type: ignore[assignment]
+-> 3269 jdf = self._jdf.selectExpr(self._jseq(expr))
+   3270 return DataFrame(jdf, self.sparkSession)
 
-    "s.order_status_cd as order_status",
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
-    "s.vbak_auart",
-    "s.vbak_aufnr",
-    "s.vbak_autlf",
-    "s.vbak_bstnk",
-    "s.vbak_erdat",
-    "s.vbak_ernam",
-    "s.vbak_faksk",
-    "s.vbak_ihrez",
-    "s.vbak_kunnr",
-    "s.vbak_lifsk",
-    "s.vbak_netwr",
-    "s.vbak_objnr",
-    "s.vbak_vkorg",
-    "s.vbak_vsnmr_v",
-    "s.vbak_waerk",
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-    "s.vbap_abgru",
-    "s.vbap_aedat",
-    "s.vbap_arktx",
-    "s.vbap_charg",
-    "s.vbap_erdat",
-    "s.vbap_ernam",
-    "s.vbap_erzet",
-    "s.vbap_faksp",
-    "s.vbap_grkor",
-    "s.vbap_kdmat",
-    "s.vbap_kwmeng",
-    "s.vbap_lgort",
-    "s.vbap_lprio",
-    "s.vbap_matnr",
-    "s.vbap_netpr",
-    "s.vbap_posex",
-    "s.vbap_prodh",
-    "s.vbap_vstel",
-    "s.vbap_werks",
-
-    "s.vbep_bmeng",
-    "s.vbep_edatu",
-    "s.vbep_h_edatu",
-    "s.vbep_lifsp",
-    "s.vbep_mbdat",
-
-    "s.vbuk_lfgsk",
-    "s.vbuk_wbstk",
-    "s.vbup_lfsta",
-
-    "s.delvd_qty",
-    "s.expectedqtycumulative_cd as expectedqtycumulative",
-
-    "s.f1_vbeln",
-    "s.lastpgidoc",
-    "s.mard_labst",
-    "s.mard_klabs",
-    "s.mard_kinsm",
-    "s.mard_lgort",
-    "s.mard_matnr",
-    "s.mard_werks",
-    "s.opendlvdoc",
-    "s.opendlvqty",
-    "s.pgidate",
-    "s.pgiqty_cd as pgiqty",
-    "s.qtyshippedttline",
-    "s.shipto",
-    "s.shiptoname",
-    "s.frontload",
-    "s.poreceived",
-    "current_timestamp() as last_changed"
-)
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `s`.`vbeln` is ambiguous, could be: [`s`.`vbeln`, `s`.`vbeln`].; line 1 pos 0
