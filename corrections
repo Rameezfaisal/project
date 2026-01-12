@@ -1,7 +1,88 @@
+CREATE TABLE IF NOT EXISTS cdm.sales_order
+(
+  booking STRING,
+  carrier STRING,
+  carrier_name STRING,
+  dlvstatus STRING,
+  etenr STRING NOT NULL,
+  expectedqtycumulative DECIMAL(13,3),
+  f1_vbeln STRING,
+  frontload STRING,
+  last_changed TIMESTAMP,
+  lastpgidoc STRING,
+  mard_kinsm DECIMAL(13,3),
+  mard_klabs DECIMAL(13,3),
+  mard_labst DECIMAL(13,3),
+  mard_lgort STRING,
+  mard_matnr STRING,
+  mard_werks STRING,
+  order_status STRING,
+  opendlvdoc STRING,
+  opendlvqty DECIMAL(13,3),
+  pgidate DATE,
+  pgiqty DECIMAL(15,3),
+  poreceived STRING,
+  posnr STRING NOT NULL,
+  qtyshippedttline DECIMAL(13,3),
+  shipto STRING,
+  shiptoname STRING,
+  vbak_auart STRING,
+  vbak_aufnr STRING,
+  vbak_autlf STRING,
+  vbak_bstnk STRING,
+  vbak_erdat DATE,
+  vbak_ernam STRING,
+  vbak_faksk STRING,
+  vbak_ihrez STRING,
+  vbak_kunnr STRING,
+  vbak_lifsk STRING,
+  vbak_netwr DECIMAL(15,2),
+  vbak_objnr STRING,
+  vbak_vkorg STRING,
+  vbak_vsnmr_v STRING,
+  vbak_waerk STRING,
+  vbap_abgru STRING,
+  vbap_aedat DATE,
+  vbap_arktx STRING,
+  vbap_charg STRING,
+  vbap_erdat DATE,
+  vbap_ernam STRING,
+  vbap_erzet STRING,
+  vbap_faksp STRING,
+  vbap_grkor STRING,
+  vbap_kdmat STRING,
+  vbap_kwmeng DECIMAL(15,3),
+  vbap_lgort STRING,
+  vbap_lprio STRING,
+  vbap_matnr STRING,
+  vbap_netpr DECIMAL(11,2),
+  vbap_posex STRING,
+  vbap_prodh STRING,
+  vbap_vstel STRING,
+  vbap_werks STRING,
+  vbeln STRING NOT NULL,
+  vbep_bmeng DECIMAL(13,3),
+  vbep_edatu DATE,
+  vbep_h_edatu DATE,
+  vbep_lifsp STRING,
+  vbep_mbdat DATE,
+  vbuk_lfgsk STRING,
+  vbuk_wbstk STRING,
+  vbup_lfsta STRING,
+  delvd_qty DOUBLE
+)
+USING DELTA;
 
-final_df = (
-    calc.select(
-        # Keys
+
+
+
+
+
+
+prst_out = (
+    calc
+    .select(
+        # SAP keys
         F.col("vbeln_cd").alias("vbeln"),
         F.col("posnr_cd").alias("posnr"),
         F.col("etenr_cd").alias("etenr"),
@@ -18,17 +99,20 @@ final_df = (
         "vbap_werks",
 
         # VBEP
-        "vbep_bmeng","vbep_edatu","vbep_lifsp","vbep_mbdat",
+        "vbep_bmeng","vbep_edatu","vbep_h_edatu","vbep_lifsp","vbep_mbdat",
 
         # VBUK / VBUP
         "vbuk_lfgsk","vbuk_wbstk","vbup_lfsta",
 
-        # Inventory snapshot
+        # Inventory
         F.col("mard_labst_cd").alias("mard_labst"),
         F.col("mard_klabs_cd").alias("mard_klabs"),
         F.col("mard_kinsm_cd").alias("mard_kinsm"),
+        F.col("mard_lgort_cd").alias("mard_lgort"),
+        F.col("mard_matnr_cd").alias("mard_matnr"),
+        F.col("mard_werks_cd").alias("mard_werks"),
 
-        # Delivery
+        # Delivery spine
         F.col("f1_vbeln_cd").alias("f1_vbeln"),
         F.col("lastpgidoc_cd").alias("lastpgidoc"),
         F.col("opendlvdoc_cd").alias("opendlvdoc"),
@@ -46,19 +130,27 @@ final_df = (
 
         F.current_timestamp().alias("last_changed")
     )
-    # enforce SAP NOT NULL
-    .filter(
-        F.col("vbeln").isNotNull() &
-        F.col("posnr").isNotNull() &
-        F.col("etenr").isNotNull()
-    )
+    .filter("vbeln is not null and posnr is not null and etenr is not null")
 )
 
+prst_out.createOrReplaceTempView("prst_out")
+
+spark.sql("""
+INSERT OVERWRITE cdm.sales_order
 (
-    final_df
-    .write
-    .format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema","true")
-    .saveAsTable(target_table)
+  vbeln,posnr,etenr,
+  vbak_auart,vbak_aufnr,vbak_autlf,vbak_bstnk,vbak_erdat,vbak_ernam,vbak_faksk,vbak_ihrez,
+  vbak_kunnr,vbak_lifsk,vbak_netwr,vbak_objnr,vbak_vkorg,vbak_vsnmr_v,vbak_waerk,
+  vbap_abgru,vbap_aedat,vbap_arktx,vbap_charg,vbap_erdat,vbap_ernam,vbap_erzet,vbap_faksp,
+  vbap_grkor,vbap_kdmat,vbap_kwmeng,vbap_lgort,vbap_lprio,vbap_matnr,vbap_netpr,vbap_posex,
+  vbap_prodh,vbap_vstel,vbap_werks,
+  vbep_bmeng,vbep_edatu,vbep_h_edatu,vbep_lifsp,vbep_mbdat,
+  vbuk_lfgsk,vbuk_wbstk,vbup_lfsta,
+  mard_labst,mard_klabs,mard_kinsm,mard_lgort,mard_matnr,mard_werks,
+  f1_vbeln,lastpgidoc,opendlvdoc,opendlvqty,qtyshippedttline,pgidate,dlvstatus,
+  expectedqtycumulative,delvd_qty,pgiqty,openqty,order_status,last_changed
 )
+SELECT
+  *
+FROM prst_out
+""")
