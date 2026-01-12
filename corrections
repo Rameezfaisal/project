@@ -1,112 +1,62 @@
-Cell 6: Data-pruning of ECC tables
+Cell 7: Build SAP business enrichments
 Business meaning:
-SAP does not join ECC tables on all rows —
-it first limits them to only the sales orders & materials that appear in PRST.
-This is the biggest performance win in the optimized design.
-We now reproduce that.
+This reproduces the heavy part of CV_SQL_SO_OPTIMIZED —
+joining PRST with ECC lookup tables to derive:
+Costs
+Tracking
+Incoterms
+Lab office
+Activity type
+Service notifications
+These are the columns SAP does not store in PRST.
 
 
 
 
-Build PRST key sets
 
 
-prst_keys = prst_run.select("vbeln","posnr","vbap_matnr","vbap_werks").distinct()
-
-prst_keys.createOrReplaceTempView("prst_keys")
-
-
-
-
-MARC (Material-Plant)
-
-
-marc_pruned = (
-    marc
-    .join(prst_keys,
-          (marc["matnr"] == prst_keys["vbap_matnr"]) &
-          (marc["werks"] == prst_keys["vbap_werks"]),
-          "inner")
-    .filter(F.lit(marc_flag) == "Y")
+# ---- MBEW cost split ----
+mbew_2000 = (
+    mbew_pruned
+    .filter(F.col("bwkey") == "2000")
+    .select(F.col("matnr").alias("matnr_cd"), F.col("stprs").alias("stprs_2000"))
 )
 
-
-
- MBEW (standard cost – 2000 & 3120)
-
-
-mbew_pruned = (
-    mbew
-    .join(prst_keys, mbew["matnr"] == prst_keys["vbap_matnr"], "inner")
-    .filter((F.lit(mbew_flag) == "Y") & (mbew["bwkey"].isin("2000","3120")))
+mbew_3120 = (
+    mbew_pruned
+    .filter(F.col("bwkey") == "3120")
+    .select(F.col("matnr").alias("matnr_cd"), F.col("stprs").alias("stprs_3120"))
 )
 
-
-
-
-VEKP (Tracking)
-
-
-vekp_pruned = (
-    vekp
-    .join(prst_run.select("f1_vbeln").distinct(),
-          vekp["vpobjkey"] == prst_run["f1_vbeln"],
-          "inner")
-    .filter(F.lit(vekp_flag) == "Y")
+# ---- Header Incoterm ----
+hd_incoterm = (
+    vbkd_pruned
+    .filter(F.col("posnr") == "000000")
+    .select("vbeln","inco1","kursk","prsdt")
 )
 
+# ---- Line Incoterm ----
+ln_incoterm = vbkd_pruned.select("vbeln","posnr","ihrez","inco1","zterm")
 
-
-
-VBKD (Incoterms)
-
-
-vbkd_pruned = (
-    vbkd
-    .join(prst_run.select("vbeln","posnr").distinct(),
-          (vbkd["vbeln"] == prst_run["vbeln"]) &
-          (vbkd["posnr"] == prst_run["posnr"]),
-          "inner")
-    .filter(F.lit(vbkd_flag) == "Y")
+# ---- VEKP Tracking ----
+vekp_track = (
+    vekp_pruned
+    .groupBy("vpobjkey")
+    .agg(F.max("exidv2").alias("track"))
 )
 
+# ---- Lab office ----
+lab = t024x_pruned.select("labor","lbtxt")
 
-
-
-
-AFVC (Activity Type)
-
-
-afvc_pruned = (
-    afko
-    .join(prst_run.select("vbak_aufnr").distinct(),
-          afko["aufnr"] == prst_run["vbak_aufnr"],
-          "inner")
-    .join(afvc, "aufpl")
-    .filter(F.lit(afvc_flag) == "Y")
+# ---- Activity type ----
+afvc_act = (
+    afvc_pruned
+    .groupBy("aufpl")
+    .agg(F.first("larnt").alias("activitytype"))
 )
 
+# ---- Service Notification ----
+qmel_notif = qmel_pruned.select(F.col("aufnr").alias("vbeln"), "qmnum")
 
 
 
-QMEL (Service notification)
-
-
-qmel_pruned = (
-    qmel
-    .join(prst_run.select("vbeln").distinct(),
-          qmel["aufnr"] == prst_run["vbeln"],
-          "inner")
-    .filter(F.lit(qmel_flag) == "Y")
-)
-
-
-
-
-T024X (Lab office)
-
-
-t024x_pruned = (
-    t024x
-    .filter((t024x["spras"] == "E") & (F.lit(t024x_flag) == "Y"))
-)
