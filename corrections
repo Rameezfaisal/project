@@ -1,69 +1,50 @@
-Cell 8 — Assemble PRST (the SAP snapshot rows)
+Cell 9 — Compute SAP order status, open quantity and PGI quantity
 Business meaning:
-This is where we rebuild exactly what SAP calls
-ZT_M_SALES_ORDER_STATUS_V2 —
-the full order-line-schedule snapshot that drives both reporting and the incremental engine.
-We now combine:
-Commercial spine (Cell 7)
-Schedule cumulative qty (Cell 4)
-Delivered & PGI (Cell 5)
-Delivery status (Cell 6)
+Apply SAP’s exact business rules to decide for every schedule line:
+Is the line Open or Closed
+How much is PGI quantity
+How much is still Open (back-ordered)
 
 
 
 
 
 
-
-
-
-prst = (
-    core
-    .join(vbep_cum,
-          (core["vbeln_cd"] == vbep_cum["vbeln_cd"]) &
-          (core["posnr_cd"] == vbep_cum["posnr_cd"]) &
-          (core["etenr_cd"] == vbep_cum["etenr_cd"]),
-          "left")
-    .join(delivered,
-          (core["vbeln_cd"] == delivered["vbelv_cd"]) &
-          (core["posnr_cd"] == delivered["posnv_cd"]),
-          "left")
-    .join(pgi,
-          (core["vbeln_cd"] == pgi["vbelv_cd"]) &
-          (core["posnr_cd"] == pgi["posnv_cd"]),
-          "left")
-    .join(delivery,
-          (core["vbeln_cd"] == delivery["vgbel_cd"]) &
-          (core["posnr_cd"] == delivery["vgpos_cd"]),
-          "left")
-    .select(
-        core["vbeln_cd"],
-        core["posnr_cd"],
-        core["etenr_cd"],
-        core["vbak_auart"],
-        core["vbak_kunnr"],
-        core["soldtoname_cd"],
-        core["shipto_cd"],
-        core["shiptoname_cd"],
-        core["vbap_matnr"],
-        core["vbap_werks"],
-        core["mard_labst_cd"],
-        core["mard_klabs_cd"],
-        core["mard_kinsm_cd"],
-        core["qoh_cd"],
-        core["mrpv_cd"],
-        core["purchasegrp_cd"],
-        vbep_cum["bmeng_cd"],
-        vbep_cum["expectedqtycumulative_cd"],
-        delivered["delvd_qty_cd"],
-        delivered["f1_vbeln_cd"],
-        pgi["lastpgidoc_cd"],
-        delivery["opendlvdoc_cd"],
-        delivery["opendlvqty_cd"],
-        delivery["qtyshippedttline_cd"],
-        delivery["pgidate_cd"],
-        delivery["dlvstatus_cd"]
+calc = (
+    prst
+    .withColumn(
+        "pgiqty",
+        F.when(F.coalesce(F.col("delvd_qty_cd"),F.lit(0)) >= F.coalesce(F.col("expectedqtycumulative_cd"),F.lit(0)),
+               F.coalesce(F.col("bmeng_cd"),F.lit(0)))
+         .otherwise(
+             F.greatest(
+                 F.coalesce(F.col("bmeng_cd"),F.lit(0)) -
+                 (F.coalesce(F.col("expectedqtycumulative_cd"),F.lit(0)) -
+                  F.coalesce(F.col("delvd_qty_cd"),F.lit(0))),
+                 F.lit(0)
+             )
+         )
+    )
+    .withColumn(
+        "openqty",
+        F.when(
+            (F.col("bmeng_cd") > 0) &
+            (F.coalesce(F.col("delvd_qty_cd"),F.lit(0)) < F.col("bmeng_cd")),
+            F.when(
+                F.coalesce(F.col("expectedqtycumulative_cd"),F.lit(0)) <= F.coalesce(F.col("delvd_qty_cd"),F.lit(0)),
+                F.lit(0)
+            ).otherwise(
+                F.least(
+                    F.col("bmeng_cd"),
+                    F.col("expectedqtycumulative_cd") - F.coalesce(F.col("delvd_qty_cd"),F.lit(0))
+                )
+            )
+        ).otherwise(F.lit(0))
+    )
+    .withColumn(
+        "order_status",
+        F.when(F.col("openqty") > 0, F.lit("Open")).otherwise(F.lit("Closed"))
     )
 )
 
-prst.createOrReplaceTempView("prst")
+calc.createOrReplaceTempView("calc")
