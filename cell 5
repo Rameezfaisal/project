@@ -1,392 +1,55 @@
-# CELL 1: Imports
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-from pyspark.sql.types import *
-
-# Set Legacy Time Parser for compatibility
-spark.conf.set("spark.sql.legacy.timeParserPolicy", "CORRECTED")
-
-
-
-
-
-
-# CELL 2: Configuration & Parameters
-# -------------------------------------------------------------------------
-# Define Table Paths
-# -------------------------------------------------------------------------
-paths = {
-    # The output of the PREVIOUS notebook (Base Table)
-    "sales_order_v1": "lakehouse.sales_order_v1", 
-    
-    # Master Data / Lookups
-    "kna1":  "wsf_silk_glb_da_dev.lhs_glb.ecc.kna1",
-    "mara":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mara",
-    "part":  "lhs_glb.eng_test.stg_omat_part",
-    "marc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.marc",
-    "mbew":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mbew",
-    "t024x": "wsf_silk_glb_da_dev.lhs_glb.ecc.t024x",
-    "qmel":  "wsf_silk_glb_da_dev.lhs_glb.ecc.qmel",
-    "afko":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afko",
-    "afvc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afvc",
-    "vekp":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vekp",
-    "vbkd":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbkd"
-}
-
-# -------------------------------------------------------------------------
-# Input Parameters (Simulating SAP Procedure Inputs)
-# -------------------------------------------------------------------------
-# You can convert these to Fabric Widgets using dbutils.widgets in production
-
-params = {
-    "IP_DATA_PRUNING_FLAG": "YYYYYYY", # Default: Retrieve all enrichments
-    "IP_SALES_ORG": ["ALL"],           # List or ["ALL"]
-    "IP_ORDER_TYPE": ["ALL"],          # List or ["ALL"]
-    
-    # Date Filtering Logic
-    "IP_DATE_FLAG": "N",               # L=LineCreate, P=PGI, R=Req, C=HeaderCreate, F=Firm, A=Change, N=None
-    "IP_ERDAT_FROM": "2023-01-01",
-    "IP_ERDAT_TO": "2025-12-31"
-}
-
-
-
-
-
-
-
-
-# CELL 3: Read Base Data & Source Tables
-
-# 1. Read the Materialized Base Table (Result of Previous Procedure)
-# Alias 'prst' matches SAP script alias for 'Persistent Table'
-df_prst = spark.read.table(paths["sales_order_v1"]).alias("prst")
-
-# 2. Read Lookups
-df_kna1 = spark.read.table(paths["kna1"]).alias("kna1")
-df_mara = spark.read.table(paths["mara"]).alias("mara")
-df_part = spark.read.table(paths["part"]).alias("part")
-df_marc = spark.read.table(paths["marc"]).alias("marc")
-df_mbew = spark.read.table(paths["mbew"]).alias("mbew")
-df_t024x = spark.read.table(paths["t024x"]).alias("t024x")
-df_qmel = spark.read.table(paths["qmel"]).alias("q")
-df_afko = spark.read.table(paths["afko"]).alias("afko")
-df_afvc = spark.read.table(paths["afvc"]).alias("afvc")
-df_vekp = spark.read.table(paths["vekp"]).alias("vekp")
-df_vbkd = spark.read.table(paths["vbkd"]).alias("vbkd")
-
-# Parse Pruning Flags
-flags = {
-    "MARC": params["IP_DATA_PRUNING_FLAG"][0] == 'Y',
-    "MBEW": params["IP_DATA_PRUNING_FLAG"][1] == 'Y',
-    "VEKP": params["IP_DATA_PRUNING_FLAG"][2] == 'Y',
-    "VBKD": params["IP_DATA_PRUNING_FLAG"][3] == 'Y',
-    "AFVC": params["IP_DATA_PRUNING_FLAG"][4] == 'Y',
-    "QMEL": params["IP_DATA_PRUNING_FLAG"][5] == 'Y',
-    "T024X": params["IP_DATA_PRUNING_FLAG"][6] == 'Y'
-}
-
-
-
-
-
-
-
-
-
-
-# CELL 4: Prepare Lookup DataFrames
-
-# 1. MBEW (Standard Price) - Split by BWKEY 2000 & 3120
-# We only fetch if flag is True, else empty DF to save compute
-if flags["MBEW"]:
-    df_mbew_2000 = df_mbew.filter(F.col("bwkey") == '2000').select(F.col("matnr"), F.col("stprs").alias("stprs_2000"))
-    df_mbew_3120 = df_mbew.filter(F.col("bwkey") == '3120').select(F.col("matnr"), F.col("stprs").alias("stprs_3120"))
-else:
-    df_mbew_2000 = spark.createDataFrame([], StructType([StructField("matnr", StringType()), StructField("stprs_2000", DecimalType(11,2))]))
-    df_mbew_3120 = spark.createDataFrame([], StructType([StructField("matnr", StringType()), StructField("stprs_3120", DecimalType(11,2))]))
-
-# 2. AFKO / ACT (Service Order Activity)
-if flags["AFVC"]:
-    df_afvc_header = df_afvc.groupBy("aufpl").agg(F.min("vornr").alias("vornr"))
-    df_act_base = df_afvc_header.join(df_afvc, ["aufpl", "vornr"], "left") \
-        .select(F.col("aufpl"), F.col("larnt"))
-    
-    # Join AFKO to get AUFNR -> AUFPL mapping
-    df_act = df_afko.select("aufnr", "aufpl").join(df_act_base, "aufpl") \
-        .select(F.col("aufnr").alias("act_aufnr"), F.col("larnt").alias("act_larnt"))
-else:
-    df_act = spark.createDataFrame([], StructType([StructField("act_aufnr", StringType()), StructField("act_larnt", StringType())]))
-
-# 3. VEKP (Tracking / Handling Units)
-if flags["VEKP"]:
-    df_vekp_agg = df_vekp.groupBy("vpobjkey").agg(F.max("exidv2").alias("track")) \
-        .select(F.col("vpobjkey").alias("vekp_key"), F.col("track"))
-else:
-    df_vekp_agg = spark.createDataFrame([], StructType([StructField("vekp_key", StringType()), StructField("track", StringType())]))
-
-# 4. VBKD (Incoterms)
-if flags["VBKD"]:
-    # Header Incoterms (Posnr = '000000')
-    df_hd_incoterm = df_vbkd.filter(F.col("posnr") == '000000').select(
-        F.col("vbeln").alias("hd_vbeln"), 
-        F.col("inco1").alias("hd_inco1"),
-        F.col("kursk").alias("hd_kursk"),
-        F.col("prsdt").alias("hd_prsdt")
-    )
-    # Line Incoterms
-    df_ln_incoterm = df_vbkd.select(
-        F.col("vbeln").alias("ln_vbeln"),
-        F.col("posnr").alias("ln_posnr"),
-        F.col("inco1").alias("ln_inco1"),
-        F.col("zterm").alias("ln_zterm"),
-        F.col("ihrez").alias("ln_ihrez")
-    )
-else:
-    # Create dummies if flag is off to prevent join errors
-    df_hd_incoterm = spark.createDataFrame([], StructType([StructField("hd_vbeln", StringType()), StructField("hd_inco1", StringType()), StructField("hd_kursk", DecimalType(9,5)), StructField("hd_prsdt", DateType())]))
-    df_ln_incoterm = spark.createDataFrame([], StructType([StructField("ln_vbeln", StringType()), StructField("ln_posnr", StringType()), StructField("ln_inco1", StringType()), StructField("ln_zterm", StringType()), StructField("ln_ihrez", StringType())]))
-
-# 5. Lab Office
-df_lab = df_t024x.filter(F.col("spras") == 'E').select(
-    F.col("labor").alias("lab_labor"), 
-    F.col("lbtxt").alias("lab_description")
-)
-
-
-
-
-
-
-
-
-
-# CELL 5: Main Join Logic
-# Joining the Base Table (prst) with all lookups
-
-df_joined = df_prst \
-    .join(df_kna1, F.col("prst.vbak_kunnr") == F.col("kna1.kunnr"), "inner") \
-    .join(df_mara, F.col("prst.vbap_matnr") == F.col("mara.matnr"), "inner") \
-    .join(df_part, F.col("part.Part") == F.col("prst.vbap_matnr"), "inner") \
-    .join(df_marc, (F.col("prst.vbap_werks") == F.col("marc.werks")) & (F.col("prst.vbap_matnr") == F.col("marc.matnr")), "left") \
-    .join(df_mbew_2000, F.col("prst.vbap_matnr") == F.col("df_mbew_2000.matnr"), "left") \
-    .join(df_mbew_3120, F.col("prst.vbap_matnr") == F.col("df_mbew_3120.matnr"), "left") \
-    .join(df_lab, F.col("mara.labor") == F.col("lab_labor"), "left") \
-    .join(df_qmel, F.col("prst.vbeln") == F.col("q.aufnr"), "left") \
-    .join(df_afko, F.col("prst.vbak_aufnr") == F.col("afko.aufnr"), "left") \
-    .join(df_act, F.col("prst.vbak_aufnr") == F.col("act_aufnr"), "left") \
-    .join(df_vekp_agg, F.col("prst.f1_vbeln") == F.col("vekp_key"), "left") \
-    .join(df_hd_incoterm, F.col("prst.vbeln") == F.col("hd_vbeln"), "left") \
-    .join(df_ln_incoterm, (F.col("prst.vbeln") == F.col("ln_vbeln")) & (F.col("prst.posnr") == F.col("ln_posnr")), "left")
-
-
-
-
-
-
-
-
-
-
-
-
-# CELL 6: Dynamic Filtering Logic (The "WHERE" Clause)
-
-# 1. Base Filter (732 Days History OR Open Status)
-# Note: Using 'order_status' column from base table which corresponds to PRST.ORDER_STATUS
-base_filter = (
-    (~F.col("prst.vbak_auart").isin('ZVC', 'ZR07')) &
-    (
-        (F.col("prst.vbap_erdat") >= F.date_add(F.current_date(), -732)) |
-        (F.col("prst.order_status") == 'Open')
-    )
-)
-
-# 2. Dynamic Date Filter based on IP_DATE_FLAG
-date_flag = params["IP_DATE_FLAG"]
-date_from = params["IP_ERDAT_FROM"]
-date_to = params["IP_ERDAT_TO"]
-
-date_filter_expr = F.lit(True) # Default True if Flag is 'N'
-
-if date_flag == 'L': # Line Create Date
-    date_filter_expr = F.col("prst.vbap_erdat").between(date_from, date_to)
-elif date_flag == 'P': # PGI Date
-    date_filter_expr = F.col("prst.pgidate").between(date_from, date_to)
-elif date_flag == 'R': # Request Date
-    date_filter_expr = F.col("prst.vbep_h_edatu").between(date_from, date_to)
-elif date_flag == 'C': # Header Create Date
-    date_filter_expr = F.col("prst.vbak_erdat").between(date_from, date_to)
-elif date_flag == 'F': # Firm Commit Date
-    date_filter_expr = F.col("prst.vbep_mbdat").between(date_from, date_to)
-elif date_flag == 'A': # Change Date
-    date_filter_expr = F.col("prst.vbap_aedat").between(date_from, date_to)
-# 'N' passes everything
-
-# 3. Sales Org & Order Type Filters
-sales_orgs = params["IP_SALES_ORG"]
-order_types = params["IP_ORDER_TYPE"]
-
-# Handle "ALL" logic
-sales_org_filter = F.lit(True)
-if "ALL" not in sales_orgs:
-    sales_org_filter = F.col("prst.vbak_vkorg").isin(sales_orgs)
-
-order_type_filter = F.lit(True)
-if "ALL" not in order_types:
-    order_type_filter = F.col("prst.vbak_auart").isin(order_types)
-
-# Apply All Filters
-df_filtered = df_joined.filter(base_filter & date_filter_expr & sales_org_filter & order_type_filter)
-
-
-
-
-
-
-
-
-
-# CELL 7: Final Projection & Calculations
-# Translating the SELECT list
-
-df_final = df_filtered.select(
-    # Select all from PRST (xyzz.*)
-    F.col("prst.*"),
-    
-    # Overwrite/Add specific calculated columns from the procedure
-    
-    # HighDollarFlag (Calculated below using GrossSOPriceUSD)
-    
-    # OrderGroup
-    F.when(F.col("prst.vbak_auart").isin('ZAS','ZAV','ZFD','ZO11','ZSA','ZSB','ZSR','RK','ZCR1','ZDR1'), 'OTH')
-     .when(F.col("prst.vbak_auart").isin('AG','ZQ01','ZQ03','ZQ04','ZQFO','ZQIS','ZQUP','ZQUX','ZUQT'), 'QT')
-     .when(F.col("prst.vbak_auart").isin('ZO03','ZRA1','ZSO1'), 'RPO')
-     .when(F.col("prst.vbak_auart").isin('ZR11','ZR03','ZR04','ZR05','ZR08','ZR4B','ZUPC','ZUPR','ZFOC'), 'RTN')
-     .when(F.col("prst.vbak_auart").isin('ZO09','ZO12','ZSD','TA','ZCON','ZFO','ZSO','ZUP','ZUPX','ZO04'), 'SO')
-     .otherwise('SO').alias("OrderGroup_Calc"), # Renamed to avoid collision if exists in PRST
-     
-    # OrderWz
-    F.expr("ltrim('0', prst.vbeln)").alias("OrderWZ_Calc"),
-    
-    # BillingBlk
-    F.when(F.col("prst.vbak_faksk") != '', F.concat(F.lit("BLK(H) "), F.col("prst.vbak_faksk")))
-     .when(F.col("prst.vbap_faksp") != '', F.concat(F.lit("BLK(L) "), F.col("prst.vbap_faksp")))
-     .otherwise('').alias("BillingBlk_Calc"),
-     
-    # PGIQty (Re-calculated in SAP script, but likely same as PRST, keeping PRST version)
-    
-    # OnHandQty (Re-calc with MARD)
-    (F.coalesce(F.col("prst.mard_labst"), F.lit(0)) + F.coalesce(F.col("prst.mard_kinsm"), F.lit(0))).alias("OnHandQty_Calc"),
-    
-    # AvailToShip
-    F.when(F.col("prst.vbep_bmeng") < (F.coalesce(F.col("prst.mard_labst"),F.lit(0)) + F.coalesce(F.col("prst.mard_klabs"),F.lit(0)) + F.coalesce(F.col("prst.mard_kinsm"),F.lit(0))), 
-           F.col("prst.vbep_bmeng"))
-     .otherwise(F.coalesce(F.col("prst.mard_labst"),F.lit(0)) + F.coalesce(F.col("prst.mard_klabs"),F.lit(0)) + F.coalesce(F.col("prst.mard_kinsm"),F.lit(0)))
-     .alias("AvailToShip_Calc"),
-     
-    # SoldToName
-    F.col("kna1.name1").alias("SoldToName_Calc"),
-    
-    # VendorSloc
-    F.when((F.coalesce(F.col("prst.vbap_lgort"), F.lit('')) == '') & (F.col("prst.vbap_werks") == '3000'), '0030')
-     .when(F.coalesce(F.col("prst.vbap_lgort"), F.lit('')) != '', F.col("prst.vbap_lgort"))
-     .otherwise('0010').alias("VendorSloc_Calc"),
-     
-    # ConsumableFlag
-    F.col("part.Consumable").alias("ConsumableFlag_Calc"),
-    
-    # Track
-    F.col("track").alias("Track"),
-    
-    # MatGrp
-    F.col("mara.matkl").alias("MatGrp"),
-    
-    # CSRep
-    F.col("ln_ihrez").alias("CSRep"),
-    
-    # --- PRICING LOGIC ---
-    # UnitPriceUSD
-    (F.when(F.col("prst.vbak_waerk").isin('JPY','TWD'), F.col("prst.vbap_netpr") * 100).otherwise(F.col("prst.vbap_netpr")) * F.when((F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0) | (F.col("prst.vbak_waerk") == 'USD'), 1).otherwise(F.col("hd_kursk"))
-    ).alias("UnitPriceUSD_Calc"),
-    
-    # GrossSOPriceUSD
-    (F.col("prst.vbak_netwr") * F.when(F.col("prst.vbak_waerk").isin('JPY','TWD'), 
-            F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")) * 100)
-     .otherwise(F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")))
-    ).alias("GrossSOPriceUSD_Calc"),
-    
-    # StdCost (Coalesce 2000 and 3120)
-    F.coalesce(F.col("stprs_2000"), F.col("stprs_3120"), F.lit(0)).alias("StdCost"),
-    
-    # ExtCost
-    (F.coalesce(F.col("stprs_2000"), F.col("stprs_3120"), F.lit(0)) * F.col("prst.vbep_bmeng")).alias("ExtCost"),
-    
-    # LabDescription
-    F.col("lab_description").alias("LabOffice_Calc"),
-    
-    # MRPV / PurchaseGrp / XPlantStatus
-    F.col("marc.dispo").alias("MRPV"),
-    F.col("marc.ekgrp").alias("PurchaseGrp"),
-    F.col("mara.mstae").alias("XPlantStatus"),
-    
-    # Incoterms
-    F.coalesce(F.col("ln_inco1"), F.col("hd_inco1")).alias("Incoterms_Calc"),
-    
-    # ExchangeRate
-    F.when(F.col("prst.vbak_waerk") == 'KRW', (1 / F.col("hd_kursk")) * 100)
-     .otherwise(1 / F.col("hd_kursk")).alias("ExchangeRate_Calc"),
-     
-    # PricingDate
-    F.col("hd_prsdt").cast("string").alias("PricingDate"),
-    
-    # Region
-    F.when(F.col("prst.vbak_vkorg") == '9000', 'NA')
-     .when(F.col("prst.vbak_vkorg").between('2000', '2900'), 'EU')
-     .when(F.col("prst.vbak_vkorg").between('3000', '3001'), 'JP')
-     .when(F.col("prst.vbak_vkorg") == '3100', 'TW')
-     .when(F.col("prst.vbak_vkorg") == '3200', 'KR')
-     .when(F.col("prst.vbak_vkorg").isin('3300', '3600'), 'SEA')
-     .when(F.col("prst.vbak_vkorg").isin('3400', '3410', '1000'), 'CN')
-     .otherwise('NEW').alias("Region_Calc"),
-     
-    # ToolType
-    F.when(F.col("mara.labor") == '023', 'SPIN')
-     .when(F.col("mara.labor") == '024', 'DEP')
-     .otherwise('ETCH+').alias("ToolType_Calc"),
-     
-    # ShipmentDueFlag
-    F.when((F.current_date() >= F.col("prst.vbep_edatu")) & (F.col("prst.poreceived") == 'X'), 'True').otherwise('False').alias("ShipmentDueFlag_Calc"),
-    
-    # CreditCheckBlock
-    F.col("ln_zterm").alias("CreditCheckBlock"),
-    
-    # ActivityType
-    F.col("act_larnt").alias("ActivityType")
-)
-
-# Apply Final HighDollarFlag
-df_output = df_final.withColumn(
-    "HighDollarFlag",
-    F.when(F.col("GrossSOPriceUSD_Calc") > 50000, "True").otherwise("False")
-)
-
-
-
-
-
-
-
-
-
-
-
-# CELL 8: Display or Write
-# Note: The output of this can be written to a report layer or displayed
-
-# display(df_output.limit(100))
-
-# To write to a new table (e.g., reporting layer):
-# df_output.write.mode("overwrite").format("delta").saveAsTable("lakehouse.rpt_sales_order_optimized")
-
-
+---------------------------------------------------------------------------
+AnalysisException                         Traceback (most recent call last)
+Cell In[31], line 9
+      1 # CELL 5: Main Join Logic
+      2 # Joining the Base Table (prst) with all lookups
+      4 df_joined = df_prst \
+      5     .join(df_kna1, F.col("prst.vbak_kunnr") == F.col("kna1.kunnr"), "inner") \
+      6     .join(df_mara, F.col("prst.vbap_matnr") == F.col("mara.matnr"), "inner") \
+      7     .join(df_part, F.col("part.Part") == F.col("prst.vbap_matnr"), "inner") \
+      8     .join(df_marc, (F.col("prst.vbap_werks") == F.col("marc.werks")) & (F.col("prst.vbap_matnr") == F.col("marc.matnr")), "left") \
+----> 9     .join(df_mbew_2000, F.col("prst.vbap_matnr") == F.col("df_mbew_2000.matnr"), "left") \
+     10     .join(df_mbew_3120, F.col("prst.vbap_matnr") == F.col("df_mbew_3120.matnr"), "left") \
+     11     .join(df_lab, F.col("mara.labor") == F.col("lab_labor"), "left") \
+     12     .join(df_qmel, F.col("prst.vbeln") == F.col("q.aufnr"), "left") \
+     13     .join(df_afko, F.col("prst.vbak_aufnr") == F.col("afko.aufnr"), "left") \
+     14     .join(df_act, F.col("prst.vbak_aufnr") == F.col("act_aufnr"), "left") \
+     15     .join(df_vekp_agg, F.col("prst.f1_vbeln") == F.col("vekp_key"), "left") \
+     16     .join(df_hd_incoterm, F.col("prst.vbeln") == F.col("hd_vbeln"), "left") \
+     17     .join(df_ln_incoterm, (F.col("prst.vbeln") == F.col("ln_vbeln")) & (F.col("prst.posnr") == F.col("ln_posnr")), "left")
+
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:2493, in DataFrame.join(self, other, on, how)
+   2491         on = self._jseq([])
+   2492     assert isinstance(how, str), "how should be a string"
+-> 2493     jdf = self._jdf.join(other._jdf, on, how)
+   2494 return DataFrame(jdf, self.sparkSession)
+
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
+
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
+
+AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `df_mbew_2000`.`matnr` cannot be resolved. Did you mean one of the following? [`mbew`.`matnr`, `mara`.`bmatn`, `mara`.`imatn`, `mara`.`matnr`, `marc`.`matnr`].;
+'Join LeftOuter, (vbap_matnr#102 = 'df_mbew_2000.matnr)
+:- Join LeftOuter, ((vbap_werks#107 = werks#1315) AND (vbap_matnr#102 = matnr#1314))
+:  :- Join Inner, (Part#1198 = vbap_matnr#102)
+:  :  :- Join Inner, (vbap_matnr#102 = matnr#650)
+:  :  :  :- Join Inner, (vbak_kunnr#82 = kunnr#220)
+:  :  :  :  :- SubqueryAlias prst
+:  :  :  :  :  +- SubqueryAlias spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk.sales_order_v1
+:  :  :  :  :     +- Relation spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1plu
