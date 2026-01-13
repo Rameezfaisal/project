@@ -1,171 +1,120 @@
-# CELL 6: Final Selection & Calculations (Added Missing Carrier Columns)
+---------------------------------------------------------------------------
+AnalysisException                         Traceback (most recent call last)
+Cell In[94], line 4
+      1 # Select columns to match the Target DDL exactly.
+      2 # We explicitly cast types to ensure stability.
+----> 4 df_write = df_final.select(
+      5     F.col("Booking").alias("booking"),
+      6     F.col("Carrier").alias("carrier"),
+      7     F.col("CarrierName").alias("carrier_name"),
+      8     F.col("LastDlvStatus").alias("dlvstatus"),
+      9     F.col("etenr"),
+     10     F.col("expectedqtycumulative").cast("decimal(13,3)"),
+     11     F.col("f1_vbeln"),
+     12     F.col("FrontLoad").alias("frontload"),
+     13     
+     14     # Audit Timestamp
+     15     F.current_timestamp().alias("last_changed"),
+     16     
+     17     F.col("lastpgidoc"),
+     18     F.col("mard_kinsm").cast("decimal(13,3)"),
+     19     F.col("mard_klabs").cast("decimal(13,3)"),
+     20     F.col("mard_labst").cast("decimal(13,3)"),
+     21     F.col("mard_lgort"),
+     22     F.col("mard_matnr"),
+     23     F.col("mard_werks"),
+     24     F.col("OrderStatus").alias("order_status"),
+     25     F.col("opendlvdoc"),
+     26     F.col("opendlvqty").cast("decimal(13,3)"),
+     27     F.col("pgidate"),
+     28     F.col("PGIQty").cast("decimal(15,3)").alias("pgiqty"),
+     29     F.col("POReceived").alias("poreceived"),
+     30     F.col("posnr"),
+     31     F.col("qtyshippedttline").cast("decimal(13,3)"),
+     32     F.col("ShipTo").alias("shipto"),
+     33     F.col("ShipToName").alias("shiptoname"),
+     34     F.col("vbak_auart"),
+     35     F.col("vbak_aufnr"),
+     36     F.col("vbak_autlf"),
+     37     F.col("vbak_bstnk"),
+     38     F.col("vbak_erdat"),
+     39     F.col("vbak_ernam"),
+     40     F.col("vbak_faksk"),
+     41     F.col("vbak_ihrez"),
+     42     F.col("vbak_kunnr"),
+     43     F.col("vbak_lifsk"),
+     44     F.col("vbak_netwr").cast("decimal(15,2)"),
+     45     F.col("vbak_objnr"),
+     46     F.col("vbak_vkorg"),
+     47     F.col("vbak_vsnmr_v"),
+     48     F.col("vbak_waerk"),
+     49     F.col("vbap_abgru"),
+     50     F.col("vbap_aedat"),
+     51     F.col("vbap_arktx"),
+     52     F.col("vbap_charg"),
+     53     F.col("vbap_erdat"),
+     54     F.col("vbap_ernam"),
+     55     F.col("vbap_erzet"), # Mapped as String since Time type is tricky in Delta
+     56     F.col("vbap_faksp"),
+     57     F.col("vbap_grkor"),
+     58     F.col("vbap_kdmat"),
+     59     F.col("vbap_kwmeng").cast("decimal(15,3)"),
+     60     F.col("vbap_lgort"),
+     61     F.col("vbap_lprio"),
+     62     F.col("vbap_matnr"),
+     63     F.col("vbap_netpr").cast("decimal(11,2)"),
+     64     F.col("vbap_posex"),
+     65     F.col("vbap_prodh"),
+     66     F.col("vbap_vstel"),
+     67     F.col("vbap_werks"),
+     68     F.col("vbeln"),
+     69     F.col("vbep_bmeng").cast("decimal(13,3)"),
+     70     F.col("vbep_edatu"),
+     71     F.col("vbep_h_edatu"),
+     72     F.col("vbep_lifsp"),
+     73     F.col("vbep_mbdat"),
+     74     F.col("vbuk_lfgsk"),
+     75     F.col("vbuk_wbstk"),
+     76     F.col("vbup_lfsta"),
+     77     F.col("delvd_qty").cast("double")
+     78 )
+     80 # Mandatory Safety Filter for Primary Keys
+     81 df_write_safe = df_write.filter("vbeln IS NOT NULL AND posnr IS NOT NULL AND etenr IS NOT NULL")
 
-# 1. PGI Qty Logic
-expr_pgi_qty = (
-    F.when(F.coalesce(F.col("f1_delvd_qty"), F.lit(0)) >= F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)), 
-           F.coalesce(F.col("e.bmeng"), F.lit(0)))
-     .when(F.coalesce(F.col("f1_delvd_qty"), F.lit(0)) < F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)), 
-           F.greatest(
-               F.coalesce(F.col("e.bmeng"), F.lit(0)) - (F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0))), 
-               F.lit(0)
-           ))
-     .otherwise(0)
-)
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3229, in DataFrame.select(self, *cols)
+   3184 def select(self, *cols: "ColumnOrName") -> "DataFrame":  # type: ignore[misc]
+   3185     """Projects a set of expressions and returns a new :class:`DataFrame`.
+   3186 
+   3187     .. versionadded:: 1.3.0
+   (...)
+   3227     +-----+---+
+   3228     """
+-> 3229     jdf = self._jdf.select(self._jcols(*cols))
+   3230     return DataFrame(jdf, self.sparkSession)
 
-# 2. Open Qty Logic
-expr_open_qty = (
-    F.when(
-        (F.coalesce(F.col("u.wbstk"), F.lit('')) != 'C') &
-        (F.coalesce(F.col("p.abgru"), F.lit('')) == '') &
-        (F.coalesce(F.col("b.lfsta"), F.lit('')) != '') &
-        (F.coalesce(F.col("p.kwmeng"), F.lit(0)) > F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) &
-        (F.coalesce(F.col("e.bmeng"), F.lit(0)) > 0) &
-        (
-            F.when(F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("f1_delvd_qty"), F.lit(0)), 0)
-             .when((F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) <= F.coalesce(F.col("e.bmeng"), F.lit(0)),
-                   F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0)))
-             .otherwise(F.coalesce(F.col("e.bmeng"), F.lit(0))) > 0
-        ),
-        F.when(F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("f1_delvd_qty"), F.lit(0)), 0)
-         .when((F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) <= F.coalesce(F.col("e.bmeng"), F.lit(0)),
-               F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0)))
-         .otherwise(F.coalesce(F.col("e.bmeng"), F.lit(0)))
-    ).otherwise(0)
-)
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
-df_final_logic = df_filtered.select(
-    # IDs
-    F.col("a.vbeln").alias("Order"),
-    F.expr("ltrim('0', a.vbeln)").alias("OrderWZ"),
-    F.col("p.posnr").alias("Line"),
-    F.expr("ltrim('0', p.posnr)").alias("LineWZ"),
-    F.col("e.etenr").alias("ScheduleLine"),
-    F.expr("ltrim('0', e.etenr)").alias("ScheduleLineWZ"),
-    
-    # Status
-    F.when((F.col("u.wbstk") != 'C') & (F.col("p.abgru") == '') & (F.col("b.lfsta") != '') & (expr_open_qty > 0), 'Open')
-     .otherwise('Closed').alias("OrderStatus"),
-    F.col("a.auart").alias("OrderType"),
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-    # Dates
-    F.col("a.erdat").alias("CreationDate"),
-    F.col("p.erdat").alias("LineItemCreationDate"),
-    F.col("p.erzet").alias("LineItemCreationTime"),
-    F.col("h_edatu").alias("RequestDate"),
-    F.col("e.edatu").alias("DeliveryDueDate"),
-    
-    # Quantities
-    F.col("p.kwmeng").alias("OrderLineQty"),
-    F.col("e.bmeng").alias("CommittedQty"),
-    expr_pgi_qty.alias("PGIQty"),
-    expr_open_qty.alias("OpenQty"),
-    
-    # Inventory
-    (F.coalesce(F.col("r_labst"), F.lit(0)) + F.coalesce(F.col("r_kinsm"), F.lit(0))).alias("OnHandQty"),
-    F.col("r_klabs").alias("VendorOwned"),
-    F.when(F.coalesce(F.col("e.bmeng"), F.lit(0)) < F.coalesce(F.col("r_QOH"), F.lit(0)), F.coalesce(F.col("e.bmeng"), F.lit(0))) 
-     .otherwise(F.coalesce(F.col("r_QOH"), F.lit(0))).alias("AvailToShip"), 
-    
-    # Pre-Calcs
-    F.col("l_OpenDlvDoc").alias("LastDlvDoc"), 
-    F.col("l_OpenDlvQty").alias("LastDlvQty"), 
-    F.col("l_DlvStatus").alias("LastDlvStatus"),
-    
-    # Partners
-    F.col("a.vkorg").alias("SalesOrg"),
-    F.col("a.kunnr").alias("SoldTo"),
-    F.col("c_ShipTo").alias("ShipTo"),
-    F.col("c_ShipToName").alias("ShipToName"),
-    F.col("p.werks").alias("VendorPlant"),
-    
-    # Pricing
-    F.col("a.waerk").alias("DocCurrency"),
-    (F.col("a.netwr") * F.when(F.col("a.waerk").isin('JPY','TWD'), 
-            F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")) * 100)
-     .otherwise(F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")))
-    ).alias("GrossSOPriceUSD"),
-    
-    # Flags & Carrier (Missing pieces added here)
-    F.col("j_FrontLoad").alias("FrontLoad"),
-    F.col("j_POReceived").alias("POReceived"),
-    F.col("j_Booking").alias("Booking"),
-    F.col("i_LabOffice").alias("LabOffice"),
-    
-    # [FIX] Added Missing Carrier Columns
-    F.col("xy_carrier").alias("Carrier"),
-    F.col("xy_carrier_name").alias("CarrierName"),
-
-    # Keys for Write
-    F.col("a.vbeln"),
-    F.col("p.posnr"),
-    F.col("e.etenr"),
-    
-    # DDL Mappings
-    F.col("a.auart").alias("vbak_auart"),
-    F.col("a.aufnr").alias("vbak_aufnr"),
-    F.col("a.autlf").alias("vbak_autlf"),
-    F.col("a.bstnk").alias("vbak_bstnk"),
-    F.col("a.erdat").alias("vbak_erdat"),
-    F.col("a.ernam").alias("vbak_ernam"),
-    F.col("a.faksk").alias("vbak_faksk"),
-    F.col("a.ihrez").alias("vbak_ihrez"),
-    F.col("a.kunnr").alias("vbak_kunnr"),
-    F.col("a.lifsk").alias("vbak_lifsk"),
-    F.col("a.netwr").alias("vbak_netwr"),
-    F.col("a.objnr").alias("vbak_objnr"),
-    F.col("a.vkorg").alias("vbak_vkorg"),
-    F.col("a.vsnmr_v").alias("vbak_vsnmr_v"),
-    F.col("a.waerk").alias("vbak_waerk"),
-    
-    F.col("p.abgru").alias("vbap_abgru"),
-    F.col("p.aedat").alias("vbap_aedat"),
-    F.col("p.arktx").alias("vbap_arktx"),
-    F.col("p.charg").alias("vbap_charg"),
-    F.col("p.erzet").alias("vbap_erzet"),
-    F.col("p.faksp").alias("vbap_faksp"),
-    F.col("p.grkor").alias("vbap_grkor"),
-    F.col("p.kdmat").alias("vbap_kdmat"),
-    F.col("p.kwmeng").alias("vbap_kwmeng"),
-    F.col("p.lgort").alias("vbap_lgort"),
-    F.col("p.lprio").alias("vbap_lprio"),
-    F.col("p.matnr").alias("vbap_matnr"),
-    F.col("p.netpr").alias("vbap_netpr"),
-    F.col("p.posex").alias("vbap_posex"),
-    F.col("p.prodh").alias("vbap_prodh"),
-    F.col("p.vstel").alias("vbap_vstel"),
-    F.col("p.werks").alias("vbap_werks"),
-    
-    F.col("e.bmeng").alias("vbep_bmeng"),
-    F.col("e.edatu").alias("vbep_edatu"),
-    F.col("h_edatu").alias("vbep_h_edatu"),
-    F.col("e.lifsp").alias("vbep_lifsp"),
-    F.col("e.mbdat").alias("vbep_mbdat"),
-    
-    F.col("u.lfgsk").alias("vbuk_lfgsk"),
-    F.col("u.wbstk").alias("vbuk_wbstk"),
-    F.col("b.lfsta").alias("vbup_lfsta"),
-    
-    # Extra calcs for Write
-    F.col("f1_delvd_qty").alias("delvd_qty"),
-    F.col("e_ExpectedQtyCumulative").alias("expectedqtycumulative"),
-    F.col("f2_LastPGIDoc").alias("lastpgidoc"),
-    F.col("l_OpenDlvDoc").alias("opendlvdoc"),
-    F.col("l_OpenDlvQty").alias("opendlvqty"),
-    F.col("l_PGIDate").alias("pgidate"),
-    F.col("l_QtyShippedTtLine").alias("qtyshippedttline"),
-    F.col("f1_vbeln"),
-    
-    # MARD passthroughs
-    F.col("r_kinsm").alias("mard_kinsm"),
-    F.col("r_klabs").alias("mard_klabs"),
-    F.col("r_labst").alias("mard_labst"),
-    F.col("r_lgort").alias("mard_lgort"),
-    F.col("r_matnr").alias("mard_matnr"),
-    F.col("r_werks").alias("mard_werks")
-)
-
-# Apply HighDollarFlag
-df_final = df_final_logic.withColumn(
-    "HighDollarFlag",
-    F.when(F.col("GrossSOPriceUSD") > 50000, "True").otherwise("False")
-)
+AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `vbap_erdat` cannot be resolved. Did you mean one of the following? [`vbak_erdat`, `vbap_aedat`, `vbap_erzet`, `vbak_ernam`, `vbap_kdmat`].;
+'Project [Booking#212818 AS booking#213063, Carrier#212820 AS carrier#213064, CarrierName#212821 AS carrier_name#213065, LastDlvStatus#212808 AS dlvstatus#213066, etenr#75557, cast(expectedqtycumulative#212863 as decimal(13,3)) AS expectedqtycumulative#213074, f1_vbeln#146861, FrontLoad#212816 AS frontload#213067, current_timestamp() AS last_changed#213068, lastpgidoc#212864, cast(mard_kinsm#212869 as decimal(13,3)) AS mard_kinsm#213075, cast(mard_klabs#212870 as decimal(13,3)) AS mard_klabs#213076, cast(mard_labst#212871 as decimal(13,3)) AS mard_labst#213077, mard_lgort#212872, mard_matnr#212873, mard_werks#212874, OrderStatus#212792 AS order_status#213069, opendlvdoc#212865, cast(opendlvqty#212866 as decimal(13,3)) AS opendlvqty#213078, pgidate#212867, cast(PGIQty#212801 as decimal(15,3)) AS pgiqty#213070, POReceived#212817 AS poreceived#213071, posnr#74992, cast(qtyshippedttline#212868 as decimal(13,3)) AS qtyshippedttline#213079, ... 46 more fields]
++- Project [Order#212786, OrderWZ#212787, Line#212788, LineWZ#212789, ScheduleLine#212790, ScheduleLineWZ#212791, OrderStatus#212792, OrderType#212793, CreationDate#212794, LineItemCreationDate#212795, LineItemCreationTime#212796, RequestDate#212797, DeliveryDueDate#212798, OrderLineQty#212799, CommittedQty#212800, PGIQty#212801, OpenQty#212802, OnHandQty#212803, VendorOwned#212804, AvailToShip#212805, LastDlvDoc#212806, LastDlvQty#212807, LastDlvStatus#212808, SalesOrg#212809, ... 70 more fields]
+   +- Project [vbeln#74639 AS Order#212786, ltrim(vbeln#74639, Some(0)) AS OrderWZ#212787, posnr#74992 AS Line#212788, ltrim(posnr#74992, Some(0)) AS LineWZ#212789, etenr#75557 AS ScheduleLine#212790, ltrim(etenr#75557, Some(0)) AS ScheduleLineWZ#212791, CASE WHEN (((NOT (wbstk#75697 = C) AND (abgru#75005 = )) AND NOT (lfsta#75870 = )) AND (CASE WHEN (((((NOT (coalesce(wbstk#75697, ) = C) AND (coalesce(abgru#75005, ) = )) AND NOT (coalesce(lfsta#75870, ) = )) AND (cast(coalesce(kwmeng#75038, cast(0 as decimal(15,3))) as double) > coalesce(f1_delvd_qty#146857, cast(0 as double)))) AND (coalesce(bmeng#75563, cast(0 as decimal(13,3))) > cast(cast(0 as decimal(1,0)) as decimal(13,3)))) AND (CASE WHEN (cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) <= coalesce(f1_delvd_qty#146857, cast(0 as double))) THEN cast(0 as double) WHEN ((cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) - coalesce(f1_delvd_qty#146857, cast(0 as double))) <= cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double)) THEN (cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) - coalesce(f1_delvd_qty#146857, cast(0 as double))) ELSE cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double) END > cast(0 as double))) THEN CASE WHEN (cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) <= coalesce(f1_delvd_qty#146857, cast(0 as double))) THEN cast(0 as double) WHEN ((cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) - coalesce(f1_delvd_qty#146857, cast(0 as double))) <= cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double)) THEN (cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) - coalesce(f1_delvd_qty#146857, cast(0 as double))) ELSE cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double) END ELSE cast(0 as double) END > cast(0 as double))) THEN Open ELSE Closed END AS OrderStatus#212792, auart#74648 AS OrderType#212793, erdat#74640 AS CreationDate#212794, erdat#75067 AS LineItemCreationDate#212795, erzet#75069 AS LineItemCreationTime#212796, h_edatu#146806 AS RequestDate#212797, edatu#75560 AS DeliveryDueDate#212798, kwmeng#75038 AS OrderLineQty#212799, bmeng#75563 AS CommittedQty#212800, CASE WHEN (coalesce(f1_delvd_qty#146857, cast(0 as double)) >= cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double)) THEN cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double) WHEN (coalesce(f1_delvd_qty#146857, cast(0 as double)) < cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double)) THEN greatest((cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double) - (cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) - coalesce(f1_delvd_qty#146857, cast(0 as double)))), cast(0 as double)) ELSE cast(0 as double) END AS PGIQty#212801, CASE WHEN (((((NOT (coalesce(wbstk#75697, ) = C) AND (coalesce(abgru#75005, ) = )) AND NOT (coalesce(lfsta#75870, ) = )) AND (cast(coalesce(kwmeng#75038, cast(0 as decimal(15,3))) as double) > coalesce(f1_delvd_qty#146857, cast(0 as double)))) AND (coalesce(bmeng#75563, cast(0 as decimal(13,3))) > cast(cast(0 as decimal(1,0)) as decimal(13,3)))) AND (CASE WHEN (cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) <= coalesce(f1_delvd_qty#146857, cast(0 as double))) THEN cast(0 as double) WHEN ((cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) - coalesce(f1_delvd_qty#146857, cast(0 as double))) <= cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double)) THEN (cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) - coalesce(f1_delvd_qty#146857, cast(0 as double))) ELSE cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double) END > cast(0 as double))) THEN CASE WHEN (cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) <= coalesce(f1_delvd_qty#146857, cast(0 as double))) THEN cast(0 as double) WHEN ((cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) - coalesce(f1_delvd_qty#146857, cast(0 as double))) <= cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double)) THEN (cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) - coalesce(f1_delvd_qty#146857, cast(0 as double))) ELSE cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double) END ELSE cast(0 as double) END AS OpenQty#212802, (coalesce(r_labst#149691, cast(0 as decimal(13,3))) + coalesce(r_kinsm#149693, cast(0 as decimal(13,3)))) AS OnHandQty#212803, r_klabs#149692 AS VendorOwned#212804, CASE WHEN (cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as decimal(15,3)) < coalesce(r_QOH#149632, cast(0 as decimal(15,3)))) THEN cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as decimal(15,3)) ELSE coalesce(r_QOH#149632, cast(0 as decimal(15,3))) END AS AvailToShip#212805, l_OpenDlvDoc#148461 AS LastDlvDoc#212806, l_OpenDlvQty#148463 AS LastDlvQty#212807, l_DlvStatus#148469 AS LastDlvStatus#212808, vkorg#74656 AS SalesOrg#212809, ... 69 more fields]
+      +- Filter (((werks#75058 >= 1900) AND NOT auart#74648 IN (ZVC,ZR07)) AND ((cast(erdat#75067 as date) >= date_add(current_date(Some(UTC)), -732)) OR ((((((NOT (coalesce(wbstk#75697, ) = C) AND NOT (coalesce(lfgsk#75696, ) = C)) AND (coalesce(abgru#75005, ) = )) AND NOT lfsta#75870 IN (, )) AND (cast(coalesce(kwmeng#75038, cast(0 as decimal(15,3))) as double) > coalesce(f1_delvd_qty#146857, cast(0 as double)))) AND (coalesce(bmeng#75563, cast(0 as decimal(13,3))) > cast(cast(0 as decimal(1,0)) as decimal(13,3)))) AND (CASE WHEN (cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) <= coalesce(f1_delvd_qty#146857, cast(0 as double))) THEN cast(0 as double) WHEN ((cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) - coalesce(f1_delvd_qty#146857, cast(0 as double))) <= cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double)) THEN (cast(coalesce(e_ExpectedQtyCumulative#146734, cast(0 as decimal(23,3))) as double) - coalesce(f1_delvd_qty#146857, cast(0 as double))) ELSE cast(coalesce(bmeng#75563, cast(0 as decimal(13,3))) as double) END > cast(0 as double)))))
+         +- Join LeftOuter, (((werks#75058 = r_werks#149688) AND (matnr#74993 = r_matnr#149689)) AND (CASE WHEN ((coalesce(lgort#75059, ) = ) AND (werks#75058 = 3000)) THEN 0030 WHEN NOT (coalesce(lgort#75059, ) = ) THEN lgort#75059 ELSE 0010 END = r_lgort#149690))
