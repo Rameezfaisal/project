@@ -1,25 +1,186 @@
-cv_vbuk      = "wsf_silk_glb_da_dev.lhs_glb.ecc.vbuk"
-cv_vbak      = "wsf_silk_glb_da_dev.lhs_glb.ecc.vbak"
-cv_kna1      = "wsf_silk_glb_da_dev.lhs_glb.ecc.kna1"
-cv_vbap      = "wsf_silk_glb_da_dev.lhs_glb.ecc.vbap"
-cv_part      = "lhs_glb.eng_test.stg_omat_part"
-cv_vbep      = "wsf_silk_glb_da_dev.lhs_glb.ecc.vbep"
-cv_vbup      = "wsf_silk_glb_da_dev.lhs_glb.ecc.vbup"
-cv_vbfa      = "wsf_silk_glb_da_dev.lhs_glb.ecc.vbfa"
-cv_vbpa      = "wsf_silk_glb_da_dev.lhs_glb.ecc.vbpa"
-cv_mara      = "wsf_silk_glb_da_dev.lhs_glb.ecc.mara"
-cv_t024x     = "wsf_silk_glb_da_dev.lhs_glb.ecc.t024x"
-cv_mard      = "wsf_silk_glb_da_dev.lhs_glb.ecc.mard"
-cv_marc      = "wsf_silk_glb_da_dev.lhs_glb.ecc.marc"
-cv_lips      = "wsf_silk_glb_da_dev.lhs_glb.ecc.lips"
-cv_likp      = "wsf_silk_glb_da_dev.lhs_glb.ecc.likp"
-cv_mbew      = "wsf_silk_glb_da_dev.lhs_glb.ecc.mbew"
-cv_vbkd      = "wsf_silk_glb_da_dev.lhs_glb.ecc.vbkd"
-cv_jest      = "wsf_silk_glb_da_dev.lhs_glb.ecc.jest"
-cv_tj30t     = "wsf_silk_glb_da_dev.lhs_glb.ecc.tj30t"
-cv_vekp      = "wsf_silk_glb_da_dev.lhs_glb.ecc.vekp"
-cv_qmel      = "wsf_silk_glb_da_dev.lhs_glb.ecc.qmel"
-cv_csbg      = "wsf_silk_glb_dt_qa.lhg_glb.eng.rpt_csbg_spares_deliveries"
-cv_tcurr     = "wsf_silk_glb_dt_qa.lhg_glb.ecc.tcurr"
-cv_afko      = "wsf_silk_glb_da_dev.lhs_glb.ecc.afko"
-cv_afvc      = "wsf_silk_glb_da_dev.lhs_glb.ecc.afvc"
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from pyspark.sql.types import DecimalType, DoubleType, DateType, TimestampType
+
+# Standardize time parser
+spark.conf.set("spark.sql.legacy.timeParserPolicy", "CORRECTED")
+
+
+
+
+
+
+
+params = {
+    # Transactional
+    "vbuk":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbuk",
+    "vbak":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbak",
+    "vbap":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbap",
+    "vbep":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbep",
+    "vbup":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbup",
+    "vbfa":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbfa",
+    "lips":  "wsf_silk_glb_da_dev.lhs_glb.ecc.lips",
+    "likp":  "wsf_silk_glb_da_dev.lhs_glb.ecc.likp",
+    "vbkd":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbkd",
+    "vbpa":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbpa",
+    "jest":  "wsf_silk_glb_da_dev.lhs_glb.ecc.jest",
+    "qmel":  "wsf_silk_glb_da_dev.lhs_glb.ecc.qmel",
+    
+    # Master Data
+    "kna1":  "wsf_silk_glb_da_dev.lhs_glb.ecc.kna1",
+    "part":  "lhs_glb.eng_test.stg_omat_part",
+    "mara":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mara",
+    "t024x": "wsf_silk_glb_da_dev.lhs_glb.ecc.t024x",
+    "mard":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mard",
+    "marc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.marc",
+    "mbew":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mbew",
+    "tj30t": "wsf_silk_glb_da_dev.lhs_glb.ecc.tj30t",
+    "vekp":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vekp",
+    "afko":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afko",
+    "afvc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afvc",
+    
+    # Currency
+    "tcurr": "wsf_silk_glb_dt_qa.lhg_glb.ecc.tcurr",
+    
+    # Custom/Reporting
+    "csbg":  "wsf_silk_glb_dt_qa.lhg_glb.eng.rpt_csbg_spares_deliveries",
+    
+    # Target
+    "target": "lakehouse.target_materialized_table"
+}
+
+
+
+
+
+
+
+
+# Main Order Tables
+df_vbak = spark.read.table(params["vbak"]).alias("a")
+df_vbap = spark.read.table(params["vbap"]).alias("p")
+df_vbep = spark.read.table(params["vbep"]).alias("e")
+df_vbuk = spark.read.table(params["vbuk"]).alias("u")
+df_vbup = spark.read.table(params["vbup"]).alias("b")
+
+# Master Data & Lookups
+df_kna1 = spark.read.table(params["kna1"]).alias("k")
+df_mara = spark.read.table(params["mara"]).alias("m")
+df_part = spark.read.table(params["part"]).alias("pp")
+df_marc = spark.read.table(params["marc"]).alias("z")
+df_mard = spark.read.table(params["mard"]).alias("r")
+df_mbew = spark.read.table(params["mbew"]).alias("w")
+df_t024x = spark.read.table(params["t024x"]).alias("i")
+
+# Flow & Status
+df_vbfa = spark.read.table(params["vbfa"])
+df_lips = spark.read.table(params["lips"])
+df_likp = spark.read.table(params["likp"])
+df_vbkd = spark.read.table(params["vbkd"])
+df_vbpa = spark.read.table(params["vbpa"])
+df_jest = spark.read.table(params["jest"])
+df_tj30t = spark.read.table(params["tj30t"])
+df_vekp = spark.read.table(params["vekp"])
+df_qmel = spark.read.table(params["qmel"]).alias("q")
+
+# Production & Spares
+df_afko = spark.read.table(params["afko"]).alias("afko")
+df_afvc = spark.read.table(params["afvc"])
+df_spares = spark.read.table(params["csbg"])
+
+# Currency
+df_tcurr = spark.read.table(params["tcurr"])
+
+
+
+
+
+
+
+
+# 1. Currency Conversion Logic (Replaces subquery 'x')
+# SAP Logic: Groups by FCURR, TCURR='USD', finds MIN(GDATU) -> Latest Rate in SAP inverted dates
+# We filter for USD, Window by FCURR order by GDATU ASC (since MIN GDATU = Latest Date in SAP TCURR)
+w_curr = Window.partitionBy("fcurr").orderBy(F.col("gdatu").asc())
+
+df_curr_calc = df_tcurr.filter(F.col("tcurr") == 'USD') \
+    .withColumn("rn", F.row_number().over(w_curr)) \
+    .filter(F.col("rn") == 1) \
+    .select(
+        F.col("fcurr").alias("x_fcurr"), 
+        F.abs(F.col("ukurs")).alias("x_ukurs"), # Exchange Rate
+        F.col("tcurr").alias("x_tcurr")
+    )
+
+# 2. Cumulative Quantity (Replaces self-join 't')
+w_cum = Window.partitionBy("vbeln", "posnr").orderBy("etenr").rowsBetween(Window.unboundedPreceding, Window.currentRow)
+df_vbep_calc = df_vbep.withColumn("ExpectedQtyCumulative", F.sum("bmeng").over(w_cum))
+
+# 3. Header Schedule Line (Replaces 'h')
+df_h = df_vbep.filter(F.col("etenr") == '0001').select(
+    F.col("vbeln").alias("h_vbeln"), F.col("posnr").alias("h_posnr"), F.col("edatu").alias("h_edatu")
+)
+
+# 4. Delivery Flow (Replaces 'f1')
+df_f1 = df_vbfa.filter((F.col("stufe") == '00') & (F.col("vbtyp_n").isin('T', 'J'))) \
+    .groupBy("vbelv", "posnv").agg(
+        F.sum(
+            F.when((F.col("vbtyp_n") == 'R') & (F.col("plmin") == '+'), F.coalesce(F.col("rfmng_flo"), F.lit(0)))
+            .when(F.col("vbtyp_n") == 'h', F.coalesce(F.col("rfmng_flo"), F.lit(0)) * -1)
+            .otherwise(0)
+        ).alias("delvd_qty")
+    ).withColumnRenamed("vbelv", "f1_vbeln").withColumnRenamed("posnv", "f1_posnr")
+
+# 5. PGI Flow (Replaces 'f2')
+df_f2 = df_vbfa.filter((F.col("stufe") == '00') & (F.col("vbtyp_n").isin('T', 'J')) & (F.col("vbeln").startswith('49'))) \
+    .groupBy("vbelv", "posnv").agg(
+        F.max("vbeln").alias("LastPGIDoc"),
+        F.sum(
+            F.when(F.col("vbtyp_n") == 'R', F.coalesce(F.col("rfmng"), F.lit(0)))
+            .when(F.col("vbtyp_n") == 'h', F.coalesce(F.col("rfmng"), F.lit(0)) * -1)
+            .otherwise(0)
+        ).alias("PGIQty_f2")
+    ).withColumnRenamed("vbelv", "f2_vbeln").withColumnRenamed("posnv", "f2_posnr")
+
+# 6. Delivery Docs (Replaces 'l')
+df_l = df_lips.filter((F.col("vgbel") != '') & (~F.col("vgbel").startswith('4')) & (~F.col("vgbel").startswith('3'))) \
+    .join(df_likp, df_lips.vbeln == df_likp.vbeln) \
+    .filter(df_likp.wadat_ist != '') \
+    .groupBy(df_lips.vgbel, df_lips.vgpos).agg(
+        F.max(df_lips.vbeln).alias("OpenDlvDoc"),
+        F.sum(df_lips.lgmng).alias("OpenDlvQty"),
+        F.sum(df_lips.lfimg).alias("QtyShippedTtLine"),
+        F.max(df_likp.wadat_ist).alias("PGIDate_L"),
+        F.when(F.max(df_likp.wadat_ist) == '', 'Created').otherwise('Shipped').alias("DlvStatus")
+    ).withColumnRenamed("vgbel", "l_vbeln").withColumnRenamed("vgpos", "l_posnr")
+
+# 7. Statuses (Replaces 'j')
+df_j = df_jest.filter(F.col("stat").isin('E0001', 'E0004', 'E0005', 'E0008', 'E0009') & (F.col("inact") != 'X')) \
+    .join(df_tj30t, (df_jest.stat == df_tj30t.estat) & (df_tj30t.stsma == 'Z0000003') & (df_tj30t.spras == 'E'), "left") \
+    .groupBy("objnr").agg(
+        F.max(F.when(F.col("stat") == 'E0008', 'X').otherwise('')).alias("FrontLoad"),
+        F.max(F.when(F.col("stat") == 'E0009', 'X').otherwise('')).alias("POReceived"),
+        F.max(F.when(F.col("stat").isin('E0001', 'E0004', 'E0005'), F.col("txt04")).otherwise('')).alias("Booking")
+    ).withColumnRenamed("objnr", "j_objnr")
+
+# 8. Spares (Replaces 'xy')
+df_xy = df_spares.groupBy("order_no", "order_line_no").agg(
+    F.max("carrier").alias("xy_carrier"), F.max("carrier_name").alias("xy_carrier_name")
+).withColumnRenamed("order_no", "xy_vbeln").withColumnRenamed("order_line_no", "xy_posnr")
+
+# 9. Lab Office
+df_lab = df_t024x.filter(F.col("spras") == 'E').select(F.col("labor").alias("i_labor"), F.col("lbtxt").alias("LabOffice"))
+
+# 10. Production (AFVC)
+df_act = df_afvc.groupBy("aufpl").agg(F.min("vornr").alias("vornr")) \
+    .join(df_afvc, ["aufpl", "vornr"], "left") \
+    .select(F.col("aufpl").alias("act_aufpl"), F.col("larnt"))
+
+# 11. Partners (ShipTo)
+df_c = df_vbpa.filter((F.col("posnr") == '000000') & (F.col("parvw") == 'WE')) \
+    .join(df_kna1, df_vbpa.kunnr == df_kna1.kunnr) \
+    .select(df_vbpa.vbeln.alias("c_vbeln"), df_vbpa.kunnr.alias("ShipTo"), df_kna1.name1.alias("ShipToName"))
+
+# 12. Header/Item Incoterms (Replaces 'hd' and 'd')
+df_hd = df_vbkd.filter(F.col("posnr") == '000000').select(F.col("vbeln").alias("hd_vbeln"), F.col("inco1").alias("hd_inco1"), F.col("kursk").alias("hd_kursk"), F.col("prsdt").alias("hd_prsdt"))
+df_d = df_vbkd.select(F.col("vbeln").alias("d_vbeln"), F.col("posnr").alias("d_posnr"), F.col("inco1").alias("d_inco1"), F.col("zterm").alias("d_zterm"), F.col("ihrez").alias("d_ihrez"))
