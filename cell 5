@@ -1,69 +1,43 @@
-# CELL 5: Main Join & Filtering (Fixed Row Count & NameError)
+# CELL 5: Main Join Logic (Fixed Aliases for Lab and Act)
 
-# 1. Filter VBEP strictly to match SAP's INNER JOIN 't' logic (BMENG > 0)
-# SAP's logic drops any schedule line with 0 committed qty immediately via the join.
-df_vbep_filtered = df_vbep_calc.filter(F.col("bmeng") > 0).alias("e")
+df_joined = df_prst \
+    .join(df_kna1, F.col("prst.vbak_kunnr") == F.col("kna1.kunnr"), "inner") \
+    .join(df_mara, F.col("prst.vbap_matnr") == F.col("mara.matnr"), "inner") \
+    .join(df_part, F.col("part.Part") == F.col("prst.vbap_matnr"), "inner") \
+    .join(df_marc, (F.col("prst.vbap_werks") == F.col("marc.werks")) & (F.col("prst.vbap_matnr") == F.col("marc.matnr")), "left") \
+    .join(df_mbew_2000.alias("m2000"), F.col("prst.vbap_matnr") == F.col("m2000.matnr"), "left") \
+    .join(df_mbew_3120.alias("m3120"), F.col("prst.vbap_matnr") == F.col("m3120.matnr"), "left") \
+    .join(df_lab.alias("lab"), F.col("mara.labor") == F.col("lab.lab_labor"), "left") \
+    .join(df_qmel, F.col("prst.vbeln") == F.col("q.aufnr"), "left") \
+    .join(df_afko, F.col("prst.vbak_aufnr") == F.col("afko.aufnr"), "left") \
+    .join(df_act.alias("act"), F.col("prst.vbak_aufnr") == F.col("act.act_aufnr"), "left") \
+    .join(df_vekp_agg.alias("v_agg"), F.col("prst.f1_vbeln") == F.col("v_agg.vekp_key"), "left") \
+    .join(df_hd_incoterm.alias("hd_inco"), F.col("prst.vbeln") == F.col("hd_inco.hd_vbeln"), "left") \
+    .join(df_ln_incoterm.alias("ln_inco"), (F.col("prst.vbeln") == F.col("ln_inco.ln_vbeln")) & (F.col("prst.posnr") == F.col("ln_inco.ln_posnr")), "left")
 
-df_main = df_vbep_filtered \
-    .join(df_vbap, (F.col("e.vbeln") == F.col("p.vbeln")) & (F.col("e.posnr") == F.col("p.posnr")), "inner") \
-    .join(df_vbak, F.col("a.vbeln") == F.col("p.vbeln"), "inner") \
-    .join(df_vbuk, F.col("u.vbeln") == F.col("p.vbeln"), "inner") \
-    .join(df_vbup, (F.col("b.vbeln") == F.col("p.vbeln")) & (F.col("b.posnr") == F.col("p.posnr")), "inner") \
-    .join(df_kna1, F.col("a.kunnr") == F.col("k.kunnr"), "inner") \
-    .join(df_part, F.col("p.matnr") == F.col("pp.part"), "inner") \
-    .join(df_mara, F.col("p.matnr") == F.col("m.matnr"), "inner") \
-    .join(df_h, (F.col("p.vbeln") == F.col("h_vbeln")) & (F.col("p.posnr") == F.col("h_posnr")), "inner") \
-    .join(df_c, F.col("a.vbeln") == F.col("c_vbeln"), "inner") \
-    .join(df_f1, (F.col("b.vbeln") == F.col("f1_vbeln")) & (F.col("b.posnr") == F.col("f1_posnr")), "left") \
-    .join(df_f2, (F.col("b.vbeln") == F.col("f2_vbeln")) & (F.col("b.posnr") == F.col("f2_posnr")), "left") \
-    .join(df_lab, F.col("m.labor") == F.col("i_labor"), "left") \
-    .join(df_l, (F.col("p.vbeln") == F.col("l_vbeln")) & (F.col("p.posnr") == F.col("l_posnr")), "left") \
-    .join(df_mbew, (F.col("p.matnr") == F.col("w.matnr")) & (F.col("w.bwkey") == '2000'), "left") \
-    .join(df_hd, F.col("p.vbeln") == F.col("hd_vbeln"), "left") \
-    .join(df_d, (F.col("p.vbeln") == F.col("d_vbeln")) & (F.col("p.posnr") == F.col("d_posnr")), "left") \
-    .join(df_j, F.col("a.objnr") == F.col("j_objnr"), "left") \
-    .join(df_vekp, F.col("f1_vbeln") == F.col("vekp.vpobjkey"), "left") \
-    .join(df_qmel, F.col("a.vbeln") == F.col("q.aufnr"), "left") \
-    .join(df_xy, (F.col("p.vbeln") == F.col("xy_vbeln")) & (F.col("p.posnr") == F.col("xy_posnr")), "left") \
-    .join(df_afko, F.col("a.aufnr") == F.col("afko.aufnr"), "left") \
-    .join(df_act, F.col("afko.aufpl") == F.col("act_aufpl"), "left") \
-    .join(df_curr_calc, F.col("a.waerk") == F.col("x_fcurr"), "left") \
-    .join(df_marc, (F.col("p.werks") == F.col("z.werks")) & (F.col("p.matnr") == F.col("z.matnr")), "left") \
-    .join(df_mard_calc, 
-          (F.col("p.werks") == F.col("r_werks")) & 
-          (F.col("p.matnr") == F.col("r_matnr")) &
-          (F.when((F.coalesce(F.col("p.lgort"), F.lit('')) == '') & (F.col("p.werks") == '3000'), '0030')
-           .when(F.coalesce(F.col("p.lgort"), F.lit('')) != '', F.col("p.lgort"))
-           .otherwise('0010') == F.col("r_lgort")), 
-          "left")
 
-# --- Optimized Filtering (Matches SAP "OR" Logic Exactly) ---
 
-# Logic 1: Date Filter (History)
-# Cast p.erdat to DateType to ensure string dates don't break the comparison
-cond_history = (F.col("p.erdat").cast("date") >= F.date_add(F.current_date(), -732))
 
-# Logic 2: Open Order Filter
-# Replicating strict SAP IFNULL logic using Coalesce. 
-cond_open = (
-    (F.coalesce(F.col("u.wbstk"), F.lit('')) != 'C') & 
-    (F.coalesce(F.col("u.lfgsk"), F.lit('')) != 'C') &
-    (F.coalesce(F.col("p.abgru"), F.lit('')) == '') &
-    (F.coalesce(F.col("b.lfsta"), F.lit('')) != '') & 
-    (F.coalesce(F.col("b.lfsta"), F.lit('')) != ' ') &
-    (F.coalesce(F.col("p.kwmeng"), F.lit(0)) > F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) &
-    # Note: e.bmeng > 0 is already guaranteed by the DataFrame filter at the top of this cell
-    (
-        F.when(F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("f1_delvd_qty"), F.lit(0)), 0)
-         .when((F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) <= F.coalesce(F.col("e.bmeng"), F.lit(0)),
-               F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0)))
-         .otherwise(F.coalesce(F.col("e.bmeng"), F.lit(0))) > 0
-    )
-)
 
-# Apply Filters
-# NOTE: Removed (F.col("p.werks") >= '1900') to include ZSB/1000 orders
-df_filtered = df_main.filter(
-    (~F.col("a.auart").isin('ZVC', 'ZR07')) & 
-    (cond_history | cond_open)
-)
+
+
+
+
+# CELL 5: Main Join Logic
+# Joining the Base Table (prst) with all lookups
+# Fixed: Explicit aliasing for ALL Pre-Calculated DataFrames (mbew, incoterms, vekp, lab, act)
+
+df_joined = df_prst \
+    .join(df_kna1, F.col("prst.vbak_kunnr") == F.col("kna1.kunnr"), "inner") \
+    .join(df_mara, F.col("prst.vbap_matnr") == F.col("mara.matnr"), "inner") \
+    .join(df_part, F.col("part.Part") == F.col("prst.vbap_matnr"), "inner") \
+    .join(df_marc, (F.col("prst.vbap_werks") == F.col("marc.werks")) & (F.col("prst.vbap_matnr") == F.col("marc.matnr")), "left") \
+    .join(df_mbew_2000.alias("m2000"), F.col("prst.vbap_matnr") == F.col("m2000.matnr"), "left") \
+    .join(df_mbew_3120.alias("m3120"), F.col("prst.vbap_matnr") == F.col("m3120.matnr"), "left") \
+    .join(df_lab.alias("lab"), F.col("mara.labor") == F.col("lab.lab_labor"), "left") \
+    .join(df_qmel, F.col("prst.vbeln") == F.col("q.aufnr"), "left") \
+    .join(df_afko, F.col("prst.vbak_aufnr") == F.col("afko.aufnr"), "left") \
+    .join(df_act.alias("act"), F.col("prst.vbak_aufnr") == F.col("act.act_aufnr"), "left") \
+    .join(df_vekp_agg.alias("v_agg"), F.col("prst.f1_vbeln") == F.col("v_agg.vekp_key"), "left") \
+    .join(df_hd_incoterm.alias("hd_inco"), F.col("prst.vbeln") == F.col("hd_inco.hd_vbeln"), "left") \
+    .join(df_ln_incoterm.alias("ln_inco"), (F.col("prst.vbeln") == F.col("ln_inco.ln_vbeln")) & (F.col("prst.posnr") == F.col("ln_inco.ln_posnr")), "left")
