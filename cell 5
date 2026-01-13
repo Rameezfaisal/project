@@ -1,163 +1,167 @@
-# CELL 6: Final Selection & Calculations (Lineage Fix)
+---------------------------------------------------------------------------
+AnalysisException                         Traceback (most recent call last)
+Cell In[64], line 39
+     18 expr_open_qty = (
+     19     F.when(
+     20         (F.coalesce(F.col("wbstk"), F.lit('')) != 'C') &
+   (...)
+     35     ).otherwise(0)
+     36 )
+     38 # --- Main Select ---
+---> 39 df_final_logic = df_filtered.select(
+     40     F.col("vbeln").alias("Order"),
+     41     F.expr("ltrim('0', vbeln)").alias("OrderWZ"),
+     42     F.col("posnr").alias("Line"),
+     43     F.expr("ltrim('0', posnr)").alias("LineWZ"),
+     44     F.col("etenr").alias("ScheduleLine"),
+     45     F.expr("ltrim('0', etenr)").alias("ScheduleLineWZ"),
+     46     
+     47     F.when((F.col("wbstk") != 'C') & (F.col("abgru") == '') & (F.col("lfsta") != '') & (expr_open_qty > 0), 'Open')
+     48      .otherwise('Closed').alias("OrderStatus"),
+     49      
+     50     F.col("auart").alias("OrderType"),
+     51     F.col("erdat").alias("CreationDate"),
+     52     # p.erdat might be ambiguous if multiple tables have it, but select will pick the one from the join
+     53     F.col("erdat").alias("LineItemCreationDate"),
+     54     F.col("erzet").alias("LineItemCreationTime"),
+     55     F.col("h_edatu").alias("RequestDate"),
+     56     F.col("edatu").alias("DeliveryDueDate"),
+     57     
+     58     F.col("kwmeng").alias("OrderLineQty"),
+     59     F.col("bmeng").alias("CommittedQty"),
+     60     expr_pgi_qty.alias("PGIQty"),
+     61     expr_open_qty.alias("OpenQty"),
+     62     
+     63     # Inventory
+     64     (F.coalesce(F.col("labst"), F.lit(0)) + F.coalesce(F.col("kinsm"), F.lit(0))).alias("OnHandQty"),
+     65     F.col("klabs").alias("VendorOwned"),
+     66     
+     67     # AvailToShip (Handling QOH from MARD)
+     68     F.when(F.coalesce(F.col("bmeng"), F.lit(0)) < F.coalesce(F.col("QOH"), F.lit(0)), F.coalesce(F.col("bmeng"), F.lit(0))) 
+     69      .otherwise(F.coalesce(F.col("QOH"), F.lit(0))).alias("AvailToShip"), 
+     70     
+     71     F.col("OpenDlvDoc").alias("LastDlvDoc"),
+     72     F.col("OpenDlvQty").alias("LastDlvQty"),
+     73     F.col("QtyShippedTtLine"),
+     74     F.col("DlvStatus").alias("LastDlvStatus"),
+     75     F.col("vkorg").alias("SalesOrg"),
+     76     F.col("kunnr").alias("SoldTo"),
+     77     F.col("ShipTo"),
+     78     F.col("ShipToName"),
+     79     F.col("werks").alias("VendorPlant"),
+     80     
+     81     # Pricing & Currency
+     82     F.col("waerk").alias("DocCurrency"),
+     83     (F.col("netwr") * F.when(F.col("waerk").isin('JPY','TWD'), 
+     84             F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")) * 100)
+     85      .otherwise(F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")))
+     86     ).alias("GrossSOPriceUSD"),
+     87     
+     88     F.col("FrontLoad"),
+     89     F.col("POReceived"),
+     90     F.col("Booking"),
+     91     
+     92     # Resolving Ambiguity for LabOffice
+     93     df_lab["LabOffice"].alias("LabOffice"),
+     94 
+     95     # Keys & Pass-throughs for write cell
+     96     F.col("vbeln"),
+     97     F.col("posnr"),
+     98     F.col("etenr"),
+     99     
+    100     # DDL mappings
+    101     F.col("auart").alias("vbak_auart"),
+    102     F.col("aufnr").alias("vbak_aufnr"),
+    103     F.col("autlf").alias("vbak_autlf"),
+    104     F.col("bstnk").alias("vbak_bstnk"),
+    105     F.col("erdat").alias("vbak_erdat"),
+    106     F.col("ernam").alias("vbak_ernam"),
+    107     F.col("faksk").alias("vbak_faksk"),
+    108     F.col("ihrez").alias("vbak_ihrez"),
+    109     F.col("kunnr").alias("vbak_kunnr"),
+    110     F.col("lifsk").alias("vbak_lifsk"),
+    111     F.col("netwr").alias("vbak_netwr"),
+    112     F.col("objnr").alias("vbak_objnr"),
+    113     F.col("vkorg").alias("vbak_vkorg"),
+    114     F.col("vsnmr_v").alias("vbak_vsnmr_v"),
+    115     F.col("waerk").alias("vbak_waerk"),
+    116     F.col("abgru").alias("vbap_abgru"),
+    117     F.col("aedat").alias("vbap_aedat"),
+    118     F.col("arktx").alias("vbap_arktx"),
+    119     F.col("charg").alias("vbap_charg"),
+    120     F.col("erzet").alias("vbap_erzet"),
+    121     F.col("faksp").alias("vbap_faksp"),
+    122     F.col("grkor").alias("vbap_grkor"),
+    123     F.col("kdmat").alias("vbap_kdmat"),
+    124     F.col("kwmeng").alias("vbap_kwmeng"),
+    125     F.col("lgort").alias("vbap_lgort"),
+    126     F.col("lprio").alias("vbap_lprio"),
+    127     F.col("matnr").alias("vbap_matnr"),
+    128     F.col("netpr").alias("vbap_netpr"),
+    129     F.col("posex").alias("vbap_posex"),
+    130     F.col("prodh").alias("vbap_prodh"),
+    131     F.col("vstel").alias("vbap_vstel"),
+    132     F.col("werks").alias("vbap_werks"),
+    133     F.col("bmeng").alias("vbep_bmeng"),
+    134     F.col("edatu").alias("vbep_edatu"),
+    135     F.col("h_edatu").alias("vbep_h_edatu"),
+    136     F.col("lifsp").alias("vbep_lifsp"),
+    137     F.col("mbdat").alias("vbep_mbdat"),
+    138     F.col("lfgsk").alias("vbuk_lfgsk"),
+    139     F.col("wbstk").alias("vbuk_wbstk"),
+    140     F.col("lfsta").alias("vbup_lfsta"),
+    141     
+    142     # Final write requirement columns
+    143     F.col("delvd_qty"),
+    144     F.col("ExpectedQtyCumulative").alias("expectedqtycumulative"),
+    145     F.col("LastPGIDoc").alias("lastpgidoc"),
+    146     F.col("OpenDlvDoc").alias("opendlvdoc"),
+    147     F.col("OpenDlvQty").alias("opendlvqty"),
+    148     F.col("PGIDate_L").alias("pgidate"),
+    149     F.col("QtyShippedTtLine").alias("qtyshippedttline"),
+    150     
+    151     F.col("kinsm").alias("mard_kinsm"),
+    152     F.col("klabs").alias("mard_klabs"),
+    153     F.col("labst").alias("mard_labst"),
+    154     F.col("lgort").alias("mard_lgort"),
+    155     F.col("matnr").alias("mard_matnr"),
+    156     F.col("werks").alias("mard_werks")
+    157 )
+    159 # Apply HighDollarFlag
+    160 df_final = df_final_logic.withColumn(
+    161     "HighDollarFlag",
+    162     F.when(F.col("GrossSOPriceUSD") > 50000, "True").otherwise("False")
+    163 )
 
-# --- Helper Expressions for Quantities ---
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3229, in DataFrame.select(self, *cols)
+   3184 def select(self, *cols: "ColumnOrName") -> "DataFrame":  # type: ignore[misc]
+   3185     """Projects a set of expressions and returns a new :class:`DataFrame`.
+   3186 
+   3187     .. versionadded:: 1.3.0
+   (...)
+   3227     +-----+---+
+   3228     """
+-> 3229     jdf = self._jdf.select(self._jcols(*cols))
+   3230     return DataFrame(jdf, self.sparkSession)
 
-# 1. PGI Qty Logic: Replaces f1.delvd_qty with delvd_qty
-expr_pgi_qty = (
-    F.when(F.coalesce(F.col("delvd_qty"), F.lit(0)) >= F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)), 
-           F.coalesce(F.col("bmeng"), F.lit(0)))
-     .when(F.coalesce(F.col("delvd_qty"), F.lit(0)) < F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)), 
-           F.greatest(
-               F.coalesce(F.col("bmeng"), F.lit(0)) - (F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("delvd_qty"), F.lit(0))), 
-               F.lit(0)
-           ))
-     .otherwise(0)
-)
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
-# 2. Open Qty Logic
-expr_open_qty = (
-    F.when(
-        (F.coalesce(F.col("wbstk"), F.lit('')) != 'C') &
-        (F.coalesce(F.col("abgru"), F.lit('')) == '') &
-        (F.coalesce(F.col("lfsta"), F.lit('')) != '') &
-        (F.coalesce(F.col("kwmeng"), F.lit(0)) > F.coalesce(F.col("delvd_qty"), F.lit(0))) &
-        (F.coalesce(F.col("bmeng"), F.lit(0)) > 0) &
-        (
-            F.when(F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("delvd_qty"), F.lit(0)), 0)
-             .when((F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("delvd_qty"), F.lit(0))) <= F.coalesce(F.col("bmeng"), F.lit(0)),
-                   F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("delvd_qty"), F.lit(0)))
-             .otherwise(F.coalesce(F.col("bmeng"), F.lit(0))) > 0
-        ),
-        F.when(F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("delvd_qty"), F.lit(0)), 0)
-         .when((F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("delvd_qty"), F.lit(0))) <= F.coalesce(F.col("bmeng"), F.lit(0)),
-               F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("delvd_qty"), F.lit(0)))
-         .otherwise(F.coalesce(F.col("bmeng"), F.lit(0)))
-    ).otherwise(0)
-)
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-# --- Main Select ---
-df_final_logic = df_filtered.select(
-    F.col("vbeln").alias("Order"),
-    F.expr("ltrim('0', vbeln)").alias("OrderWZ"),
-    F.col("posnr").alias("Line"),
-    F.expr("ltrim('0', posnr)").alias("LineWZ"),
-    F.col("etenr").alias("ScheduleLine"),
-    F.expr("ltrim('0', etenr)").alias("ScheduleLineWZ"),
-    
-    F.when((F.col("wbstk") != 'C') & (F.col("abgru") == '') & (F.col("lfsta") != '') & (expr_open_qty > 0), 'Open')
-     .otherwise('Closed').alias("OrderStatus"),
-     
-    F.col("auart").alias("OrderType"),
-    F.col("erdat").alias("CreationDate"),
-    # p.erdat might be ambiguous if multiple tables have it, but select will pick the one from the join
-    F.col("erdat").alias("LineItemCreationDate"),
-    F.col("erzet").alias("LineItemCreationTime"),
-    F.col("h_edatu").alias("RequestDate"),
-    F.col("edatu").alias("DeliveryDueDate"),
-    
-    F.col("kwmeng").alias("OrderLineQty"),
-    F.col("bmeng").alias("CommittedQty"),
-    expr_pgi_qty.alias("PGIQty"),
-    expr_open_qty.alias("OpenQty"),
-    
-    # Inventory
-    (F.coalesce(F.col("labst"), F.lit(0)) + F.coalesce(F.col("kinsm"), F.lit(0))).alias("OnHandQty"),
-    F.col("klabs").alias("VendorOwned"),
-    
-    # AvailToShip (Handling QOH from MARD)
-    F.when(F.coalesce(F.col("bmeng"), F.lit(0)) < F.coalesce(F.col("QOH"), F.lit(0)), F.coalesce(F.col("bmeng"), F.lit(0))) 
-     .otherwise(F.coalesce(F.col("QOH"), F.lit(0))).alias("AvailToShip"), 
-    
-    F.col("OpenDlvDoc").alias("LastDlvDoc"),
-    F.col("OpenDlvQty").alias("LastDlvQty"),
-    F.col("QtyShippedTtLine"),
-    F.col("DlvStatus").alias("LastDlvStatus"),
-    F.col("vkorg").alias("SalesOrg"),
-    F.col("kunnr").alias("SoldTo"),
-    F.col("ShipTo"),
-    F.col("ShipToName"),
-    F.col("werks").alias("VendorPlant"),
-    
-    # Pricing & Currency
-    F.col("waerk").alias("DocCurrency"),
-    (F.col("netwr") * F.when(F.col("waerk").isin('JPY','TWD'), 
-            F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")) * 100)
-     .otherwise(F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")))
-    ).alias("GrossSOPriceUSD"),
-    
-    F.col("FrontLoad"),
-    F.col("POReceived"),
-    F.col("Booking"),
-    
-    # Resolving Ambiguity for LabOffice
-    df_lab["LabOffice"].alias("LabOffice"),
-
-    # Keys & Pass-throughs for write cell
-    F.col("vbeln"),
-    F.col("posnr"),
-    F.col("etenr"),
-    
-    # DDL mappings
-    F.col("auart").alias("vbak_auart"),
-    F.col("aufnr").alias("vbak_aufnr"),
-    F.col("autlf").alias("vbak_autlf"),
-    F.col("bstnk").alias("vbak_bstnk"),
-    F.col("erdat").alias("vbak_erdat"),
-    F.col("ernam").alias("vbak_ernam"),
-    F.col("faksk").alias("vbak_faksk"),
-    F.col("ihrez").alias("vbak_ihrez"),
-    F.col("kunnr").alias("vbak_kunnr"),
-    F.col("lifsk").alias("vbak_lifsk"),
-    F.col("netwr").alias("vbak_netwr"),
-    F.col("objnr").alias("vbak_objnr"),
-    F.col("vkorg").alias("vbak_vkorg"),
-    F.col("vsnmr_v").alias("vbak_vsnmr_v"),
-    F.col("waerk").alias("vbak_waerk"),
-    F.col("abgru").alias("vbap_abgru"),
-    F.col("aedat").alias("vbap_aedat"),
-    F.col("arktx").alias("vbap_arktx"),
-    F.col("charg").alias("vbap_charg"),
-    F.col("erzet").alias("vbap_erzet"),
-    F.col("faksp").alias("vbap_faksp"),
-    F.col("grkor").alias("vbap_grkor"),
-    F.col("kdmat").alias("vbap_kdmat"),
-    F.col("kwmeng").alias("vbap_kwmeng"),
-    F.col("lgort").alias("vbap_lgort"),
-    F.col("lprio").alias("vbap_lprio"),
-    F.col("matnr").alias("vbap_matnr"),
-    F.col("netpr").alias("vbap_netpr"),
-    F.col("posex").alias("vbap_posex"),
-    F.col("prodh").alias("vbap_prodh"),
-    F.col("vstel").alias("vbap_vstel"),
-    F.col("werks").alias("vbap_werks"),
-    F.col("bmeng").alias("vbep_bmeng"),
-    F.col("edatu").alias("vbep_edatu"),
-    F.col("h_edatu").alias("vbep_h_edatu"),
-    F.col("lifsp").alias("vbep_lifsp"),
-    F.col("mbdat").alias("vbep_mbdat"),
-    F.col("lfgsk").alias("vbuk_lfgsk"),
-    F.col("wbstk").alias("vbuk_wbstk"),
-    F.col("lfsta").alias("vbup_lfsta"),
-    
-    # Final write requirement columns
-    F.col("delvd_qty"),
-    F.col("ExpectedQtyCumulative").alias("expectedqtycumulative"),
-    F.col("LastPGIDoc").alias("lastpgidoc"),
-    F.col("OpenDlvDoc").alias("opendlvdoc"),
-    F.col("OpenDlvQty").alias("opendlvqty"),
-    F.col("PGIDate_L").alias("pgidate"),
-    F.col("QtyShippedTtLine").alias("qtyshippedttline"),
-    
-    F.col("kinsm").alias("mard_kinsm"),
-    F.col("klabs").alias("mard_klabs"),
-    F.col("labst").alias("mard_labst"),
-    F.col("lgort").alias("mard_lgort"),
-    F.col("matnr").alias("mard_matnr"),
-    F.col("werks").alias("mard_werks")
-)
-
-# Apply HighDollarFlag
-df_final = df_final_logic.withColumn(
-    "HighDollarFlag",
-    F.when(F.col("GrossSOPriceUSD") > 50000, "True").otherwise("False")
-)
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `vbeln` is ambiguous, could be: [`a`.`vbeln`, `b`.`vbeln`, `e`.`vbeln`, `p`.`vbeln`, `q`.`vbeln`, `u`.`vbeln`].
