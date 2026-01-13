@@ -1,218 +1,238 @@
-Cell 7: Final Projection & Business Logic
-​Business Context:
-This cell performs the final transformation to generate the consumption view output. It translates the raw data and joined master data into business-friendly columns.
-​Key Calculations:
-​Financials: Calculates UnitPriceUSD, ExtPriceUSD, and GrossSOPriceUSD by applying exchange rates (KURSK) and currency normalization (e.g., correcting JPY/TWD scaling).
-​Costs: Derives StdCost and ExtCost by prioritizing the Standard Price from Valuation Area 2000, falling back to 3120 if missing.
-​Categorization: Derives Region based on Sales Org (VKORG) and ToolType based on Labor codes.
-​Status Flags: Calculates ShipmentDueFlag and HighDollarFlag.
+---------------------------------------------------------------------------
+AnalysisException                         Traceback (most recent call last)
+Cell In[43], line 3
+      1 # CELL 7: Final Projection & Calculations
+----> 3 df_final_logic = df_filtered.select(
+      4     # --- Identifiers ---
+      5     F.col("prst.order_status").alias("OrderStatus"),
+      6     
+      7     # OrderGroup Logic
+      8     F.when(F.col("prst.vbak_auart").isin('ZAS','ZAV','ZFD','ZO11','ZSA','ZSB','ZSR','RK','ZCR1','ZDR1'), 'OTH')
+      9      .when(F.col("prst.vbak_auart").isin('AG','ZQ01','ZQ03','ZQ04','ZQFO','ZQIS','ZQUP','ZQUX','ZUQT'), 'QT')
+     10      .when(F.col("prst.vbak_auart").isin('ZO03','ZRA1','ZSO1'), 'RPO')
+     11      .when(F.col("prst.vbak_auart").isin('ZR11','ZR03','ZR04','ZR05','ZR08','ZR4B','ZUPC','ZUPR','ZFOC'), 'RTN')
+     12      .when(F.col("prst.vbak_auart").isin('ZO09','ZO12','ZSD','TA','ZCON','ZFO','ZSO','ZUP','ZUPX','ZO04'), 'SO')
+     13      .otherwise('SO').alias("OrderGroup"),
+     14      
+     15     F.col("prst.vbeln").alias("Order"),
+     16     F.expr("ltrim('0', prst.vbeln)").alias("OrderWZ"),
+     17     F.col("prst.posnr").alias("Line"),
+     18     F.expr("ltrim('0', prst.posnr)").alias("LineWZ"),
+     19     F.col("prst.etenr").alias("ScheduleLine"),
+     20     F.expr("ltrim('0', prst.etenr)").alias("ScheduleLineWZ"),
+     21     F.col("prst.vbak_auart").alias("OrderType"),
+     22     F.col("prst.vbap_abgru").alias("RejectionCodeLine"),
+     23     F.col("prst.vbak_erdat").alias("CreationDate"),
+     24     F.col("prst.vbap_erdat").alias("LineItemCreationDate"),
+     25     F.col("prst.vbap_erzet").alias("LineItemCreationTime"),
+     26     F.col("prst.vbep_h_edatu").alias("RequestDate"),
+     27     F.col("prst.vbep_edatu").alias("DeliveryDueDate"),
+     28     
+     29     # Dummies
+     30     F.lit(None).alias("StatRelvDate"),
+     31     F.lit(None).alias("ItemDeliveryDate"),
+     32     
+     33     F.col("prst.vbak_lifsk").alias("HeaderDlvBlk"),
+     34     F.col("prst.vbep_lifsp").alias("ItemDlvBlk"),
+     35     
+     36     # BillingBlk
+     37     F.when(F.col("prst.vbak_faksk") != '', F.concat(F.lit("BLK(H) "), F.col("prst.vbak_faksk")))
+     38      .when(F.col("prst.vbap_faksp") != '', F.concat(F.lit("BLK(L) "), F.col("prst.vbap_faksp")))
+     39      .otherwise('').alias("BillingBlk"),
+     40      
+     41     F.col("prst.vbap_kwmeng").alias("OrderLineQty"),
+     42     F.col("prst.vbep_bmeng").alias("CommittedQty"),
+     43     
+     44     # PGI Qty (Logic reused from Base Table calculation)
+     45     F.when(F.coalesce(F.col("prst.delvd_qty"), F.lit(0)) >= F.coalesce(F.col("prst.expectedqtycumulative"), F.lit(0)), 
+     46            F.coalesce(F.col("prst.vbep_bmeng"), F.lit(0)))
+     47      .when(F.coalesce(F.col("prst.delvd_qty"), F.lit(0)) < F.coalesce(F.col("prst.expectedqtycumulative"), F.lit(0)), 
+     48            F.greatest(
+     49                F.coalesce(F.col("prst.vbep_bmeng"), F.lit(0)) - (F.coalesce(F.col("prst.expectedqtycumulative"), F.lit(0)) - F.coalesce(F.col("prst.delvd_qty"), F.lit(0))), 
+     50                F.lit(0)
+     51            ))
+     52      .otherwise(0).alias("PGIQty"),
+     53      
+     54     F.lit(None).alias("Intransit"),
+     55     F.lit(None).alias("GRQty"),
+     56     
+     57     # OpenQty (Using the pre-calculated logic from Base Table for consistency)
+     58     F.col("prst.opendlvqty").alias("OpenQty"), 
+     59     
+     60     # Inventory (Calculated from Base Table MARD columns)
+     61     (F.coalesce(F.col("prst.mard_labst"), F.lit(0)) + F.coalesce(F.col("prst.mard_kinsm"), F.lit(0))).alias("OnHandQty"),
+     62     F.col("prst.mard_klabs").alias("VendorOwned"),
+     63     
+     64     # AvailToShip
+     65     F.when(F.col("prst.vbep_bmeng") < (F.coalesce(F.col("prst.mard_labst"),F.lit(0)) + F.coalesce(F.col("prst.mard_klabs"),F.lit(0)) + F.coalesce(F.col("prst.mard_kinsm"),F.lit(0))), 
+     66            F.col("prst.vbep_bmeng"))
+     67      .otherwise(F.coalesce(F.col("prst.mard_labst"),F.lit(0)) + F.coalesce(F.col("prst.mard_klabs"),F.lit(0)) + F.coalesce(F.col("prst.mard_kinsm"),F.lit(0)))
+     68      .alias("AvailToShip"),
+     69      
+     70     F.col("prst.opendlvdoc").alias("LastDlvDoc"),
+     71     F.col("prst.opendlvqty").alias("LastDlvQty"),
+     72     F.col("prst.qtyshippedttline").alias("QtyShippedTtLine"),
+     73     F.lit(None).alias("QtyNetReceivedLine"),
+     74     F.col("prst.dlvstatus").alias("LastDlvStatus"),
+     75     
+     76     F.lit(None).alias("PurchaseOrg"),
+     77     F.col("prst.vbak_vkorg").alias("SalesOrg"),
+     78     F.col("prst.vbak_kunnr").alias("SoldTo"),
+     79     F.expr("ltrim('0', prst.vbak_kunnr)").alias("SoldToWZ"),
+     80     F.col("kna1.name1").alias("SoldToName"),
+     81     
+     82     F.col("prst.shipto").alias("ShipTo"),
+     83     F.expr("ltrim('0', prst.shipto)").alias("ShipToWZ"),
+     84     F.col("prst.shiptoname").alias("ShipToName"),
+     85     
+     86     F.col("prst.vbap_werks").alias("VendorPlant"),
+     87     # VendorSloc
+     88     F.when((F.coalesce(F.col("prst.vbap_lgort"), F.lit('')) == '') & (F.col("prst.vbap_werks") == '3000'), '0030')
+     89      .when(F.coalesce(F.col("prst.vbap_lgort"), F.lit('')) != '', F.col("prst.vbap_lgort"))
+     90      .otherwise('0010').alias("VendorSloc"),
+     91      
+     92     F.col("prst.vbap_vstel").alias("ShippingPoint"),
+     93     F.lit(None).alias("ReceivingPlant"),
+     94     F.lit(None).alias("ReceivingSloc"),
+     95     F.col("prst.vbap_matnr").alias("Part"),
+     96     F.col("prst.vbap_arktx").alias("PartDescription"),
+     97     F.col("part.Consumable").alias("ConsumableFlag"),
+     98     F.col("v_agg.track").alias("Track"),
+     99     F.col("prst.vbep_mbdat").alias("FirmCommitDate"),
+    100     F.col("prst.vbak_autlf").alias("CompDlv"),
+    101     F.col("mara.matkl").alias("MatGrp"),
+    102     F.col("ln_inco.ln_ihrez").alias("CSRep"),
+    103     F.col("prst.vbak_bstnk").alias("CustomerPO"),
+    104     
+    105     # --- PRICING ---
+    106     F.when(F.col("prst.vbak_waerk").isin('JPY','TWD','KRW'), F.col("prst.vbap_netpr") * 100)
+    107      .otherwise(F.col("prst.vbap_netpr")).alias("UnitPriceLocalCurr"),
+    108      
+    109     (F.when(F.col("prst.vbak_waerk").isin('JPY','TWD','KRW'), F.col("prst.vbap_netpr") * 100)
+    110      .otherwise(F.col("prst.vbap_netpr")) * F.col("prst.vbep_bmeng")).alias("ExtPriceLocalCurr"),
+    111      
+    112     F.col("prst.vbak_waerk").alias("DocCurrency"),
+    113     
+    114     # UnitPriceUSD
+    115     (F.when(F.col("prst.vbak_waerk").isin('JPY','TWD'), F.col("prst.vbap_netpr") * 100).otherwise(F.col("prst.vbap_netpr")) * F.when((F.coalesce(F.col("hd_inco.hd_kursk"), F.lit(0)) == 0) | (F.col("prst.vbak_waerk") == 'USD'), 1).otherwise(F.col("hd_inco.hd_kursk"))
+    116     ).alias("UnitPriceUSD"),
+    117     
+    118     # ExtPriceUSD
+    119     ((F.when(F.col("prst.vbak_waerk").isin('JPY','TWD'), F.col("prst.vbap_netpr") * 100).otherwise(F.col("prst.vbap_netpr")) * F.when((F.coalesce(F.col("hd_inco.hd_kursk"), F.lit(0)) == 0) | (F.col("prst.vbak_waerk") == 'USD'), 1).otherwise(F.col("hd_inco.hd_kursk"))) * F.col("prst.vbep_bmeng")
+    120     ).alias("ExtPriceUSD"),
+    121     
+    122     # Costs
+    123     F.coalesce(F.col("m2000.stprs_2000"), F.col("m3120.stprs_3120"), F.lit(0)).alias("StdCost"),
+    124     (F.coalesce(F.col("m2000.stprs_2000"), F.col("m3120.stprs_3120"), F.lit(0)) * F.col("prst.vbep_bmeng")).alias("ExtCost"),
+    125     F.lit('USD').alias("StdCurrency"),
+    126     
+    127     F.when(F.col("prst.vbap_lprio") == '00', '04').otherwise(F.col("prst.vbap_lprio")).alias("DPrio"),
+    128     F.col("prst.vbap_charg").alias("BatchNo"),
+    129     F.col("prst.lastpgidoc").alias("PGIDoc"),
+    130     F.col("prst.pgidate").alias("PGIDate"),
+    131     F.col("prst.vbak_objnr").alias("NCUPhase2"),
+    132     F.col("prst.vbak_vsnmr_v").alias("FCID_SlsDocVersion"),
+    133     F.col("lab.lab_description").alias("LabOffice"),
+    134     F.col("marc.dispo").alias("MRPV"),
+    135     F.lit(None).alias("MRPC"),
+    136     F.col("prst.vbap_grkor").alias("DlvGrp"),
+    137     F.lit(None).alias("DlvCreationDate"),
+    138     F.col("q.qmnum").alias("SrvcNotif"),
+    139     
+    140     F.col("prst.frontload").alias("FrontLoad"),
+    141     F.col("prst.poreceived").alias("POReceived"),
+    142     F.col("prst.booking").alias("Booking"),
+    143     F.col("prst.vbap_prodh").alias("ProdHier"),
+    144     F.lit(None).alias("STOItemText"),
+    145     F.lit(None).alias("MaterialMemo"),
+    146     F.col("marc.ekgrp").alias("PurchaseGrp"),
+    147     F.col("mara.mstae").alias("XPlantStatus"),
+    148     F.col("prst.vbap_kdmat").alias("CustomerMaterial"),
+    149     F.col("prst.vbap_ernam").alias("LineChangedBy"),
+    150     
+    151     F.coalesce(F.col("ln_inco.ln_inco1"), F.col("hd_inco.hd_inco1")).alias("Incoterms"),
+    152     F.col("prst.vbak_ihrez").alias("CsOwner"),
+    153     F.col("prst.vbak_ernam").alias("CreatedBy"),
+    154     F.col("prst.vbak_aufnr").alias("AssocServOrd"),
+    155     F.col("prst.vbap_aedat").alias("LinePrevChangeDate"),
+    156     
+    157     # ExchangeRate
+    158     F.when(F.col("prst.vbak_waerk") == 'KRW', (1 / F.col("hd_inco.hd_kursk")) * 100)
+    159      .otherwise(1 / F.col("hd_inco.hd_kursk")).alias("ExchangeRate"),
+    160      
+    161     F.col("hd_inco.hd_prsdt").cast("string").alias("PricingDate"),
+    162     
+    163     # Region
+    164     F.when(F.col("prst.vbak_vkorg") == '9000', 'NA')
+    165      .when(F.col("prst.vbak_vkorg").between('2000', '2900'), 'EU')
+    166      .when(F.col("prst.vbak_vkorg").between('3000', '3001'), 'JP')
+    167      .when(F.col("prst.vbak_vkorg") == '3100', 'TW')
+    168      .when(F.col("prst.vbak_vkorg") == '3200', 'KR')
+    169      .when(F.col("prst.vbak_vkorg").isin('3300', '3600'), 'SEA')
+    170      .when(F.col("prst.vbak_vkorg").isin('3400', '3410', '1000'), 'CN')
+    171      .otherwise('NEW').alias("Region"),
+    172      
+    173     # ToolType
+    174     F.when(F.col("mara.labor") == '023', 'SPIN')
+    175      .when(F.col("mara.labor") == '024', 'DEP')
+    176      .otherwise('ETCH+').alias("ToolType"),
+    177      
+    178     # ShipmentDueFlag
+    179     F.when((F.current_date() >= F.col("prst.vbep_edatu")) & (F.col("prst.poreceived") == 'X'), 'True').otherwise('False').alias("ShipmentDueFlag"),
+    180     
+    181     # GrossSOPriceUSD
+    182     (F.col("prst.vbak_netwr") * F.when(F.col("prst.vbak_waerk").isin('JPY','TWD'), 
+    183             F.when(F.coalesce(F.col("hd_inco.hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_inco.hd_kursk")) * 100)
+    184      .otherwise(F.when(F.coalesce(F.col("hd_inco.hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_inco.hd_kursk")))
+    185     ).alias("GrossSOPriceUSD"),
+    186     
+    187     F.when(F.current_date() >= F.col("prst.vbep_edatu"), 'True').otherwise('False').alias("DeliveryDueFlag"),
+    188     F.col("prst.vbap_posex").alias("CustomerPoLine"),
+    189     F.lit(None).alias("Cancellation"),
+    190     F.lit(None).alias("CancellationIndicatorFlag"),
+    191     
+    192     F.col("prst.carrier").alias("Carrier"),
+    193     F.col("prst.carrier_name").alias("CarrierName"),
+    194     F.col("ln_inco.ln_zterm").alias("CreditCheckBlock"),
+    195     F.when(F.col("prst.vbap_abgru") != '', 'True').otherwise('False').alias("SOLineRejectionFlag"),
+    196     F.col("act.act_larnt").alias("ActivityType")
+    197 )
+    199 # Apply HighDollarFlag
+    200 df_output = df_final_logic.withColumn(
+    201     "HighDollarFlag",
+    202     F.when(F.col("GrossSOPriceUSD") > 50000, "True").otherwise("False")
+    203 )
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3229, in DataFrame.select(self, *cols)
+   3184 def select(self, *cols: "ColumnOrName") -> "DataFrame":  # type: ignore[misc]
+   3185     """Projects a set of expressions and returns a new :class:`DataFrame`.
+   3186 
+   3187     .. versionadded:: 1.3.0
+   (...)
+   3227     +-----+---+
+   3228     """
+-> 3229     jdf = self._jdf.select(self._jcols(*cols))
+   3230     return DataFrame(jdf, self.sparkSession)
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-
-
-
-# CELL 7: Final Projection & Calculations
-
-df_final_logic = df_filtered.select(
-    # --- Identifiers ---
-    F.col("prst.order_status").alias("OrderStatus"),
-    
-    # OrderGroup Logic
-    F.when(F.col("prst.vbak_auart").isin('ZAS','ZAV','ZFD','ZO11','ZSA','ZSB','ZSR','RK','ZCR1','ZDR1'), 'OTH')
-     .when(F.col("prst.vbak_auart").isin('AG','ZQ01','ZQ03','ZQ04','ZQFO','ZQIS','ZQUP','ZQUX','ZUQT'), 'QT')
-     .when(F.col("prst.vbak_auart").isin('ZO03','ZRA1','ZSO1'), 'RPO')
-     .when(F.col("prst.vbak_auart").isin('ZR11','ZR03','ZR04','ZR05','ZR08','ZR4B','ZUPC','ZUPR','ZFOC'), 'RTN')
-     .when(F.col("prst.vbak_auart").isin('ZO09','ZO12','ZSD','TA','ZCON','ZFO','ZSO','ZUP','ZUPX','ZO04'), 'SO')
-     .otherwise('SO').alias("OrderGroup"),
-     
-    F.col("prst.vbeln").alias("Order"),
-    F.expr("ltrim('0', prst.vbeln)").alias("OrderWZ"),
-    F.col("prst.posnr").alias("Line"),
-    F.expr("ltrim('0', prst.posnr)").alias("LineWZ"),
-    F.col("prst.etenr").alias("ScheduleLine"),
-    F.expr("ltrim('0', prst.etenr)").alias("ScheduleLineWZ"),
-    F.col("prst.vbak_auart").alias("OrderType"),
-    F.col("prst.vbap_abgru").alias("RejectionCodeLine"),
-    F.col("prst.vbak_erdat").alias("CreationDate"),
-    F.col("prst.vbap_erdat").alias("LineItemCreationDate"),
-    F.col("prst.vbap_erzet").alias("LineItemCreationTime"),
-    F.col("prst.vbep_h_edatu").alias("RequestDate"),
-    F.col("prst.vbep_edatu").alias("DeliveryDueDate"),
-    
-    # Dummies
-    F.lit(None).alias("StatRelvDate"),
-    F.lit(None).alias("ItemDeliveryDate"),
-    
-    F.col("prst.vbak_lifsk").alias("HeaderDlvBlk"),
-    F.col("prst.vbep_lifsp").alias("ItemDlvBlk"),
-    
-    # BillingBlk
-    F.when(F.col("prst.vbak_faksk") != '', F.concat(F.lit("BLK(H) "), F.col("prst.vbak_faksk")))
-     .when(F.col("prst.vbap_faksp") != '', F.concat(F.lit("BLK(L) "), F.col("prst.vbap_faksp")))
-     .otherwise('').alias("BillingBlk"),
-     
-    F.col("prst.vbap_kwmeng").alias("OrderLineQty"),
-    F.col("prst.vbep_bmeng").alias("CommittedQty"),
-    
-    # PGI Qty (Logic reused from Base Table calculation)
-    F.when(F.coalesce(F.col("prst.delvd_qty"), F.lit(0)) >= F.coalesce(F.col("prst.expectedqtycumulative"), F.lit(0)), 
-           F.coalesce(F.col("prst.vbep_bmeng"), F.lit(0)))
-     .when(F.coalesce(F.col("prst.delvd_qty"), F.lit(0)) < F.coalesce(F.col("prst.expectedqtycumulative"), F.lit(0)), 
-           F.greatest(
-               F.coalesce(F.col("prst.vbep_bmeng"), F.lit(0)) - (F.coalesce(F.col("prst.expectedqtycumulative"), F.lit(0)) - F.coalesce(F.col("prst.delvd_qty"), F.lit(0))), 
-               F.lit(0)
-           ))
-     .otherwise(0).alias("PGIQty"),
-     
-    F.lit(None).alias("Intransit"),
-    F.lit(None).alias("GRQty"),
-    
-    # OpenQty (Using the pre-calculated logic from Base Table for consistency)
-    F.col("prst.opendlvqty").alias("OpenQty"), 
-    
-    # Inventory (Calculated from Base Table MARD columns)
-    (F.coalesce(F.col("prst.mard_labst"), F.lit(0)) + F.coalesce(F.col("prst.mard_kinsm"), F.lit(0))).alias("OnHandQty"),
-    F.col("prst.mard_klabs").alias("VendorOwned"),
-    
-    # AvailToShip
-    F.when(F.col("prst.vbep_bmeng") < (F.coalesce(F.col("prst.mard_labst"),F.lit(0)) + F.coalesce(F.col("prst.mard_klabs"),F.lit(0)) + F.coalesce(F.col("prst.mard_kinsm"),F.lit(0))), 
-           F.col("prst.vbep_bmeng"))
-     .otherwise(F.coalesce(F.col("prst.mard_labst"),F.lit(0)) + F.coalesce(F.col("prst.mard_klabs"),F.lit(0)) + F.coalesce(F.col("prst.mard_kinsm"),F.lit(0)))
-     .alias("AvailToShip"),
-     
-    F.col("prst.opendlvdoc").alias("LastDlvDoc"),
-    F.col("prst.opendlvqty").alias("LastDlvQty"),
-    F.col("prst.qtyshippedttline").alias("QtyShippedTtLine"),
-    F.lit(None).alias("QtyNetReceivedLine"),
-    F.col("prst.dlvstatus").alias("LastDlvStatus"),
-    
-    F.lit(None).alias("PurchaseOrg"),
-    F.col("prst.vbak_vkorg").alias("SalesOrg"),
-    F.col("prst.vbak_kunnr").alias("SoldTo"),
-    F.expr("ltrim('0', prst.vbak_kunnr)").alias("SoldToWZ"),
-    F.col("kna1.name1").alias("SoldToName"),
-    
-    F.col("prst.shipto").alias("ShipTo"),
-    F.expr("ltrim('0', prst.shipto)").alias("ShipToWZ"),
-    F.col("prst.shiptoname").alias("ShipToName"),
-    
-    F.col("prst.vbap_werks").alias("VendorPlant"),
-    # VendorSloc
-    F.when((F.coalesce(F.col("prst.vbap_lgort"), F.lit('')) == '') & (F.col("prst.vbap_werks") == '3000'), '0030')
-     .when(F.coalesce(F.col("prst.vbap_lgort"), F.lit('')) != '', F.col("prst.vbap_lgort"))
-     .otherwise('0010').alias("VendorSloc"),
-     
-    F.col("prst.vbap_vstel").alias("ShippingPoint"),
-    F.lit(None).alias("ReceivingPlant"),
-    F.lit(None).alias("ReceivingSloc"),
-    F.col("prst.vbap_matnr").alias("Part"),
-    F.col("prst.vbap_arktx").alias("PartDescription"),
-    F.col("part.Consumable").alias("ConsumableFlag"),
-    F.col("v_agg.track").alias("Track"),
-    F.col("prst.vbep_mbdat").alias("FirmCommitDate"),
-    F.col("prst.vbak_autlf").alias("CompDlv"),
-    F.col("mara.matkl").alias("MatGrp"),
-    F.col("ln_inco.ln_ihrez").alias("CSRep"),
-    F.col("prst.vbak_bstnk").alias("CustomerPO"),
-    
-    # --- PRICING ---
-    F.when(F.col("prst.vbak_waerk").isin('JPY','TWD','KRW'), F.col("prst.vbap_netpr") * 100)
-     .otherwise(F.col("prst.vbap_netpr")).alias("UnitPriceLocalCurr"),
-     
-    (F.when(F.col("prst.vbak_waerk").isin('JPY','TWD','KRW'), F.col("prst.vbap_netpr") * 100)
-     .otherwise(F.col("prst.vbap_netpr")) * F.col("prst.vbep_bmeng")).alias("ExtPriceLocalCurr"),
-     
-    F.col("prst.vbak_waerk").alias("DocCurrency"),
-    
-    # UnitPriceUSD
-    (F.when(F.col("prst.vbak_waerk").isin('JPY','TWD'), F.col("prst.vbap_netpr") * 100).otherwise(F.col("prst.vbap_netpr")) * F.when((F.coalesce(F.col("hd_inco.hd_kursk"), F.lit(0)) == 0) | (F.col("prst.vbak_waerk") == 'USD'), 1).otherwise(F.col("hd_inco.hd_kursk"))
-    ).alias("UnitPriceUSD"),
-    
-    # ExtPriceUSD
-    ((F.when(F.col("prst.vbak_waerk").isin('JPY','TWD'), F.col("prst.vbap_netpr") * 100).otherwise(F.col("prst.vbap_netpr")) * F.when((F.coalesce(F.col("hd_inco.hd_kursk"), F.lit(0)) == 0) | (F.col("prst.vbak_waerk") == 'USD'), 1).otherwise(F.col("hd_inco.hd_kursk"))) * F.col("prst.vbep_bmeng")
-    ).alias("ExtPriceUSD"),
-    
-    # Costs
-    F.coalesce(F.col("m2000.stprs_2000"), F.col("m3120.stprs_3120"), F.lit(0)).alias("StdCost"),
-    (F.coalesce(F.col("m2000.stprs_2000"), F.col("m3120.stprs_3120"), F.lit(0)) * F.col("prst.vbep_bmeng")).alias("ExtCost"),
-    F.lit('USD').alias("StdCurrency"),
-    
-    F.when(F.col("prst.vbap_lprio") == '00', '04').otherwise(F.col("prst.vbap_lprio")).alias("DPrio"),
-    F.col("prst.vbap_charg").alias("BatchNo"),
-    F.col("prst.lastpgidoc").alias("PGIDoc"),
-    F.col("prst.pgidate").alias("PGIDate"),
-    F.col("prst.vbak_objnr").alias("NCUPhase2"),
-    F.col("prst.vbak_vsnmr_v").alias("FCID_SlsDocVersion"),
-    F.col("lab.lab_description").alias("LabOffice"),
-    F.col("marc.dispo").alias("MRPV"),
-    F.lit(None).alias("MRPC"),
-    F.col("prst.vbap_grkor").alias("DlvGrp"),
-    F.lit(None).alias("DlvCreationDate"),
-    F.col("q.qmnum").alias("SrvcNotif"),
-    
-    F.col("prst.frontload").alias("FrontLoad"),
-    F.col("prst.poreceived").alias("POReceived"),
-    F.col("prst.booking").alias("Booking"),
-    F.col("prst.vbap_prodh").alias("ProdHier"),
-    F.lit(None).alias("STOItemText"),
-    F.lit(None).alias("MaterialMemo"),
-    F.col("marc.ekgrp").alias("PurchaseGrp"),
-    F.col("mara.mstae").alias("XPlantStatus"),
-    F.col("prst.vbap_kdmat").alias("CustomerMaterial"),
-    F.col("prst.vbap_ernam").alias("LineChangedBy"),
-    
-    F.coalesce(F.col("ln_inco.ln_inco1"), F.col("hd_inco.hd_inco1")).alias("Incoterms"),
-    F.col("prst.vbak_ihrez").alias("CsOwner"),
-    F.col("prst.vbak_ernam").alias("CreatedBy"),
-    F.col("prst.vbak_aufnr").alias("AssocServOrd"),
-    F.col("prst.vbap_aedat").alias("LinePrevChangeDate"),
-    
-    # ExchangeRate
-    F.when(F.col("prst.vbak_waerk") == 'KRW', (1 / F.col("hd_inco.hd_kursk")) * 100)
-     .otherwise(1 / F.col("hd_inco.hd_kursk")).alias("ExchangeRate"),
-     
-    F.col("hd_inco.hd_prsdt").cast("string").alias("PricingDate"),
-    
-    # Region
-    F.when(F.col("prst.vbak_vkorg") == '9000', 'NA')
-     .when(F.col("prst.vbak_vkorg").between('2000', '2900'), 'EU')
-     .when(F.col("prst.vbak_vkorg").between('3000', '3001'), 'JP')
-     .when(F.col("prst.vbak_vkorg") == '3100', 'TW')
-     .when(F.col("prst.vbak_vkorg") == '3200', 'KR')
-     .when(F.col("prst.vbak_vkorg").isin('3300', '3600'), 'SEA')
-     .when(F.col("prst.vbak_vkorg").isin('3400', '3410', '1000'), 'CN')
-     .otherwise('NEW').alias("Region"),
-     
-    # ToolType
-    F.when(F.col("mara.labor") == '023', 'SPIN')
-     .when(F.col("mara.labor") == '024', 'DEP')
-     .otherwise('ETCH+').alias("ToolType"),
-     
-    # ShipmentDueFlag
-    F.when((F.current_date() >= F.col("prst.vbep_edatu")) & (F.col("prst.poreceived") == 'X'), 'True').otherwise('False').alias("ShipmentDueFlag"),
-    
-    # GrossSOPriceUSD
-    (F.col("prst.vbak_netwr") * F.when(F.col("prst.vbak_waerk").isin('JPY','TWD'), 
-            F.when(F.coalesce(F.col("hd_inco.hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_inco.hd_kursk")) * 100)
-     .otherwise(F.when(F.coalesce(F.col("hd_inco.hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_inco.hd_kursk")))
-    ).alias("GrossSOPriceUSD"),
-    
-    F.when(F.current_date() >= F.col("prst.vbep_edatu"), 'True').otherwise('False').alias("DeliveryDueFlag"),
-    F.col("prst.vbap_posex").alias("CustomerPoLine"),
-    F.lit(None).alias("Cancellation"),
-    F.lit(None).alias("CancellationIndicatorFlag"),
-    
-    F.col("prst.carrier").alias("Carrier"),
-    F.col("prst.carrier_name").alias("CarrierName"),
-    F.col("ln_inco.ln_zterm").alias("CreditCheckBlock"),
-    F.when(F.col("prst.vbap_abgru") != '', 'True').otherwise('False').alias("SOLineRejectionFlag"),
-    F.col("act.act_larnt").alias("ActivityType")
-)
-
-# Apply HighDollarFlag
-df_output = df_final_logic.withColumn(
-    "HighDollarFlag",
-    F.when(F.col("GrossSOPriceUSD") > 50000, "True").otherwise("False")
-)
+AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `lab`.`lab_description` cannot be resolved. Did you mean one of the following? [`lab_description`, `part`.`description`, `lab_labor`, `q`.`aezeit`, `q`.`deviceid`].;
+'Project [order_status#64 AS OrderStatus#45321, CASE WHEN vbak_auart#74 IN (ZAS,ZAV,ZFD,ZO11,ZSA,ZSB,ZSR,RK,ZCR1,ZDR1) THEN OTH WHEN vbak_auart#74 IN (AG,ZQ01,ZQ03,ZQ04,ZQFO,ZQIS,ZQUP,ZQUX,ZUQT) THEN QT WHEN vbak_auart#74 IN (ZO03,ZRA1,ZSO1) THEN RPO WHEN vbak_auart#74 IN (ZR11,ZR03,ZR04,ZR05,ZR08,ZR4B,ZUPC,ZUPR,ZFOC) THEN RTN WHEN vbak_auart#74 IN (ZO09,ZO12,ZSD,TA,ZCON,ZFO,ZSO,ZUP,ZUPX,ZO04) THEN SO ELSE SO END AS OrderGroup#45322, vbeln#108 AS Order#45323, ltrim(vbeln#108, Some(0)) AS OrderWZ#45324, posnr#70 AS Line#45325, ltrim(posnr#70, Some(0)) AS LineWZ#45326, etenr#52 AS ScheduleLine#45327, ltrim(etenr#52, Some(0)) AS ScheduleLineWZ#45328, vbak_auart#74 AS OrderType#45329, vbap_abgru#89 AS RejectionCodeLine#45330, vbak_erdat#78 AS CreationDate#45331, vbap_erdat#93 AS LineItemCreationDate#45332, vbap_erzet#95 AS LineItemCreationTime#45333, vbep_h_edatu#111 AS RequestDate#45334, vbep_edatu#110 AS DeliveryDueDate#45335, null AS StatRelvDate#45336, null AS ItemDeliveryDate#45337, vbak_lifsk#83 AS HeaderDlvBlk#45338, vbep_lifsp#112 AS Item
