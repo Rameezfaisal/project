@@ -1,10 +1,9 @@
-Cell 4: Pre-Calculation & Master Data Preparation
+Cell 5: Main Join & Filtering Logic
 ​Business Context:
-This cell performs heavy aggregations before the main join to ensure the pipeline is efficient and cost-effective.
-​Currency Conversion: Finds the correct "USD" exchange rate for every currency based on the transaction date.
-​Backorder Logic: Calculates "Cumulative Committed Quantity" to determine which lines are waiting for stock.
-​Status Decoding: Translates cryptic SAP status codes (e.g., E0008) into business flags like "FrontLoad" or "Booking".
-​Delivery History: Aggregates shipping history so we don't create duplicate rows when joining the main order table.
+This is the core "engine" of the procedure. It reconstructs the complex relationships between 25 tables.
+​Strict Join Types: It respects the SAP logic where foundational tables (Order Header/Item, Schedule Lines, Status) are Inner Joins (must exist), while enrichment tables (Delivery Logs, Lab Office, Production info) are Left Joins (optional).
+​Complex MARD Join: It implements the specific "Storage Location Substitution" rule (e.g., swapping loc '0010' for '0030' in Plant 3000) directly in the join condition.
+​Global Filters: It applies the "Open Order" logic vs. "Historical Data" logic (732 days lookback) to ensure the table captures active business + relevant history.
 
 
 
@@ -13,91 +12,75 @@ This cell performs heavy aggregations before the main join to ensure the pipelin
 
 
 
-# CELL 4: Pre-Calculation - Complexity Reduction
 
-# 1. Currency Conversion Logic (Replaces subquery 'x')
-# We filter for USD, Window by FCURR order by GDATU ASC (since MIN GDATU = Latest Date in SAP TCURR)
-w_curr = Window.partitionBy("fcurr").orderBy(F.col("gdatu").asc())
 
-df_curr_calc = df_tcurr.filter(F.col("tcurr") == 'USD') \
-    .withColumn("rn", F.row_number().over(w_curr)) \
-    .filter(F.col("rn") == 1) \
-    .select(
-        F.col("fcurr").alias("x_fcurr"), 
-        F.abs(F.col("ukurs")).alias("x_ukurs"), # Exchange Rate
-        F.col("tcurr").alias("x_tcurr")
+# CELL 5: Main Join Logic
+# Reconstructing the FROM clause with strict Inner vs Left join adherence
+
+df_main = df_vbep_calc.alias("e") \
+    .join(df_vbap, (F.col("e.vbeln") == F.col("p.vbeln")) & (F.col("e.posnr") == F.col("p.posnr")), "inner") \
+    .join(df_vbak, F.col("a.vbeln") == F.col("p.vbeln"), "inner") \
+    .join(df_vbuk, F.col("u.vbeln") == F.col("p.vbeln"), "inner") \
+    .join(df_vbup, (F.col("b.vbeln") == F.col("p.vbeln")) & (F.col("b.posnr") == F.col("p.posnr")), "inner") \
+    .join(df_kna1, F.col("a.kunnr") == F.col("k.kunnr"), "inner") \
+    .join(df_part, F.col("p.matnr") == F.col("pp.part"), "inner") \
+    .join(df_mara, F.col("p.matnr") == F.col("m.matnr"), "inner") \
+    .join(df_h, (F.col("p.vbeln") == F.col("h_vbeln")) & (F.col("p.posnr") == F.col("h_posnr")), "inner") \
+    .join(df_c, F.col("a.vbeln") == F.col("c_vbeln"), "inner") \
+    .join(df_f1, (F.col("b.vbeln") == F.col("f1_vbeln")) & (F.col("b.posnr") == F.col("f1_posnr")), "left") \
+    .join(df_f2, (F.col("b.vbeln") == F.col("f2_vbeln")) & (F.col("b.posnr") == F.col("f2_posnr")), "left") \
+    .join(df_lab, F.col("m.labor") == F.col("i_labor"), "left") \
+    .join(df_l, (F.col("p.vbeln") == F.col("l_vbeln")) & (F.col("p.posnr") == F.col("l_posnr")), "left") \
+    .join(df_mbew, (F.col("p.matnr") == F.col("w.matnr")) & (F.col("w.bwkey") == '2000'), "left") \
+    .join(df_hd, F.col("p.vbeln") == F.col("hd_vbeln"), "left") \
+    .join(df_d, (F.col("p.vbeln") == F.col("d_vbeln")) & (F.col("p.posnr") == F.col("d_posnr")), "left") \
+    .join(df_j, F.col("a.objnr") == F.col("j_objnr"), "left") \
+    .join(df_vekp, F.col("f1_vbeln") == F.col("vekp.vpobjkey"), "left") \
+    .join(df_qmel, F.col("a.vbeln") == F.col("q.aufnr"), "left") \
+    .join(df_xy, (F.col("p.vbeln") == F.col("xy_vbeln")) & (F.col("p.posnr") == F.col("xy_posnr")), "left") \
+    .join(df_afko, F.col("a.aufnr") == F.col("afko.aufnr"), "left") \
+    .join(df_act, F.col("afko.aufpl") == F.col("act_aufpl"), "left") \
+    .join(df_curr_calc, F.col("a.waerk") == F.col("x_fcurr"), "left") \
+    .join(df_marc, (F.col("p.werks") == F.col("z.werks")) & (F.col("p.matnr") == F.col("z.matnr")), "left") \
+    .join(df_mard, 
+          (F.col("p.werks") == F.col("r.werks")) & 
+          (F.col("p.matnr") == F.col("r.matnr")) &
+          (
+             # Storage Location Substitution Logic from SAP Script
+             F.when((F.coalesce(F.col("p.lgort"), F.lit('')) == '') & (F.col("p.werks") == '3000'), '0030')
+              .when(F.coalesce(F.col("p.lgort"), F.lit('')) != '', F.col("p.lgort"))
+              .otherwise('0010') == F.col("r.lgort")
+          ), 
+          "left")
+
+# --- Filtering Logic ---
+
+# 1. Define "Open Order" complex logic 
+# Checks: Status not Complete, Not Rejected, Has Open Qty, Backorder exists
+condition_open_order = (
+    (F.coalesce(F.col("u.wbstk"), F.lit('')) != 'C') & 
+    (F.coalesce(F.col("u.lfgsk"), F.lit('')) != 'C') &
+    (F.coalesce(F.col("p.abgru"), F.lit('')) == '') &
+    (~F.col("b.lfsta").isin('', ' ')) &
+    (F.coalesce(F.col("p.kwmeng"), F.lit(0)) > F.coalesce(F.col("delvd_qty"), F.lit(0))) &
+    (F.coalesce(F.col("e.bmeng"), F.lit(0)) > 0) &
+    (
+        F.when(F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("delvd_qty"), F.lit(0)), 0)
+         .when((F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("delvd_qty"), F.lit(0))) <= F.coalesce(F.col("e.bmeng"), F.lit(0)),
+               F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("delvd_qty"), F.lit(0)))
+         .otherwise(F.coalesce(F.col("e.bmeng"), F.lit(0))) > 0
     )
-
-# 2. Cumulative Quantity (Replaces self-join 't')
-w_cum = Window.partitionBy("vbeln", "posnr").orderBy("etenr").rowsBetween(Window.unboundedPreceding, Window.currentRow)
-df_vbep_calc = df_vbep.withColumn("ExpectedQtyCumulative", F.sum("bmeng").over(w_cum))
-
-# 3. Header Schedule Line (Replaces 'h')
-df_h = df_vbep.filter(F.col("etenr") == '0001').select(
-    F.col("vbeln").alias("h_vbeln"), F.col("posnr").alias("h_posnr"), F.col("edatu").alias("h_edatu")
 )
 
-# 4. Delivery Flow (Replaces 'f1')
-df_f1 = df_vbfa.filter((F.col("stufe") == '00') & (F.col("vbtyp_n").isin('T', 'J'))) \
-    .groupBy("vbelv", "posnv").agg(
-        F.sum(
-            F.when((F.col("vbtyp_n") == 'R') & (F.col("plmin") == '+'), F.coalesce(F.col("rfmng_flo"), F.lit(0)))
-            .when(F.col("vbtyp_n") == 'h', F.coalesce(F.col("rfmng_flo"), F.lit(0)) * -1)
-            .otherwise(0)
-        ).alias("delvd_qty")
-    ).withColumnRenamed("vbelv", "f1_vbeln").withColumnRenamed("posnv", "f1_posnr")
+# 2. Apply Main Filter (Active Records OR Recent History)
+df_filtered = df_main.filter(
+    (F.col("p.werks") >= '1900') & 
+    (~F.col("a.auart").isin('ZVC', 'ZR07')) & 
+    (
+        (F.col("p.erdat") >= F.date_add(F.current_date(), -732)) | 
+        condition_open_order
+    )
+)
 
-# 5. PGI Flow (Replaces 'f2')
-df_f2 = df_vbfa.filter((F.col("stufe") == '00') & (F.col("vbtyp_n").isin('T', 'J')) & (F.col("vbeln").startswith('49'))) \
-    .groupBy("vbelv", "posnv").agg(
-        F.max("vbeln").alias("LastPGIDoc"),
-        F.sum(
-            F.when(F.col("vbtyp_n") == 'R', F.coalesce(F.col("rfmng"), F.lit(0)))
-            .when(F.col("vbtyp_n") == 'h', F.coalesce(F.col("rfmng"), F.lit(0)) * -1)
-            .otherwise(0)
-        ).alias("PGIQty_f2")
-    ).withColumnRenamed("vbelv", "f2_vbeln").withColumnRenamed("posnv", "f2_posnr")
 
-# 6. Delivery Docs (Replaces 'l')
-df_l = df_lips.filter((F.col("vgbel") != '') & (~F.col("vgbel").startswith('4')) & (~F.col("vgbel").startswith('3'))) \
-    .join(df_likp, df_lips.vbeln == df_likp.vbeln) \
-    .filter(df_likp.wadat_ist != '') \
-    .groupBy(df_lips.vgbel, df_lips.vgpos).agg(
-        F.max(df_lips.vbeln).alias("OpenDlvDoc"),
-        F.sum(df_lips.lgmng).alias("OpenDlvQty"),
-        F.sum(df_lips.lfimg).alias("QtyShippedTtLine"),
-        F.max(df_likp.wadat_ist).alias("PGIDate_L"),
-        F.when(F.max(df_likp.wadat_ist) == '', 'Created').otherwise('Shipped').alias("DlvStatus")
-    ).withColumnRenamed("vgbel", "l_vbeln").withColumnRenamed("vgpos", "l_posnr")
 
-# 7. Statuses (Replaces 'j')
-# FIXED: Replaced df_jest.stat with F.col("stat") to avoid collision with DataFrameStatFunctions
-df_j = df_jest.filter(F.col("stat").isin('E0001', 'E0004', 'E0005', 'E0008', 'E0009') & (F.col("inact") != 'X')) \
-    .join(df_tj30t, (F.col("stat") == df_tj30t.estat) & (df_tj30t.stsma == 'Z0000003') & (df_tj30t.spras == 'E'), "left") \
-    .groupBy("objnr").agg(
-        F.max(F.when(F.col("stat") == 'E0008', 'X').otherwise('')).alias("FrontLoad"),
-        F.max(F.when(F.col("stat") == 'E0009', 'X').otherwise('')).alias("POReceived"),
-        F.max(F.when(F.col("stat").isin('E0001', 'E0004', 'E0005'), F.col("txt04")).otherwise('')).alias("Booking")
-    ).withColumnRenamed("objnr", "j_objnr")
-
-# 8. Spares (Replaces 'xy')
-df_xy = df_spares.groupBy("order_no", "order_line_no").agg(
-    F.max("carrier").alias("xy_carrier"), F.max("carrier_name").alias("xy_carrier_name")
-).withColumnRenamed("order_no", "xy_vbeln").withColumnRenamed("order_line_no", "xy_posnr")
-
-# 9. Lab Office
-df_lab = df_t024x.filter(F.col("spras") == 'E').select(F.col("labor").alias("i_labor"), F.col("lbtxt").alias("LabOffice"))
-
-# 10. Production (AFVC)
-df_act = df_afvc.groupBy("aufpl").agg(F.min("vornr").alias("vornr")) \
-    .join(df_afvc, ["aufpl", "vornr"], "left") \
-    .select(F.col("aufpl").alias("act_aufpl"), F.col("larnt"))
-
-# 11. Partners (ShipTo)
-df_c = df_vbpa.filter((F.col("posnr") == '000000') & (F.col("parvw") == 'WE')) \
-    .join(df_kna1, df_vbpa.kunnr == df_kna1.kunnr) \
-    .select(df_vbpa.vbeln.alias("c_vbeln"), df_vbpa.kunnr.alias("ShipTo"), df_kna1.name1.alias("ShipToName"))
-
-# 12. Header/Item Incoterms (Replaces 'hd' and 'd')
-df_hd = df_vbkd.filter(F.col("posnr") == '000000').select(F.col("vbeln").alias("hd_vbeln"), F.col("inco1").alias("hd_inco1"), F.col("kursk").alias("hd_kursk"), F.col("prsdt").alias("hd_prsdt"))
-df_d = df_vbkd.select(F.col("vbeln").alias("d_vbeln"), F.col("posnr").alias("d_posnr"), F.col("inco1").alias("d_inco1"), F.col("zterm").alias("d_zterm"), F.col("ihrez").alias("d_ihrez"))
