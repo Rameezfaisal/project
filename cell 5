@@ -1,10 +1,12 @@
-Cell 5: Main Enrichment Logic (Joins)
+Cell 6: Dynamic Filtering (The "Consumption View" Logic)
 ​Business Context:
-This cell performs the "Enrichment" phase. It takes the base Sales Order table (prst) created in the previous notebook and attaches critical Master Data:
-​Customer Details: Joins KNA1 to get customer names.
-​Part & Plant Info: Joins MARA, MARC to get product hierarchy, MRP controllers, and part descriptions.
-​Costing: Joins MBEW (Material Valuation) twice—once for Valuation Area 2000 and once for 3120—to retrieve the Standard Price (STPRS) needed for financial calculations.
-​Incoterms: Joins VBKD to determine shipping terms (Header vs. Line level).
+This cell implements the dynamic business logic of the consumption view. Unlike a static table, this view allows users to filter the entire dataset by:
+​Date Ranges (IP_DATE_FLAG): Users can choose which date field to filter on (e.g., "Show me orders created in 2024" vs. "Show me orders shipped in 2024").
+​Sales Organization & Order Type: Users can provide a comma-separated list of Sales Orgs or Order Types (e.g., '1000, 2000') or simply pass 'ALL'.
+​Global Safety Filter: Excludes specific technical order types (ZVC, ZR07) and ensures we only look at recent history (732 days) unless the order is still "Open".
+​Key Logic Implemented:
+​parse_20 Function: A Python equivalent of the SAP SQLScript function PARSE_20, splitting comma-separated input strings into clean lists for filtering.
+​Dynamic WHERE Clause: Constructs a Spark SQL filter expression on the fly based on the IP_DATE_FLAG parameter.
 
 
 
@@ -12,25 +14,78 @@ This cell performs the "Enrichment" phase. It takes the base Sales Order table (
 
 
 
+# CELL 6: Dynamic Filtering Logic (With PARSE_20 Helper)
 
+# --- 1. Define PARSE_20 Helper (Python Version) ---
+def parse_20(input_val):
+    """
+    Mimics SAP "_SYS_BIC"."prd.ev::PARSE_20"
+    Input: "1000, 2000, 3000" or ["1000", "2000"]
+    Output: ['1000', '2000', '3000']
+    """
+    if not input_val:
+        return ["ALL"] # Handle empty input safely
+        
+    # If it's already a list (from manual config), return it
+    if isinstance(input_val, list):
+        return input_val
+    
+    # Logic: Replace single quotes with space, split by comma, trim whitespace
+    cleaned_str = str(input_val).replace("'", " ") 
+    
+    # Split and Strip
+    return [x.strip() for x in cleaned_str.split(',') if x.strip()]
 
+# --- 2. Process Parameters ---
+# Convert inputs (which might be comma-separated strings) into Lists
+sales_orgs = parse_20(params["IP_SALES_ORG"])
+order_types = parse_20(params["IP_ORDER_TYPE"])
 
-# CELL 5: Main Join Logic
-# Joining the Base Table (prst) with all lookups
-# Fixed: Explicit aliasing for Pre-Calculated DataFrames (mbew, incoterms, vekp)
+# --- 3. Build Filters ---
 
-df_joined = df_prst \
-    .join(df_kna1, F.col("prst.vbak_kunnr") == F.col("kna1.kunnr"), "inner") \
-    .join(df_mara, F.col("prst.vbap_matnr") == F.col("mara.matnr"), "inner") \
-    .join(df_part, F.col("part.Part") == F.col("prst.vbap_matnr"), "inner") \
-    .join(df_marc, (F.col("prst.vbap_werks") == F.col("marc.werks")) & (F.col("prst.vbap_matnr") == F.col("marc.matnr")), "left") \
-    .join(df_mbew_2000.alias("m2000"), F.col("prst.vbap_matnr") == F.col("m2000.matnr"), "left") \
-    .join(df_mbew_3120.alias("m3120"), F.col("prst.vbap_matnr") == F.col("m3120.matnr"), "left") \
-    .join(df_lab, F.col("mara.labor") == F.col("lab_labor"), "left") \
-    .join(df_qmel, F.col("prst.vbeln") == F.col("q.aufnr"), "left") \
-    .join(df_afko, F.col("prst.vbak_aufnr") == F.col("afko.aufnr"), "left") \
-    .join(df_act, F.col("prst.vbak_aufnr") == F.col("act_aufnr"), "left") \
-    .join(df_vekp_agg.alias("v_agg"), F.col("prst.f1_vbeln") == F.col("v_agg.vekp_key"), "left") \
-    .join(df_hd_incoterm.alias("hd_inco"), F.col("prst.vbeln") == F.col("hd_inco.hd_vbeln"), "left") \
-    .join(df_ln_incoterm.alias("ln_inco"), (F.col("prst.vbeln") == F.col("ln_inco.ln_vbeln")) & (F.col("prst.posnr") == F.col("ln_inco.ln_posnr")), "left")
+# Base Filter (History + Open Status)
+# Matches: WHERE PRST.VBAK_AUART NOT IN ('ZVC','ZR07') AND ( PRST.VBAP_ERDAT >= ADD_DAYS(CURRENT_DATE,-732) OR PRST.ORDER_STATUS = 'Open' )
+base_filter = (
+    (~F.col("prst.vbak_auart").isin('ZVC', 'ZR07')) &
+    (
+        (F.col("prst.vbap_erdat") >= F.date_add(F.current_date(), -732)) |
+        (F.col("prst.order_status") == 'Open')
+    )
+)
 
+# Dynamic Date Filter
+date_flag = params["IP_DATE_FLAG"]
+date_from = params["IP_ERDAT_FROM"]
+date_to = params["IP_ERDAT_TO"]
+
+date_filter_expr = F.lit(True) # Default True (No Filter) if Flag is 'N'
+
+if date_flag == 'L': # Line Create Date
+    date_filter_expr = F.col("prst.vbap_erdat").between(date_from, date_to)
+elif date_flag == 'P': # PGI Date
+    date_filter_expr = F.col("prst.pgidate").between(date_from, date_to)
+elif date_flag == 'R': # Request Date
+    date_filter_expr = F.col("prst.vbep_h_edatu").between(date_from, date_to)
+elif date_flag == 'C': # Header Create Date
+    date_filter_expr = F.col("prst.vbak_erdat").between(date_from, date_to)
+elif date_flag == 'F': # Firm Commit Date
+    date_filter_expr = F.col("prst.vbep_mbdat").between(date_from, date_to)
+elif date_flag == 'A': # Change Date
+    date_filter_expr = F.col("prst.vbap_aedat").between(date_from, date_to)
+
+# Sales Org & Order Type Filters
+# Logic: If 'ALL' is in the list, pass True (no filter). Else, check if value is in list.
+sales_org_filter = F.lit(True)
+if "ALL" not in sales_orgs:
+    sales_org_filter = F.col("prst.vbak_vkorg").isin(sales_orgs)
+
+order_type_filter = F.lit(True)
+if "ALL" not in order_types:
+    order_type_filter = F.col("prst.vbak_auart").isin(order_types)
+
+# --- 4. Apply All Filters ---
+df_filtered = df_joined.filter(base_filter & date_filter_expr & sales_org_filter & order_type_filter)
+
+print(f"Filters Applied.")
+print(f"Sales Orgs: {sales_orgs}")
+print(f"Order Types: {order_types}")
