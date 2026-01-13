@@ -1,55 +1,36 @@
----------------------------------------------------------------------------
-AnalysisException                         Traceback (most recent call last)
-Cell In[31], line 9
-      1 # CELL 5: Main Join Logic
-      2 # Joining the Base Table (prst) with all lookups
-      4 df_joined = df_prst \
-      5     .join(df_kna1, F.col("prst.vbak_kunnr") == F.col("kna1.kunnr"), "inner") \
-      6     .join(df_mara, F.col("prst.vbap_matnr") == F.col("mara.matnr"), "inner") \
-      7     .join(df_part, F.col("part.Part") == F.col("prst.vbap_matnr"), "inner") \
-      8     .join(df_marc, (F.col("prst.vbap_werks") == F.col("marc.werks")) & (F.col("prst.vbap_matnr") == F.col("marc.matnr")), "left") \
-----> 9     .join(df_mbew_2000, F.col("prst.vbap_matnr") == F.col("df_mbew_2000.matnr"), "left") \
-     10     .join(df_mbew_3120, F.col("prst.vbap_matnr") == F.col("df_mbew_3120.matnr"), "left") \
-     11     .join(df_lab, F.col("mara.labor") == F.col("lab_labor"), "left") \
-     12     .join(df_qmel, F.col("prst.vbeln") == F.col("q.aufnr"), "left") \
-     13     .join(df_afko, F.col("prst.vbak_aufnr") == F.col("afko.aufnr"), "left") \
-     14     .join(df_act, F.col("prst.vbak_aufnr") == F.col("act_aufnr"), "left") \
-     15     .join(df_vekp_agg, F.col("prst.f1_vbeln") == F.col("vekp_key"), "left") \
-     16     .join(df_hd_incoterm, F.col("prst.vbeln") == F.col("hd_vbeln"), "left") \
-     17     .join(df_ln_incoterm, (F.col("prst.vbeln") == F.col("ln_vbeln")) & (F.col("prst.posnr") == F.col("ln_posnr")), "left")
+Cell 5: Main Enrichment Logic (Joins)
+​Business Context:
+This cell performs the "Enrichment" phase. It takes the base Sales Order table (prst) created in the previous notebook and attaches critical Master Data:
+​Customer Details: Joins KNA1 to get customer names.
+​Part & Plant Info: Joins MARA, MARC to get product hierarchy, MRP controllers, and part descriptions.
+​Costing: Joins MBEW (Material Valuation) twice—once for Valuation Area 2000 and once for 3120—to retrieve the Standard Price (STPRS) needed for financial calculations.
+​Incoterms: Joins VBKD to determine shipping terms (Header vs. Line level).
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:2493, in DataFrame.join(self, other, on, how)
-   2491         on = self._jseq([])
-   2492     assert isinstance(how, str), "how should be a string"
--> 2493     jdf = self._jdf.join(other._jdf, on, how)
-   2494 return DataFrame(jdf, self.sparkSession)
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
 
-AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `df_mbew_2000`.`matnr` cannot be resolved. Did you mean one of the following? [`mbew`.`matnr`, `mara`.`bmatn`, `mara`.`imatn`, `mara`.`matnr`, `marc`.`matnr`].;
-'Join LeftOuter, (vbap_matnr#102 = 'df_mbew_2000.matnr)
-:- Join LeftOuter, ((vbap_werks#107 = werks#1315) AND (vbap_matnr#102 = matnr#1314))
-:  :- Join Inner, (Part#1198 = vbap_matnr#102)
-:  :  :- Join Inner, (vbap_matnr#102 = matnr#650)
-:  :  :  :- Join Inner, (vbak_kunnr#82 = kunnr#220)
-:  :  :  :  :- SubqueryAlias prst
-:  :  :  :  :  +- SubqueryAlias spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1pluprcc8imarj7btq6asrk.sales_order_v1
-:  :  :  :  :     +- Relation spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti62nrg69j5urrdclfmc9bcd1plu
+
+
+
+
+
+
+# CELL 5: Main Join Logic
+# Joining the Base Table (prst) with all lookups
+# Fixed: Explicit aliasing for Pre-Calculated DataFrames (mbew, incoterms, vekp)
+
+df_joined = df_prst \
+    .join(df_kna1, F.col("prst.vbak_kunnr") == F.col("kna1.kunnr"), "inner") \
+    .join(df_mara, F.col("prst.vbap_matnr") == F.col("mara.matnr"), "inner") \
+    .join(df_part, F.col("part.Part") == F.col("prst.vbap_matnr"), "inner") \
+    .join(df_marc, (F.col("prst.vbap_werks") == F.col("marc.werks")) & (F.col("prst.vbap_matnr") == F.col("marc.matnr")), "left") \
+    .join(df_mbew_2000.alias("m2000"), F.col("prst.vbap_matnr") == F.col("m2000.matnr"), "left") \
+    .join(df_mbew_3120.alias("m3120"), F.col("prst.vbap_matnr") == F.col("m3120.matnr"), "left") \
+    .join(df_lab, F.col("mara.labor") == F.col("lab_labor"), "left") \
+    .join(df_qmel, F.col("prst.vbeln") == F.col("q.aufnr"), "left") \
+    .join(df_afko, F.col("prst.vbak_aufnr") == F.col("afko.aufnr"), "left") \
+    .join(df_act, F.col("prst.vbak_aufnr") == F.col("act_aufnr"), "left") \
+    .join(df_vekp_agg.alias("v_agg"), F.col("prst.f1_vbeln") == F.col("v_agg.vekp_key"), "left") \
+    .join(df_hd_incoterm.alias("hd_inco"), F.col("prst.vbeln") == F.col("hd_inco.hd_vbeln"), "left") \
+    .join(df_ln_incoterm.alias("ln_inco"), (F.col("prst.vbeln") == F.col("ln_inco.ln_vbeln")) & (F.col("prst.posnr") == F.col("ln_inco.ln_posnr")), "left")
+
