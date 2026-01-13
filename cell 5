@@ -1,7 +1,17 @@
-# --- Updated Filtering (Removing WERKS Filter to match SAP) ---
+NameError                                 Traceback (most recent call last)
+Cell In[43], line 55
+     35 # --- Filtering ---
+     36 # Updating logic to use f1_delvd_qty and e_ExpectedQtyCumulative
+     37 condition_open_order = (
+     38     (F.coalesce(F.col("u.wbstk"), F.lit('')) != 'C') & 
+     39     (F.coalesce(F.col("u.lfgsk"), F.lit('')) != 'C') &
+   (...)
+     49     )
+     50 )
+     53 df_filtered = df_main.filter(
+     54     (~F.col("a.auart").isin('ZVC', 'ZR07')) & 
+---> 55     (cond_history | cond_open)
+     56     # REMOVED: (F.col("p.werks") >= '1900') 
+     57 )
 
-df_filtered = df_main.filter(
-    (~F.col("a.auart").isin('ZVC', 'ZR07')) & 
-    (cond_history | cond_open)
-    # REMOVED: (F.col("p.werks") >= '1900') 
-)
+NameError: name 'cond_history' is not defined
