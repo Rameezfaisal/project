@@ -1,111 +1,9 @@
-# CELL 4: Pre-Calculation - Complexity Reduction & Unique Prefixes
-
-# 1. Currency (Prefix 'x_')
-w_curr = Window.partitionBy("fcurr").orderBy(F.col("gdatu").asc())
-df_curr_calc = df_tcurr.filter(F.col("tcurr") == 'USD') \
-    .withColumn("rn", F.row_number().over(w_curr)) \
-    .filter(F.col("rn") == 1) \
-    .select(
-        F.col("fcurr").alias("x_fcurr"), 
-        F.abs(F.col("ukurs")).alias("x_ukurs"),
-        F.col("tcurr").alias("x_tcurr")
-    )
-
-# 2. Cumulative Quantity (Prefix 'e_')
-# Added e_ prefix to avoid collision with standard vbep columns
-w_cum = Window.partitionBy("vbeln", "posnr").orderBy("etenr").rowsBetween(Window.unboundedPreceding, Window.currentRow)
-df_vbep_calc = df_vbep.withColumn("e_ExpectedQtyCumulative", F.sum("bmeng").over(w_cum))
-
-# 3. Header Schedule Line (Prefix 'h_')
-df_h = df_vbep.filter(F.col("etenr") == '0001').select(
-    F.col("vbeln").alias("h_vbeln"), 
-    F.col("posnr").alias("h_posnr"), 
-    F.col("edatu").alias("h_edatu")
-)
-
-# 4. Delivery Flow (Prefix 'f1_')
-df_f1 = df_vbfa.filter((F.col("stufe") == '00') & (F.col("vbtyp_n").isin('T', 'J'))) \
-    .groupBy("vbelv", "posnv").agg(
-        F.sum(
-            F.when((F.col("vbtyp_n") == 'R') & (F.col("plmin") == '+'), F.coalesce(F.col("rfmng_flo"), F.lit(0)))
-            .when(F.col("vbtyp_n") == 'h', F.coalesce(F.col("rfmng_flo"), F.lit(0)) * -1)
-            .otherwise(0)
-        ).alias("f1_delvd_qty") # <--- Renamed
-    ).withColumnRenamed("vbelv", "f1_vbeln").withColumnRenamed("posnv", "f1_posnr")
-
-# 5. PGI Flow (Prefix 'f2_')
-df_f2 = df_vbfa.filter((F.col("stufe") == '00') & (F.col("vbtyp_n").isin('T', 'J')) & (F.col("vbeln").startswith('49'))) \
-    .groupBy("vbelv", "posnv").agg(
-        F.max("vbeln").alias("f2_LastPGIDoc"), # <--- Renamed
-        F.sum(
-            F.when(F.col("vbtyp_n") == 'R', F.coalesce(F.col("rfmng"), F.lit(0)))
-            .when(F.col("vbtyp_n") == 'h', F.coalesce(F.col("rfmng"), F.lit(0)) * -1)
-            .otherwise(0)
-        ).alias("f2_PGIQty") # <--- Renamed
-    ).withColumnRenamed("vbelv", "f2_vbeln").withColumnRenamed("posnv", "f2_posnr")
-
-# 6. Delivery Docs (Prefix 'l_')
-df_l = df_lips.filter((F.col("vgbel") != '') & (~F.col("vgbel").startswith('4')) & (~F.col("vgbel").startswith('3'))) \
-    .join(df_likp, df_lips.vbeln == df_likp.vbeln) \
-    .filter(df_likp.wadat_ist != '') \
-    .groupBy(df_lips.vgbel, df_lips.vgpos).agg(
-        F.max(df_lips.vbeln).alias("l_OpenDlvDoc"),
-        F.sum(df_lips.lgmng).alias("l_OpenDlvQty"),
-        F.sum(df_lips.lfimg).alias("l_QtyShippedTtLine"),
-        F.max(df_likp.wadat_ist).alias("l_PGIDate"),
-        F.when(F.max(df_likp.wadat_ist) == '', 'Created').otherwise('Shipped').alias("l_DlvStatus")
-    ).withColumnRenamed("vgbel", "l_vbeln").withColumnRenamed("vgpos", "l_posnr")
-
-# 7. Statuses (Prefix 'j_')
-df_j = df_jest.filter(F.col("stat").isin('E0001', 'E0004', 'E0005', 'E0008', 'E0009') & (F.col("inact") != 'X')) \
-    .join(df_tj30t, (F.col("stat") == df_tj30t.estat) & (df_tj30t.stsma == 'Z0000003') & (df_tj30t.spras == 'E'), "left") \
-    .groupBy("objnr").agg(
-        F.max(F.when(F.col("stat") == 'E0008', 'X').otherwise('')).alias("j_FrontLoad"),
-        F.max(F.when(F.col("stat") == 'E0009', 'X').otherwise('')).alias("j_POReceived"),
-        F.max(F.when(F.col("stat").isin('E0001', 'E0004', 'E0005'), F.col("txt04")).otherwise('')).alias("j_Booking")
-    ).withColumnRenamed("objnr", "j_objnr")
-
-# 8. Spares (Prefix 'xy_')
-df_xy = df_spares.groupBy("order_no", "order_line_no").agg(
-    F.max("carrier").alias("xy_carrier"), 
-    F.max("carrier_name").alias("xy_carrier_name")
-).withColumnRenamed("order_no", "xy_vbeln").withColumnRenamed("order_line_no", "xy_posnr")
-
-# 9. Lab Office (Prefix 'i_')
-df_lab = df_t024x.filter(F.col("spras") == 'E').select(
-    F.col("labor").alias("i_labor"), 
-    F.col("lbtxt").alias("i_LabOffice") # <--- Renamed
-)
-
-# 10. Production (Prefix 'act_')
-df_act = df_afvc.groupBy("aufpl").agg(F.min("vornr").alias("vornr")) \
-    .join(df_afvc, ["aufpl", "vornr"], "left") \
-    .select(F.col("aufpl").alias("act_aufpl"), F.col("larnt").alias("act_larnt"))
-
-# 11. Partners (Prefix 'c_')
-df_c = df_vbpa.filter((F.col("posnr") == '000000') & (F.col("parvw") == 'WE')) \
-    .join(df_kna1, df_vbpa.kunnr == df_kna1.kunnr) \
-    .select(
-        df_vbpa.vbeln.alias("c_vbeln"), 
-        df_vbpa.kunnr.alias("c_ShipTo"), 
-        df_kna1.name1.alias("c_ShipToName")
-    )
-
-# 12. Incoterms (Prefix 'hd_' and 'd_')
-df_hd = df_vbkd.filter(F.col("posnr") == '000000').select(F.col("vbeln").alias("hd_vbeln"), F.col("inco1").alias("hd_inco1"), F.col("kursk").alias("hd_kursk"), F.col("prsdt").alias("hd_prsdt"))
-df_d = df_vbkd.select(F.col("vbeln").alias("d_vbeln"), F.col("posnr").alias("d_posnr"), F.col("inco1").alias("d_inco1"), F.col("zterm").alias("d_zterm"), F.col("ihrez").alias("d_ihrez"))
-
-# 13. MARD (Prefix 'r_') to resolve QOH logic clearly
-df_mard_calc = df_mard.withColumn("r_QOH", F.coalesce(F.col("labst"), F.lit(0)) + F.coalesce(F.col("klabs"), F.lit(0)) + F.coalesce(F.col("kinsm"), F.lit(0))) \
-    .select(
-        F.col("werks").alias("r_werks"),
-        F.col("matnr").alias("r_matnr"),
-        F.col("lgort").alias("r_lgort"),
-        F.col("labst").alias("r_labst"),
-        F.col("klabs").alias("r_klabs"),
-        F.col("kinsm").alias("r_kinsm"),
-        F.col("r_QOH")
-    )
+7: Final Mapping & Write
+​Business Context:
+This final step ensures the data strictly matches the Target Table Schema (DDL) provided in the beginning.
+​Strict Casting: Converts Spark calculations to the exact Decimal/Double/Date formats required by the target Delta table.
+​PK Enforcement: Filters out any rows where Primary Keys (vbeln, posnr, etenr) might be NULL (though Inner Joins in Cell 5 mostly prevent this).
+​Timestamp: Adds the last_changed timestamp for audit purposes.
 
 
 
@@ -113,241 +11,96 @@ df_mard_calc = df_mard.withColumn("r_QOH", F.coalesce(F.col("labst"), F.lit(0)) 
 
 
 
-# CELL 5: Main Join & Filtering (Updated with Prefixes)
+# CELL 7: Final Schema Mapping & Write to Delta
 
-# Note: df_vbep_calc now has 'e_ExpectedQtyCumulative'
-df_main = df_vbep_calc.alias("e") \
-    .join(df_vbap, (F.col("e.vbeln") == F.col("p.vbeln")) & (F.col("e.posnr") == F.col("p.posnr")), "inner") \
-    .join(df_vbak, F.col("a.vbeln") == F.col("p.vbeln"), "inner") \
-    .join(df_vbuk, F.col("u.vbeln") == F.col("p.vbeln"), "inner") \
-    .join(df_vbup, (F.col("b.vbeln") == F.col("p.vbeln")) & (F.col("b.posnr") == F.col("p.posnr")), "inner") \
-    .join(df_kna1, F.col("a.kunnr") == F.col("k.kunnr"), "inner") \
-    .join(df_part, F.col("p.matnr") == F.col("pp.part"), "inner") \
-    .join(df_mara, F.col("p.matnr") == F.col("m.matnr"), "inner") \
-    .join(df_h, (F.col("p.vbeln") == F.col("h_vbeln")) & (F.col("p.posnr") == F.col("h_posnr")), "inner") \
-    .join(df_c, F.col("a.vbeln") == F.col("c_vbeln"), "inner") \
-    .join(df_f1, (F.col("b.vbeln") == F.col("f1_vbeln")) & (F.col("b.posnr") == F.col("f1_posnr")), "left") \
-    .join(df_f2, (F.col("b.vbeln") == F.col("f2_vbeln")) & (F.col("b.posnr") == F.col("f2_posnr")), "left") \
-    .join(df_lab, F.col("m.labor") == F.col("i_labor"), "left") \
-    .join(df_l, (F.col("p.vbeln") == F.col("l_vbeln")) & (F.col("p.posnr") == F.col("l_posnr")), "left") \
-    .join(df_mbew, (F.col("p.matnr") == F.col("w.matnr")) & (F.col("w.bwkey") == '2000'), "left") \
-    .join(df_hd, F.col("p.vbeln") == F.col("hd_vbeln"), "left") \
-    .join(df_d, (F.col("p.vbeln") == F.col("d_vbeln")) & (F.col("p.posnr") == F.col("d_posnr")), "left") \
-    .join(df_j, F.col("a.objnr") == F.col("j_objnr"), "left") \
-    .join(df_vekp, F.col("f1_vbeln") == F.col("vekp.vpobjkey"), "left") \
-    .join(df_qmel, F.col("a.vbeln") == F.col("q.aufnr"), "left") \
-    .join(df_xy, (F.col("p.vbeln") == F.col("xy_vbeln")) & (F.col("p.posnr") == F.col("xy_posnr")), "left") \
-    .join(df_afko, F.col("a.aufnr") == F.col("afko.aufnr"), "left") \
-    .join(df_act, F.col("afko.aufpl") == F.col("act_aufpl"), "left") \
-    .join(df_curr_calc, F.col("a.waerk") == F.col("x_fcurr"), "left") \
-    .join(df_marc, (F.col("p.werks") == F.col("z.werks")) & (F.col("p.matnr") == F.col("z.matnr")), "left") \
-    .join(df_mard_calc, 
-          (F.col("p.werks") == F.col("r_werks")) & 
-          (F.col("p.matnr") == F.col("r_matnr")) &
-          (F.when((F.coalesce(F.col("p.lgort"), F.lit('')) == '') & (F.col("p.werks") == '3000'), '0030')
-           .when(F.coalesce(F.col("p.lgort"), F.lit('')) != '', F.col("p.lgort"))
-           .otherwise('0010') == F.col("r_lgort")), 
-          "left")
+# Select columns to match the Target DDL exactly.
+# We explicitly cast types to ensure stability.
 
-# --- Filtering ---
-# Updating logic to use f1_delvd_qty and e_ExpectedQtyCumulative
-condition_open_order = (
-    (F.coalesce(F.col("u.wbstk"), F.lit('')) != 'C') & 
-    (F.coalesce(F.col("u.lfgsk"), F.lit('')) != 'C') &
-    (F.coalesce(F.col("p.abgru"), F.lit('')) == '') &
-    (~F.col("b.lfsta").isin('', ' ')) &
-    (F.coalesce(F.col("p.kwmeng"), F.lit(0)) > F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) &
-    (F.coalesce(F.col("e.bmeng"), F.lit(0)) > 0) &
-    (
-        F.when(F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("f1_delvd_qty"), F.lit(0)), 0)
-         .when((F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) <= F.coalesce(F.col("e.bmeng"), F.lit(0)),
-               F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0)))
-         .otherwise(F.coalesce(F.col("e.bmeng"), F.lit(0))) > 0
-    )
-)
-
-df_filtered = df_main.filter(
-    (F.col("p.werks") >= '1900') & 
-    (~F.col("a.auart").isin('ZVC', 'ZR07')) & 
-    ((F.col("p.erdat") >= F.date_add(F.current_date(), -732)) | condition_open_order)
-)
-
-
-
-
-
-
-
-
-
-# CELL 6: Final Selection & Calculations (Prefixed Source)
-
-# 1. PGI Qty Logic
-expr_pgi_qty = (
-    F.when(F.coalesce(F.col("f1_delvd_qty"), F.lit(0)) >= F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)), 
-           F.coalesce(F.col("e.bmeng"), F.lit(0)))
-     .when(F.coalesce(F.col("f1_delvd_qty"), F.lit(0)) < F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)), 
-           F.greatest(
-               F.coalesce(F.col("e.bmeng"), F.lit(0)) - (F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0))), 
-               F.lit(0)
-           ))
-     .otherwise(0)
-)
-
-# 2. Open Qty Logic
-expr_open_qty = (
-    F.when(
-        (F.coalesce(F.col("u.wbstk"), F.lit('')) != 'C') &
-        (F.coalesce(F.col("p.abgru"), F.lit('')) == '') &
-        (F.coalesce(F.col("b.lfsta"), F.lit('')) != '') &
-        (F.coalesce(F.col("p.kwmeng"), F.lit(0)) > F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) &
-        (F.coalesce(F.col("e.bmeng"), F.lit(0)) > 0) &
-        (
-            F.when(F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("f1_delvd_qty"), F.lit(0)), 0)
-             .when((F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) <= F.coalesce(F.col("e.bmeng"), F.lit(0)),
-                   F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0)))
-             .otherwise(F.coalesce(F.col("e.bmeng"), F.lit(0))) > 0
-        ),
-        F.when(F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("f1_delvd_qty"), F.lit(0)), 0)
-         .when((F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) <= F.coalesce(F.col("e.bmeng"), F.lit(0)),
-               F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0)))
-         .otherwise(F.coalesce(F.col("e.bmeng"), F.lit(0)))
-    ).otherwise(0)
-)
-
-df_final_logic = df_filtered.select(
-    # IDs
-    F.col("a.vbeln").alias("Order"),
-    F.expr("ltrim('0', a.vbeln)").alias("OrderWZ"),
-    F.col("p.posnr").alias("Line"),
-    F.expr("ltrim('0', p.posnr)").alias("LineWZ"),
-    F.col("e.etenr").alias("ScheduleLine"),
-    F.expr("ltrim('0', e.etenr)").alias("ScheduleLineWZ"),
-    
-    # Status
-    F.when((F.col("u.wbstk") != 'C') & (F.col("p.abgru") == '') & (F.col("b.lfsta") != '') & (expr_open_qty > 0), 'Open')
-     .otherwise('Closed').alias("OrderStatus"),
-    F.col("a.auart").alias("OrderType"),
-
-    # Dates
-    F.col("a.erdat").alias("CreationDate"),
-    F.col("p.erdat").alias("LineItemCreationDate"),
-    F.col("p.erzet").alias("LineItemCreationTime"),
-    F.col("h_edatu").alias("RequestDate"),
-    F.col("e.edatu").alias("DeliveryDueDate"),
-    
-    # Quantities
-    F.col("p.kwmeng").alias("OrderLineQty"),
-    F.col("e.bmeng").alias("CommittedQty"),
-    expr_pgi_qty.alias("PGIQty"),
-    expr_open_qty.alias("OpenQty"),
-    
-    # Inventory (Renamed MARD columns)
-    (F.coalesce(F.col("r_labst"), F.lit(0)) + F.coalesce(F.col("r_kinsm"), F.lit(0))).alias("OnHandQty"),
-    F.col("r_klabs").alias("VendorOwned"),
-    F.when(F.coalesce(F.col("e.bmeng"), F.lit(0)) < F.coalesce(F.col("r_QOH"), F.lit(0)), F.coalesce(F.col("e.bmeng"), F.lit(0))) 
-     .otherwise(F.coalesce(F.col("r_QOH"), F.lit(0))).alias("AvailToShip"), 
-    
-    # Pre-Calcs (Direct Selection via Prefix)
-    F.col("l_OpenDlvDoc").alias("LastDlvDoc"),
-    F.col("l_OpenDlvQty").alias("LastDlvQty"),
-    F.col("l_QtyShippedTtLine").alias("QtyShippedTtLine"),
-    F.col("l_DlvStatus").alias("LastDlvStatus"),
-    
-    # Partners
-    F.col("a.vkorg").alias("SalesOrg"),
-    F.col("a.kunnr").alias("SoldTo"),
-    F.col("c_ShipTo").alias("ShipTo"),
-    F.col("c_ShipToName").alias("ShipToName"),
-    F.col("p.werks").alias("VendorPlant"),
-    
-    # Pricing
-    F.col("a.waerk").alias("DocCurrency"),
-    (F.col("a.netwr") * F.when(F.col("a.waerk").isin('JPY','TWD'), 
-            F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")) * 100)
-     .otherwise(F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")))
-    ).alias("GrossSOPriceUSD"),
-    
-    # Flags
-    F.col("j_FrontLoad").alias("FrontLoad"),
-    F.col("j_POReceived").alias("POReceived"),
-    F.col("j_Booking").alias("Booking"),
-    
-    # Lab
-    F.col("i_LabOffice").alias("LabOffice"),
-
-    # Keys for Write
-    F.col("a.vbeln"),
-    F.col("p.posnr"),
-    F.col("e.etenr"),
-    
-    # DDL Mappings
-    F.col("a.auart").alias("vbak_auart"),
-    F.col("a.aufnr").alias("vbak_aufnr"),
-    F.col("a.autlf").alias("vbak_autlf"),
-    F.col("a.bstnk").alias("vbak_bstnk"),
-    F.col("a.erdat").alias("vbak_erdat"),
-    F.col("a.ernam").alias("vbak_ernam"),
-    F.col("a.faksk").alias("vbak_faksk"),
-    F.col("a.ihrez").alias("vbak_ihrez"),
-    F.col("a.kunnr").alias("vbak_kunnr"),
-    F.col("a.lifsk").alias("vbak_lifsk"),
-    F.col("a.netwr").alias("vbak_netwr"),
-    F.col("a.objnr").alias("vbak_objnr"),
-    F.col("a.vkorg").alias("vbak_vkorg"),
-    F.col("a.vsnmr_v").alias("vbak_vsnmr_v"),
-    F.col("a.waerk").alias("vbak_waerk"),
-    
-    F.col("p.abgru").alias("vbap_abgru"),
-    F.col("p.aedat").alias("vbap_aedat"),
-    F.col("p.arktx").alias("vbap_arktx"),
-    F.col("p.charg").alias("vbap_charg"),
-    F.col("p.erzet").alias("vbap_erzet"),
-    F.col("p.faksp").alias("vbap_faksp"),
-    F.col("p.grkor").alias("vbap_grkor"),
-    F.col("p.kdmat").alias("vbap_kdmat"),
-    F.col("p.kwmeng").alias("vbap_kwmeng"),
-    F.col("p.lgort").alias("vbap_lgort"),
-    F.col("p.lprio").alias("vbap_lprio"),
-    F.col("p.matnr").alias("vbap_matnr"),
-    F.col("p.netpr").alias("vbap_netpr"),
-    F.col("p.posex").alias("vbap_posex"),
-    F.col("p.prodh").alias("vbap_prodh"),
-    F.col("p.vstel").alias("vbap_vstel"),
-    F.col("p.werks").alias("vbap_werks"),
-    
-    F.col("e.bmeng").alias("vbep_bmeng"),
-    F.col("e.edatu").alias("vbep_edatu"),
-    F.col("h_edatu").alias("vbep_h_edatu"),
-    F.col("e.lifsp").alias("vbep_lifsp"),
-    F.col("e.mbdat").alias("vbep_mbdat"),
-    
-    F.col("u.lfgsk").alias("vbuk_lfgsk"),
-    F.col("u.wbstk").alias("vbuk_wbstk"),
-    F.col("b.lfsta").alias("vbup_lfsta"),
-    
-    # Extra calcs
-    F.col("f1_delvd_qty").alias("delvd_qty"),
-    F.col("e_ExpectedQtyCumulative").alias("expectedqtycumulative"),
-    F.col("f2_LastPGIDoc").alias("lastpgidoc"),
-    F.col("l_OpenDlvDoc").alias("opendlvdoc"),
-    F.col("l_OpenDlvQty").alias("opendlvqty"),
-    F.col("l_PGIDate").alias("pgidate"),
-    F.col("l_QtyShippedTtLine").alias("qtyshippedttline"),
+df_write = df_final.select(
+    F.col("Booking").alias("booking"),
+    F.col("Carrier").alias("carrier"),
+    F.col("CarrierName").alias("carrier_name"),
+    F.col("LastDlvStatus").alias("dlvstatus"),
+    F.col("etenr"),
+    F.col("expectedqtycumulative").cast("decimal(13,3)"),
     F.col("f1_vbeln"),
+    F.col("FrontLoad").alias("frontload"),
     
-    # MARD passthroughs
-    F.col("r_kinsm").alias("mard_kinsm"),
-    F.col("r_klabs").alias("mard_klabs"),
-    F.col("r_labst").alias("mard_labst"),
-    F.col("r_lgort").alias("mard_lgort"),
-    F.col("r_matnr").alias("mard_matnr"),
-    F.col("r_werks").alias("mard_werks")
+    # Audit Timestamp
+    F.current_timestamp().alias("last_changed"),
+    
+    F.col("lastpgidoc"),
+    F.col("mard_kinsm").cast("decimal(13,3)"),
+    F.col("mard_klabs").cast("decimal(13,3)"),
+    F.col("mard_labst").cast("decimal(13,3)"),
+    F.col("mard_lgort"),
+    F.col("mard_matnr"),
+    F.col("mard_werks"),
+    F.col("OrderStatus").alias("order_status"),
+    F.col("opendlvdoc"),
+    F.col("opendlvqty").cast("decimal(13,3)"),
+    F.col("pgidate"),
+    F.col("PGIQty").cast("decimal(15,3)").alias("pgiqty"),
+    F.col("POReceived").alias("poreceived"),
+    F.col("posnr"),
+    F.col("qtyshippedttline").cast("decimal(13,3)"),
+    F.col("ShipTo").alias("shipto"),
+    F.col("ShipToName").alias("shiptoname"),
+    F.col("vbak_auart"),
+    F.col("vbak_aufnr"),
+    F.col("vbak_autlf"),
+    F.col("vbak_bstnk"),
+    F.col("vbak_erdat"),
+    F.col("vbak_ernam"),
+    F.col("vbak_faksk"),
+    F.col("vbak_ihrez"),
+    F.col("vbak_kunnr"),
+    F.col("vbak_lifsk"),
+    F.col("vbak_netwr").cast("decimal(15,2)"),
+    F.col("vbak_objnr"),
+    F.col("vbak_vkorg"),
+    F.col("vbak_vsnmr_v"),
+    F.col("vbak_waerk"),
+    F.col("vbap_abgru"),
+    F.col("vbap_aedat"),
+    F.col("vbap_arktx"),
+    F.col("vbap_charg"),
+    F.col("vbap_erdat"),
+    F.col("vbap_ernam"),
+    F.col("vbap_erzet"), # Mapped as String since Time type is tricky in Delta
+    F.col("vbap_faksp"),
+    F.col("vbap_grkor"),
+    F.col("vbap_kdmat"),
+    F.col("vbap_kwmeng").cast("decimal(15,3)"),
+    F.col("vbap_lgort"),
+    F.col("vbap_lprio"),
+    F.col("vbap_matnr"),
+    F.col("vbap_netpr").cast("decimal(11,2)"),
+    F.col("vbap_posex"),
+    F.col("vbap_prodh"),
+    F.col("vbap_vstel"),
+    F.col("vbap_werks"),
+    F.col("vbeln"),
+    F.col("vbep_bmeng").cast("decimal(13,3)"),
+    F.col("vbep_edatu"),
+    F.col("vbep_h_edatu"),
+    F.col("vbep_lifsp"),
+    F.col("vbep_mbdat"),
+    F.col("vbuk_lfgsk"),
+    F.col("vbuk_wbstk"),
+    F.col("vbup_lfsta"),
+    F.col("delvd_qty").cast("double")
 )
 
-# Apply HighDollarFlag
-df_final = df_final_logic.withColumn(
-    "HighDollarFlag",
-    F.when(F.col("GrossSOPriceUSD") > 50000, "True").otherwise("False")
-)
+# Mandatory Safety Filter for Primary Keys
+df_write_safe = df_write.filter("vbeln IS NOT NULL AND posnr IS NOT NULL AND etenr IS NOT NULL")
 
+# Write to Delta Table
+# Mode: Overwrite (Full Refresh). Change to "append" if you need history.
+df_write_safe.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .option("overwriteSchema", "true") \
+    .saveAsTable(params["target"])
+
+print(f"Successfully wrote {df_write_safe.count()} rows to {params['target']}")
