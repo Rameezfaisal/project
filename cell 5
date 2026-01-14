@@ -1,35 +1,49 @@
-CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_makenha_dmd_consumption_dtls (
-  cmpprtno                STRING,
-  last_modified_on        DATE,
-  mfg_12mnths_consumption INT,
-  mfg_5yrs_consumption    INT,
-  mfg_dmd                 INT,
-  nha                     STRING,
-  sprs_5yrs_consumption   INT,
-  sprs_dmd                INT
+from pyspark.sql import functions as F
+
+new_make_nha = (
+    nha.alias("a")
+    .join(
+        make_nha
+            .select(
+                F.col("cmpprtno").alias("b_cmpprtno"),
+                F.col("nha").alias("b_nha")
+            )
+            .alias("b"),
+        (F.col("a.cmpprtno") == F.col("b.b_cmpprtno")) &
+        (F.col("a.nha") == F.col("b.b_nha")),
+        "left"
+    )
+    .where(
+        (F.col("a.cmpprtno") != F.col("a.nha")) &
+        F.col("b.b_cmpprtno").isNull() &
+        (~F.col("a.nha").like("%DELTA%")) &
+        (F.col("a.nha_status_inactive") != "X") &
+        (F.col("a.matkl").isin("M","MN","X")) &
+        (~F.col("a.mstae").isin("OB","OS","OP"))
+    )
+    .groupBy(
+        F.col("a.cmpprtno").alias("cmpprtno"),
+        F.col("a.nha").alias("nha"),
+        F.col("a.level").alias("level"),
+        F.col("a.matkl").alias("matkl"),
+        F.col("a.mstae").alias("mstae")
+    )
+    .agg(
+        # 🚨 Delta INT target → force INT
+        F.sum("a.cmpqpa").cast("int").alias("cmpqpa")
+    )
+    .withColumn("last_modified_on", F.current_date())
+    .withColumn("isprocessed", F.lit("N"))
+    .select(
+        "cmpprtno",
+        "cmpqpa",
+        "isprocessed",
+        "last_modified_on",
+        "level",
+        "matkl",
+        "mstae",
+        "nha"
+    )
 )
-USING DELTA;
 
-
-CREATE TABLE IF NOT EXISTS omat_test.rpt_omat_obpn_make_nha_dtls (
-  cmpprtno         STRING,
-  cmpqpa           INT,
-  isprocessed      STRING,
-  last_modified_on DATE,
-  level            INT,
-  matkl            STRING,
-  mstae            STRING,
-  nha              STRING
-)
-USING DELTA;
-
-
-CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_log_dtls (
-  executed_on        TIMESTAMP,  -- SECONDDATE
-  obprtno_cnt        INT,
-  obprtno_nha_cnt    INT,
-  obpr_cnt           INT,
-  program_name       STRING
-)
-USING DELTA;
-
+new_make_nha.write.mode("append").saveAsTable(make_nha_target_path)
