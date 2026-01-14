@@ -1,42 +1,79 @@
-AttributeError                            Traceback (most recent call last)
-Cell In[34], line 13
-      5 df_p_prep = df_vbap.withColumn("Calc_LGORT", 
-      6     F.when((F.coalesce(F.col("LGORT"), F.lit("")) .isin("", "0010")) & (F.col("WERKS") == "3000"), "0030")
-      7      .when(F.coalesce(F.col("LGORT"), F.lit("")) != "", F.col("LGORT"))
-      8      .otherwise("0010")
-      9 )
-     11 # Start with VBUK (Base)
-     12 # Join Sequence: VBUK -> VBAK -> KNA1 -> VBAP -> PART -> VBEP
----> 13 df_main = df_vbuk.join(df_vbak, df_vbuk.VBELN == df_vbak.VBELN) \
-     14     .join(df_kna1, df_vbak.KUNNR == df_kna1.KUNNR) \
-     15     .join(df_p_prep, df_vbak.VBELN == df_p_prep.VBELN) \
-     16     .join(df_part, df_p_prep.MATNR == df_part.Part) \
-     17     .join(df_vbep, (df_p_prep.VBELN == df_vbep.VBELN) & (df_p_prep.POSNR == df_vbep.POSNR))
-     19 # --- DEDUPLICATION STRATEGY ---
-     20 # Before adding the Left Joins, we resolve column collisions by relying on 
-     21 # specific aliasing in the final select or creating a clean DataFrame here if needed.
-   (...)
-     25 # To ensure the logic 'df_p_prep' works with aliases 'p', we re-alias the main chain temporarily for the next joins
-     26 # But simpler: We will perform the joins using the columns from df_main against the Lookup DataFrames.
-     28 df_joined = df_main \
-     29     .join(df_h, (F.col("p.VBELN") == F.col("h_VBELN")) & (F.col("p.POSNR") == F.col("h_POSNR"))) \
-     30     .join(df_t, (F.col("e.VBELN") == F.col("t.VBELN")) & (F.col("e.POSNR") == F.col("t.POSNR")) & (F.col("e.ETENR") == F.col("t.ETENR"))) \
-   (...)
-     51     .join(df_spares.alias("xy"), (df_p_prep.VBELN == F.col("xy.ORDER_NO")) & (df_p_prep.POSNR == F.col("xy.ORDER_LINE_NO")), "left") \
-     52     .join(df_afko, df_vbak.AUFNR == df_afko.AUFNR, "left")
+# ------- CELL 5 (CORRECTED): The Main Join (Logic & Deduplication) --------
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3129, in DataFrame.__getattr__(self, name)
-   3096 """Returns the :class:`Column` denoted by ``name``.
-   3097 
-   3098 .. versionadded:: 1.3.0
-   (...)
-   3126 +---+
-   3127 """
-   3128 if name not in self.columns:
--> 3129     raise AttributeError(
-   3130         "'%s' object has no attribute '%s'" % (self.__class__.__name__, name)
-   3131     )
-   3132 jc = self._jdf.apply(name)
-   3133 return Column(jc)
+# We need to calculate the join key for MARD (Subquery 'r') on the VBAP side first
+# Logic: IF LGORT in ('', '0010') AND WERKS='3000' THEN '0030' ...
+df_p_prep = df_vbap.withColumn("Calc_LGORT", 
+    F.when((F.coalesce(F.col("LGORT"), F.lit("")) .isin("", "0010")) & (F.col("WERKS") == "3000"), "0030")
+     .when(F.coalesce(F.col("LGORT"), F.lit("")) != "", F.col("LGORT"))
+     .otherwise("0010")
+)
 
-AttributeError: 'DataFrame' object has no attribute 'VBELN'
+# Start with VBUK (Base)
+# Join Sequence: VBUK -> VBAK -> KNA1 -> VBAP -> PART -> VBEP
+# FIXED: Using F.col() for all join conditions to prevent AttributeError
+df_main = df_vbuk.alias("u").join(df_vbak.alias("a"), F.col("u.VBELN") == F.col("a.VBELN")) \
+    .join(df_kna1.alias("k"), F.col("a.KUNNR") == F.col("k.KUNNR")) \
+    .join(df_p_prep.alias("p"), F.col("a.VBELN") == F.col("p.VBELN")) \
+    .join(df_part.alias("pp"), F.col("p.MATNR") == F.col("pp.Part")) \
+    .join(df_vbep.alias("e"), (F.col("p.VBELN") == F.col("e.VBELN")) & (F.col("p.POSNR") == F.col("e.POSNR")))
+
+# --- DEDUPLICATION STRATEGY ---
+# We continue chaining joins using the aliases defined above (u, a, k, p, e).
+
+df_joined = df_main \
+    .join(df_h, (F.col("p.VBELN") == F.col("h_VBELN")) & (F.col("p.POSNR") == F.col("h_POSNR"))) \
+    .join(df_t, (F.col("e.VBELN") == F.col("t.VBELN")) & (F.col("e.POSNR") == F.col("t.POSNR")) & (F.col("e.ETENR") == F.col("t.ETENR"))) \
+    .join(df_vbup.alias("b"), (F.col("p.VBELN") == F.col("b.VBELN")) & (F.col("p.POSNR") == F.col("b.POSNR"))) \
+    .join(df_f1, (F.col("b.VBELN") == F.col("f1_VBELV")) & (F.col("b.POSNR") == F.col("f1_POSNV")), "left") \
+    .join(df_f2, (F.col("b.VBELN") == F.col("f2_VBELV")) & (F.col("b.POSNR") == F.col("f2_POSNV")), "left") \
+    .join(df_c, F.col("a.VBELN") == F.col("c_VBELN")) \
+    .join(df_mara.alias("m"), F.col("p.MATNR") == F.col("m.MATNR")) \
+    .join(df_t024x.alias("i"), F.col("m.LABOR") == F.col("i.LABOR"), "left") \
+    .join(df_mard.alias("r"), 
+          (F.col("p.WERKS") == F.col("r.WERKS")) & 
+          (F.col("p.MATNR") == F.col("r.MATNR")) & 
+          (F.col("p.Calc_LGORT") == F.col("r.LGORT")), 
+          "left") \
+    .join(df_marc.alias("z"), (F.col("p.WERKS") == F.col("z.WERKS")) & (F.col("p.MATNR") == F.col("z.MATNR")), "left") \
+    .join(df_l, (F.col("p.VBELN") == F.col("l_VGBEL")) & (F.col("p.POSNR") == F.col("l_VGPOS")), "left") \
+    .join(df_mbew.alias("w"), (F.col("p.MATNR") == F.col("w.MATNR")) & (F.col("w.BWKEY") == "2000"), "left") \
+    .join(df_vbkd.alias("hd"), (F.col("p.VBELN") == F.col("hd.VBELN")) & (F.col("hd.POSNR") == "000000"), "left") \
+    .join(df_vbkd.alias("d"), (F.col("p.VBELN") == F.col("d.VBELN")) & (F.col("p.POSNR") == F.col("d.POSNR")), "left") \
+    .join(df_j, F.col("a.OBJNR") == F.col("j.OBJNR"), "left") \
+    .join(df_vekp.alias("y"), F.col("f1_VBELV") == F.col("y.VPOBJKEY"), "left") \
+    .join(df_x, F.col("a.WAERK") == F.col("x_FCURR"), "left") \
+    .join(df_qmel.alias("q"), F.col("a.VBELN") == F.col("q.AUFNR"), "left") \
+    .join(df_spares.alias("xy"), (F.col("p.VBELN") == F.col("xy.ORDER_NO")) & (F.col("p.POSNR") == F.col("xy.ORDER_LINE_NO")), "left") \
+    .join(df_afko.alias("afko"), F.col("a.AUFNR") == F.col("afko.AUFNR"), "left")
+
+# Note: The complex join for 'ACT' (Activity Type) involving AFVC aggregation was added at the end of the SQL.
+# We add it here as a left join.
+df_act = df_afvc.groupBy("AUFPL").agg(F.min("VORNR").alias("min_vornr")) \
+    .join(df_afvc.alias("full_afvc"), (F.col("AUFPL") == F.col("full_afvc.AUFPL")) & (F.col("min_vornr") == F.col("full_afvc.VORNR"))) \
+    .select(F.col("AUFPL"), F.col("full_afvc.LARNT").alias("ActivityType"))
+
+df_final_join = df_joined.join(df_act, F.col("afko.AUFPL") == df_act.AUFPL, "left")
+
+# APPLY FILTERS (WHERE CLAUSE)
+# Logic: WERKS >= 1900 AND AUART NOT IN ('ZVC','ZR07') AND (Date logic OR Status Logic)
+df_filtered = df_final_join.filter(
+    (F.col("p.WERKS") >= "1900") & 
+    (~F.col("a.AUART").isin("ZVC", "ZR07")) & 
+    (
+        (F.col("p.ERDAT") >= F.date_add(F.current_date(), -732)) |
+        (
+            (F.coalesce(F.col("u.WBSTK"), F.lit("")) != "C") & 
+            (F.coalesce(F.col("u.LFGSK"), F.lit("")) != "C") & 
+            (F.coalesce(F.col("p.ABGRU"), F.lit("")) == "") & 
+            (F.coalesce(F.col("b.LFSTA"), F.lit("")).isin("", "") == False) & # Logic: NOT IN ('','')
+            (F.coalesce(F.col("p.KWMENG"), F.lit(0)) > F.coalesce(F.col("delvd_qty"), F.lit(0))) & 
+            (F.coalesce(F.col("e.BMENG"), F.lit(0)) > 0)
+            # Note: The complex CASE WHEN logic for BackOrderQty > 0 is handled in the projection or can be added here.
+            # For performance, we often filter simpler conditions first.
+        )
+    )
+)
+
+
+
+
