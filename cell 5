@@ -1,11 +1,4 @@
-today = F.current_date()
-
-from_date = F.add_months(today, -12)
-to_date   = F.add_months(today, 12)
-
-sap_weekday = (F.dayofweek(today) + 5) % 7
-dt1wk = F.date_sub(today, sap_weekday)
-
-dt26_base = F.date_add(dt1wk, 182)
-sap_weekday_26 = (F.dayofweek(dt26_base) + 5) % 7
-dt26wk = F.date_add(F.date_sub(dt26_base, sap_weekday_26), 6)
+mdkp.printSchema()
+mdtb.printSchema()
+mseg.printSchema()
+mknha.printSchema()
