@@ -1,61 +1,143 @@
----------------------------------------------------------------------------
-AnalysisException                         Traceback (most recent call last)
-Cell In[85], line 137
-    123 df_act = df_afko.select("aufnr", "aufpl").join(df_act_base, "aufpl") \
-    124     .select(F.col("aufnr").alias("act_aufnr"), F.col("larnt").alias("act_larnt"))
-    126 # --- 10. Base Skeleton (df_prst) ---
-    127 # This matches the core FROM/JOIN block of the SAP view before enrichment
-    128 # It joins the 5 main order tables + the calculated aggregated (f1, f2, t)
-    129 df_prst = df_vbep.filter(F.col("e.bmeng") > 0) \
-    130     .join(df_vbap, (F.col("e.vbeln") == F.col("p.vbeln")) & (F.col("e.posnr") == F.col("p.posnr")), "inner") \
-    131     .join(df_vbak, F.col("a.vbeln") == F.col("p.vbeln"), "inner") \
-    132     .join(df_vbuk, F.col("u.vbeln") == F.col("p.vbeln"), "inner") \
-    133     .join(df_vbup, (F.col("b.vbeln") == F.col("p.vbeln")) & (F.col("b.posnr") == F.col("p.posnr")), "inner") \
-    134     .join(df_t, (F.col("e.vbeln") == F.col("t_vbeln")) & (F.col("e.posnr") == F.col("t_posnr")) & (F.col("e.etenr") == F.col("t_etenr")), "inner") \
-    135     .join(df_f1, (F.col("b.vbeln") == F.col("f1_vbeln")) & (F.col("b.posnr") == F.col("f1_posnr")), "left") \
-    136     .join(df_f2, (F.col("b.vbeln") == F.col("f2_vbeln")) & (F.col("b.posnr") == F.col("f2_posnr")), "left") \
---> 137     .select(
-    138         F.col("a.*"), F.col("p.*"), F.col("e.*"), F.col("u.*"), F.col("b.*"),
-    139         F.col("t.*"), F.col("f1.*"), F.col("f2.*")
-    140     ).alias("prst")
-    142 # Add Pre-calculated MARD Join Keys to df_prst for optimization
-    143 # Logic: Handle the complex LGORT join condition for MARD here
-    144 df_prst = df_prst.withColumn(
-    145     "calc_mard_lgort",
-    146     F.when((F.coalesce(F.col("p.lgort"), F.lit('')) == '') & (F.col("p.werks") == '3000'), '0030')
-    147      .when(F.coalesce(F.col("p.lgort"), F.lit('')) != '', F.col("p.lgort"))
-    148      .otherwise('0010')
-    149 )
+# CELL 4: Pre-Calculation of Aggregates & Helper Tables
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3229, in DataFrame.select(self, *cols)
-   3184 def select(self, *cols: "ColumnOrName") -> "DataFrame":  # type: ignore[misc]
-   3185     """Projects a set of expressions and returns a new :class:`DataFrame`.
-   3186 
-   3187     .. versionadded:: 1.3.0
-   (...)
-   3227     +-----+---+
-   3228     """
--> 3229     jdf = self._jdf.select(self._jcols(*cols))
-   3230     return DataFrame(jdf, self.sparkSession)
+# --- 1. MBEW: Standard Price (Split by Valuation Area) ---
+# SAP Logic: Left Join twice based on BWKEY 2000 and 3120
+df_mbew_2000 = df_mbew.filter(F.col("w.bwkey") == '2000').select(F.col("w.matnr"), F.col("w.stprs").alias("stprs_2000"))
+df_mbew_3120 = df_mbew.filter(F.col("w.bwkey") == '3120').select(F.col("w.matnr"), F.col("w.stprs").alias("stprs_3120"))
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
+# --- 2. JEST: Status Flags (FrontLoad, POReceived, Booking) ---
+df_j = df_jest.join(df_tj30t, df_jest["stat"] == df_tj30t["estat"], "inner") \
+    .filter(
+        (F.col("stat").isin('E0001', 'E0004', 'E0005', 'E0008', 'E0009')) &
+        (F.col("inact") != 'X') &
+        (F.col("stsma") == 'Z0000003') &
+        (F.col("spras") == 'E')
+    ) \
+    .groupBy("objnr") \
+    .agg(
+        F.max(F.when(F.col("stat") == 'E0008', 'X').otherwise('')).alias("FrontLoad"),
+        F.max(F.when(F.col("stat") == 'E0009', 'X').otherwise('')).alias("POReceived"),
+        F.max(F.when(F.col("stat").isin('E0001','E0004','E0005'), F.col("txt04")).otherwise('')).alias("Booking")
+    ).alias("j") \
+    .select(F.col("j.objnr").alias("j_objnr"), "FrontLoad", "POReceived", "Booking")
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
+# --- 3. LIPS/LIKP: Open Delivery & Status (Alias 'l') ---
+df_l = df_lips.join(df_likp, df_lips["vbeln"] == df_likp["vbeln"], "inner") \
+    .filter(
+        (F.col("lips.vgbel") != '') &
+        (~F.col("lips.vgbel").startswith('4')) &
+        (~F.col("lips.vgbel").startswith('3')) &
+        (F.col("likp.wadat_ist") != '')
+    ) \
+    .groupBy(F.col("lips.vgbel").alias("l_vbeln"), F.col("lips.vgpos").alias("l_posnr")) \
+    .agg(
+        F.max("lips.vbeln").alias("l_OpenDlvDoc"),
+        F.sum("lips.lgmng").alias("l_OpenDlvQty"),
+        F.sum(F.when(F.col("likp.wadat_ist") == '', 0).otherwise(F.col("lips.lfimg"))).alias("l_QtyShippedTtLine"),
+        F.max("likp.wadat_ist").alias("l_PGIDate"),
+        F.when(F.max("likp.wadat_ist") == '', 'Created').otherwise('Shipped').alias("l_DlvStatus")
+    )
 
-AnalysisException: [CANNOT_RESOLVE_STAR_EXPAND] Cannot resolve `t`.* given input columns `_dataaging`, `abart`, `abges`, `abruf`, `aeskd`, `aufnr`, `aulwe`, `banfn`, `bdart`, `bddat`, `bedar`, `bmeng`, `bnfpo`, `bsart`, `bstyp`, `bwart`, `cmeng`, `crea_dlvdate`, `crqqty_bu`, `delivery_date_type_rule`, `dlvqty_bu`, `dlvqty_su`, `dscontd_indicator`, `dscontd_source_item`, `dscontd_source_schedule_line`, `dummy_slsdocschedl_incl_eew_ps`, `edatu`, `etart`, `etene`, `etenr`, `ettyp`, `ezeit`, `fsh_os_id`, `fsh_pqr_rc`, `fsh_ralloc_qty`, `grstr`, `handle`, `handoverdate`, `handovertime`, `hvr_last_modified_date`, `hvr_rowid`, `idnnr`, `lccst`, `lddat`, `lduhr`, `lfrel`, `lifsp`, `lmeng`, `lrgdt`, `mandt`, `mbdat`, `mbdat_drs`, `mbuhr`, `meins`, `ocdqty_bu`, `ocdqty_su`, `odn_amount`, `ordqty_bu`, `ordqty_su`, `plart`, `plnum`, `posne`, `posnr`, `prgrs`, `repos`, `req_dlvdate`, `rform`, `romei`, `roms1`, `roms2`, `roms3`, `rrqqty_bu`, `rsdat`, `sernr`, `src_commit_date`, `tddat`, `tduhr`, `umvkn`, `umvkz`, `vbele`, `vbeln`, `verfp`, `vrkme`, `wadat`, `waerk`, `wauhr`, `wepos`, `wmeng`, `/bev1/srfund`, `/dmbe/accounting_type`, `/dmbe/cimax2`, `/dmbe/componentfor`, `/dmbe/deal_posted`, `/dmbe/effectivedatefrom`, `/dmbe/effectivedateto`, `/dmbe/fas_code`, `/dmbe/invoiceuom`, `/dmbe/item_type`, `/dmbe/mixedproduct`, `/dmbe/optionalityfor`, `/dmbe/optionalitykey`, `/dmbe/optionof`, `/dmbe/paymentdeemed`, `/dmbe/posteddate`, `/dmbe/scheduling_desk`, `_dataaging`, `abdat`, `abfor`, `abges`, `abgrs`, `abgru`, `ablfz`, `absfz`, `absta`, `ad01profnr`, `adacn`, `addns`, `adicc`, `admoi`, `adpri`, `aedat`, `antlf`, `anzsn`, `apcgk_extendi`, `aplzl_oaa`, `aplzl_olc`, `arktx`, `arsnum`, `arspos`, `arun_group_prio`, `assignment_priority`, `atp_abc_substitution_status`, `atpkz`, `auart_ana`, `audat_ana`, `aufnr`, `aufpl_oaa`, `aufpl_olc`, `augru_ana`, `awahr`, `batch_billing_variant`, `bedae`, `berid`, `besta`, `betc`, `bob_fg_id`, `bob_promotion_id`, `bonus`, `bpn`, `brgew`, `bstkd_ana`, `budget_pd`, `bwtar`, `bwtex`, `bzirk_ana`, `cancel_allow`, `capped_net_amount`, `capped_net_amount_alert_thld`, `cats_overtime_category`, `cepok`, `charg`, `chmvs`, `chspl`, `clint`, `cmkua`, `cmpnt`, `cmppi`, `cmppj`, `cmpre`, `cmpre_flt`, `cmtd_deliv_creadate`, `cmtd_deliv_date`, `cmtd_deliv_qty_su`, `cmtfg`, `costa`, `cpd_updat`, `cuobj`, `cuobj_ch`, `dcsta`, `deliv_reltd_billg_sta`, `delivery_date_type_rule`, `dgsta`, `discontinue_by`, `discontinued_date`, `discontinued_time`, `dp_clear_sta_itm`, `dscont_as_of_qty`, `dscont_fiscal_year`, `dscont_rmng_qty`, `dummy_slsdocitem_incl_eew_ps`, `ean11`, `eannr`, `emcst`, `eqart`, `equnr`, `erdat`, `erlre`, `ernam`, `erzet`, `exart`, `ext_ref_item_id`, `fabsg`, `faksp`, `ferc_ind`, `fiscal_incentive`, `fiscal_incentive_id`, `fistl`, `fixmg`, `fkber`, `fkdat_ana`, `fkrel`, `fksaa`, `fmeng`, `fmfgus_key`, `follow_up_item`, `fonds`, `fplnr_ana`, `freeze_paobjnr`, `fsh_candate`, `fsh_collection`, `fsh_crsd`, `fsh_grid_cond_rec`, `fsh_item`, `fsh_item_group`, `fsh_pqr_uepos`, `fsh_psm_pfm_split`, `fsh_searef`, `fsh_season`, `fsh_season_year`, `fsh_theme`, `fsh_transaction`, `fsh_vas_prnt_id`, `fsh_vas_rel`, `fsh_vasref`, `fssta`, `gbsta`, `gewei`, `glo_log_ref1_it`, `grant_nbr`, `grkor`, `grpos`, `gsber`, `handle`, `handoverdate`, `handoverloc`, `handovertime`, `hvr_last_modified_date`, `hvr_rowid`, `ifrs15_relevance`, `ifrs15_total_ssp`, `iuid_relevant`, `j_1bcfop`, `j_1btaxlw1`, `j_1btaxlw2`, `j_1btaxlw3`, `j_1btaxlw4`, `j_1btaxlw5`, `j_1btxsdc`, `j_3gbelnri`, `j_3gdatbi`, `j_3gdatvo`, `j_3glvart`, `j_3gposnri`, `kalnr`, `kalsm_k`, `kalvar`, `kannr`, `kbmeng`, `kbver`, `kdgrp_ana`, `kdmat`, `kever`, `klmeng`, `klvar`, `kmein`, `kmpmg`, `knttp`, `knuma_ag`, `knuma_pi`, `knumh`, `knumv_ana`, `kondm`, `kosch`, `kostl`, `koupd`, `kowrr`, `kpein`, `ktgrm`, `kunnr_ana`, `kunre_ana`, `kunrg_ana`, `kunwe_ana`, `kvgr1_ana`, `kvgr2_ana`, `kvgr3_ana`, `kvgr4_ana`, `kvgr5_ana`, `kwmeng`, `kzbws`, `kzfme`, `kztlf`, `kzvbr`, `kzwi1`, `kzwi2`, `kzwi3`, `kzwi4`, `kzwi5`, `kzwi6`, `labsg`, `lfgsa`, `lfmng`, `lfrel`, `lfsta`, `lglc_lic_ind`, `lgort`, `lmd_scheduled_delivery_date`, `logsys_ext`, `lprio`, `lsmeng`, `lssta`, `lstanr`, `magrv`, `mandt`, `manek`, `manual_tc_reason`, `matkl`, `matnr`, `matwa`, `meins`, `mfrgr`, `mill_batch_sel_f`, 
+# --- 4. VBFA (f1): Delivered Qty ---
+df_f1 = df_vbfa.filter(
+        (F.col("stufe") == '00') & 
+        (F.col("vbtyp_n").isin('T', 'J'))
+    ) \
+    .groupBy(F.col("vbelv").alias("f1_vbeln"), F.col("posnv").alias("f1_posnr")) \
+    .agg(
+        F.sum(
+            F.when((F.col("vbtyp_n") == 'R') & (F.col("plmin") == '+'), F.coalesce(F.col("rfmng_flo"), F.lit(0)))
+             .when(F.col("vbtyp_n") == 'h', F.coalesce(F.col("rfmng_flo"), F.lit(0)) * -1)
+             .otherwise(0)
+        ).alias("f1_delvd_qty")
+    )
+
+# --- 5. VBFA (f2): PGI Qty / Last PGI Doc ---
+df_f2 = df_vbfa.alias("a").join(df_vbfa.alias("b"), 
+        (F.col("a.vbeln") == F.col("b.vbelv")) & (F.col("a.posnn") == F.col("b.posnv")), 
+        "inner"
+    ) \
+    .filter(
+        (F.col("a.stufe") == '00') & 
+        (F.col("a.vbtyp_n").isin('T', 'J')) & 
+        (F.col("b.vbeln").startswith('49'))
+    ) \
+    .groupBy(F.col("a.vbelv").alias("f2_vbeln"), F.col("a.posnv").alias("f2_posnr")) \
+    .agg(
+        F.max("b.vbeln").alias("f2_LastPGIDoc"),
+        F.sum(
+            F.when(F.col("b.vbtyp_n") == 'R', F.coalesce(F.col("b.rfmng"), F.lit(0)))
+             .when(F.col("b.vbtyp_n") == 'h', F.coalesce(F.col("b.rfmng"), F.lit(0)) * -1)
+             .otherwise(0)
+        ).alias("f2_PGIQty")
+    )
+
+# --- 6. VBEP (t): Expected Cumulative Qty ---
+df_t = df_vbep.alias("t1").join(df_vbep.alias("t2"),
+        (F.col("t1.vbeln") == F.col("t2.vbeln")) &
+        (F.col("t1.posnr") == F.col("t2.posnr")) &
+        (F.col("t1.etenr") >= F.col("t2.etenr")),
+        "inner"
+    ).filter(F.col("t1.bmeng") > 0) \
+    .groupBy(F.col("t1.vbeln").alias("t_vbeln"), F.col("t1.posnr").alias("t_posnr"), F.col("t1.etenr").alias("t_etenr")) \
+    .agg(F.sum("t2.bmeng").alias("e_ExpectedQtyCumulative"))
+
+# --- 7. CSBG (xy): Carrier Logic ---
+df_xy = df_spares.groupBy("order_no", "order_line_no") \
+    .agg(
+        F.max("carrier").alias("xy_carrier"),
+        F.max("carrier_name").alias("xy_carrier_name")
+    ) \
+    .withColumnRenamed("order_no", "xy_vbeln") \
+    .withColumnRenamed("order_line_no", "xy_posnr")
+
+# --- 8. VBKD: Incoterms (Header & Line) ---
+df_hd_incoterm = df_vbkd.filter(F.col("posnr") == '000000').select(
+    F.col("vbeln").alias("hd_vbeln"), 
+    F.col("inco1").alias("hd_inco1"),
+    F.col("kursk").alias("hd_kursk"),
+    F.col("prsdt").alias("hd_prsdt")
+)
+df_ln_incoterm = df_vbkd.select(
+    F.col("vbeln").alias("ln_vbeln"),
+    F.col("posnr").alias("ln_posnr"),
+    F.col("inco1").alias("ln_inco1"),
+    F.col("zterm").alias("ln_zterm"),
+    F.col("ihrez").alias("ln_ihrez")
+)
+
+# --- 9. Master Data Helpers (Lab, Activity, VEKP) ---
+df_lab = df_t024x.filter(F.col("i.spras") == 'E').select(F.col("i.labor").alias("lab_labor"), F.col("i.lbtxt").alias("lab_description"))
+
+df_vekp_agg = df_vekp.groupBy("vpobjkey").agg(F.max("exidv2").alias("track")) \
+        .select(F.col("vpobjkey").alias("vekp_key"), F.col("track"))
+
+df_afvc_header = df_afvc.groupBy("aufpl").agg(F.min("vornr").alias("vornr"))
+df_act_base = df_afvc_header.join(df_afvc, ["aufpl", "vornr"], "left").select("aufpl", "larnt")
+df_act = df_afko.select("aufnr", "aufpl").join(df_act_base, "aufpl") \
+    .select(F.col("aufnr").alias("act_aufnr"), F.col("larnt").alias("act_larnt"))
+
+# --- 10. Base Skeleton (df_prst) ---
+# [FIXED] Added aliases "t", "f1", "f2" inside the join so select("t.*") works
+df_prst = df_vbep.filter(F.col("e.bmeng") > 0) \
+    .join(df_vbap, (F.col("e.vbeln") == F.col("p.vbeln")) & (F.col("e.posnr") == F.col("p.posnr")), "inner") \
+    .join(df_vbak, F.col("a.vbeln") == F.col("p.vbeln"), "inner") \
+    .join(df_vbuk, F.col("u.vbeln") == F.col("p.vbeln"), "inner") \
+    .join(df_vbup, (F.col("b.vbeln") == F.col("p.vbeln")) & (F.col("b.posnr") == F.col("p.posnr")), "inner") \
+    .join(df_t.alias("t"), (F.col("e.vbeln") == F.col("t.t_vbeln")) & (F.col("e.posnr") == F.col("t.t_posnr")) & (F.col("e.etenr") == F.col("t.t_etenr")), "inner") \
+    .join(df_f1.alias("f1"), (F.col("b.vbeln") == F.col("f1.f1_vbeln")) & (F.col("b.posnr") == F.col("f1.f1_posnr")), "left") \
+    .join(df_f2.alias("f2"), (F.col("b.vbeln") == F.col("f2.f2_vbeln")) & (F.col("b.posnr") == F.col("f2.f2_posnr")), "left") \
+    .select(
+        F.col("a.*"), F.col("p.*"), F.col("e.*"), F.col("u.*"), F.col("b.*"),
+        F.col("t.*"), F.col("f1.*"), F.col("f2.*")
+    ).alias("prst")
+    
+# Add Pre-calculated MARD Join Keys to df_prst for optimization
+df_prst = df_prst.withColumn(
+    "calc_mard_lgort",
+    F.when((F.coalesce(F.col("p.lgort"), F.lit('')) == '') & (F.col("p.werks") == '3000'), '0030')
+     .when(F.coalesce(F.col("p.lgort"), F.lit('')) != '', F.col("p.lgort"))
+     .otherwise('0010')
+)
+
+print("Cell 4 Complete: All intermediate DataFrames created.")
