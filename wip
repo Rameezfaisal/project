@@ -1,74 +1,39 @@
-# 1. Subquery 't': Cumulative Committed Qty
-w_cum = Window.partitionBy("VBELN", "POSNR").orderBy("ETENR").rowsBetween(Window.unboundedPreceding, Window.currentRow)
+---------------------------------------------------------------------------
+AnalysisException                         Traceback (most recent call last)
+Cell In[64], line 73
+     66 df_c = df_vbpa.alias("v").filter((F.col("POSNR") == "000000") & (F.col("PARVW") == "WE")) \
+     67     .join(df_kna1.alias("k"), F.col("v.KUNNR") == F.col("k.KUNNR")) \
+     68     .select(F.col("v.VBELN").alias("c_VBELN"), F.col("v.KUNNR").alias("ShipTo"), F.col("k.NAME1").alias("ShipToName")) \
+     69     .alias("c")
+     71 # 8. Activity Type (ACT) - from AFVC
+     72 df_act = df_afvc.groupBy("AUFPL").agg(F.min("VORNR").alias("min_vornr")) \
+---> 73     .join(df_afvc.alias("full_afvc"), (F.col("AUFPL") == F.col("full_afvc.AUFPL")) & (F.col("min_vornr") == F.col("full_afvc.VORNR"))) \
+     74     .select(F.col("AUFPL"), F.col("full_afvc.LARNT").alias("ActivityType"))
 
-df_t = df_vbep.filter(F.col("BMENG") > 0) \
-    .select("VBELN", "POSNR", "ETENR", "BMENG") \
-    .withColumn("ExpectedQtyCumulative", F.sum("BMENG").over(w_cum)) \
-    .alias("t")
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:2493, in DataFrame.join(self, other, on, how)
+   2491         on = self._jseq([])
+   2492     assert isinstance(how, str), "how should be a string"
+-> 2493     jdf = self._jdf.join(other._jdf, on, how)
+   2494 return DataFrame(jdf, self.sparkSession)
 
-# 2. Subquery 'h': Schedule Line 0001 (Request Date)
-df_h = df_vbep.filter(F.col("ETENR") == "0001") \
-    .select(F.col("VBELN").alias("h_VBELN"), F.col("POSNR").alias("h_POSNR"), F.col("EDATU").alias("RequestDate")) \
-    .alias("h")
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
-# 3. Subquery 'f1': Delivered Qty
-df_f1 = df_vbfa.filter((F.col("STUFE") == "00") & (F.col("VBTYP_N").isin("T", "J"))) \
-    .groupBy(F.col("VBELV").alias("f1_VBELV"), F.col("POSNV").alias("f1_POSNV")) \
-    .agg(
-        F.sum(
-            F.when((F.col("VBTYP_N") == "R") & (F.col("PLMIN") == "+"), F.coalesce(F.col("RFMNG_FLO"), F.lit(0)))
-            .when(F.col("VBTYP_N") == "h", F.coalesce(F.col("RFMNG_FLO"), F.lit(0)) * -1)
-            .otherwise(0)
-        ).alias("delvd_qty")
-    ).alias("f1")
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-# 4. Subquery 'f2': PGI Qty & Last PGI Doc
-df_f2 = df_vbfa.filter((F.col("STUFE") == "00") & (F.col("VBTYP_N").isin("T", "J")) & (F.col("VBELN").like("49%"))) \
-    .groupBy(F.col("VBELV").alias("f2_VBELV"), F.col("POSNV").alias("f2_POSNV")) \
-    .agg(
-        F.max("VBELN").alias("LastPGIDoc"),
-        F.sum(
-            F.when(F.col("VBTYP_N") == "R", F.coalesce(F.col("RFMNG"), F.lit(0)))
-            .when(F.col("VBTYP_N") == "h", F.coalesce(F.col("RFMNG"), F.lit(0)) * -1)
-            .otherwise(0)
-        ).alias("PGIQty")
-    ).alias("f2")
-
-# 5. Subquery 'l': Delivery Status
-df_lips_tmp = df_lips.alias("lips_tmp")
-df_likp_tmp = df_likp.alias("likp_tmp")
-
-df_l = df_lips_tmp.filter((F.col("VGBEL") != "") & (~F.col("VGBEL").like("4%")) & (~F.col("VGBEL").like("3%"))) \
-    .join(df_likp_tmp, F.col("lips_tmp.VBELN") == F.col("likp_tmp.VBELN")) \
-    .filter(F.col("likp_tmp.WADAT_IST") != "") \
-    .groupBy(F.col("lips_tmp.VGBEL"), F.col("lips_tmp.VGPOS")) \
-    .agg(
-        F.max(F.col("lips_tmp.VBELN")).alias("OpenDlvDoc"),
-        F.sum(F.col("lips_tmp.LGMNG")).alias("OpenDlvQty"),
-        F.sum(F.when(F.col("likp_tmp.WADAT_IST") == "", 0).otherwise(F.col("lips_tmp.LFIMG"))).alias("QtyShippedTtLine"),
-        F.max(F.col("likp_tmp.WADAT_IST")).alias("PGIDate")
-    ) \
-    .withColumn("DlvStatus", F.when(F.col("PGIDate") == "", "Created").otherwise("Shipped")) \
-    .select(F.col("VGBEL").alias("l_VGBEL"), F.col("VGPOS").alias("l_VGPOS"), "OpenDlvDoc", "OpenDlvQty", "QtyShippedTtLine", "PGIDate", "DlvStatus") \
-    .alias("l")
-
-# 6. Subquery 'j': JEST Statuses
-df_j = df_jest.filter(F.col("STAT").isin("E0001", "E0004", "E0005", "E0008", "E0009") & (F.col("INACT") != "X")) \
-    .join(df_tj30t, (F.col("STAT") == F.col("ESTAT")) & (F.col("STSMA") == "Z0000003") & (F.col("SPRAS") == "E"), "left") \
-    .groupBy("OBJNR") \
-    .agg(
-        F.max(F.when(F.col("STAT") == "E0008", "X").otherwise("")).alias("FrontLoad"),
-        F.max(F.when(F.col("STAT") == "E0009", "X").otherwise("")).alias("POReceived"),
-        F.max(F.when(F.col("STAT").isin("E0001", "E0004", "E0005"), F.col("TXT04")).otherwise("")).alias("Booking")
-    ).alias("j")
-
-# 7. Subquery 'c': ShipTo Party
-df_c = df_vbpa.alias("v").filter((F.col("POSNR") == "000000") & (F.col("PARVW") == "WE")) \
-    .join(df_kna1.alias("k"), F.col("v.KUNNR") == F.col("k.KUNNR")) \
-    .select(F.col("v.VBELN").alias("c_VBELN"), F.col("v.KUNNR").alias("ShipTo"), F.col("k.NAME1").alias("ShipToName")) \
-    .alias("c")
-
-# 8. Activity Type (ACT) - from AFVC
-df_act = df_afvc.groupBy("AUFPL").agg(F.min("VORNR").alias("min_vornr")) \
-    .join(df_afvc.alias("full_afvc"), (F.col("AUFPL") == F.col("full_afvc.AUFPL")) & (F.col("min_vornr") == F.col("full_afvc.VORNR"))) \
-    .select(F.col("AUFPL"), F.col("full_afvc.LARNT").alias("ActivityType"))
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `AUFPL` is ambiguous, could be: [`full_afvc`.`AUFPL`, `spark_catalog`.`chimcobldhq2atrjcpfn6qbcddfmer32bti62nr4clr2ar38edfmer324lim6oo`.`afvc`.`AUFPL`].
