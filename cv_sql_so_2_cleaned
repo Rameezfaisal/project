@@ -1,0 +1,414 @@
+/*---------------------------------------------------------------------
+*Program Name : CV_SQL_SO_OPTIMIZED
+*Project      : CV_SQL_SO OPTIMIZATION 
+*Developer    : DHARANIDHAR MALLURI
+*Requestor    : SANKAR TADINADA
+*Create Date  : 15/12/2019
+*Call By      : USER QUERIES
+*--------------------------------------------------------------------- 
+*Description  : TO IMPROVE THE PERFORMANCE OF THE VIEW CV_SQL_SO, WE ARE PRE-CALCULATING
+*               RESOURCE INTENSIVE PARTS AND PERSISTING THOSE RESULTS IN THE TABLE ZT_M_SALES_ORDER_STATUS.
+*---------------------------------------------------------------------
+* Revision Log:
+* Date       Developer           Description TEST COMPILE
+* 15/12/2019 MALLUDH             INTIAL VERSION (INCIDENT: INC0462937)
+* 26/03/2020 MALLUDH             MODIFIED THE LOGIC TO SHIFT THE DATE FILTER TO EITHER ERDAT 
+*                                OR PGIDATE BASE ON THE IP_DATE_FLAG
+*                                A VALUE OF 'P' FILTERS ON PGIDATE COLUMN 
+*                                AND A VALUE OF 'E' FILTERS ON ERDATE COLUMN
+*                                AND A VALUE OF 'N' WILL NOT HAVE A DATE FILTER
+* 23/07/2021 VADLANA             Invalid decimal digits: beyond precision for column "ExtCost"
+* 23/09/2021 VADLANA             REMOVED THE CONTDITION VBAP_WERKS >= '1900' TO GET ZSB ORDERS 
+*----------------------------------------------------------------------*/ 
+/************* Begin Procedure Script **************/ 
+ BEGIN 
+ 
+ DECLARE MARC_DATA_FLAG NVARCHAR(1);  
+ DECLARE MBEW_DATA_FLAG NVARCHAR(1);
+ DECLARE VEKP_DATA_FLAG NVARCHAR(1);
+ DECLARE VBKD_DATA_FLAG NVARCHAR(1);
+ DECLARE AFVC_DATA_FLAG NVARCHAR(1);
+ DECLARE QMEL_DATA_FLAG NVARCHAR(1);
+ DECLARE T024X_DATA_FLAG NVARCHAR(1);
+ 
+   MARC_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,1,1);
+   MBEW_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,2,1);
+   VEKP_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,3,1);
+   VBKD_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,4,1);
+   AFVC_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,5,1);
+   QMEL_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,6,1);
+   T024X_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,7,1);
+  
+   INPUT_SALES_ORG = 
+ 		SELECT object AS "VKORG"
+ 		FROM   "_SYS_BIC"."prd.ev::PARSE_20" (:IP_SALES_ORG); 
+ 		
+   INPUT_ORDER_TYPE = 
+        SELECT object AS "AUART"
+        FROM   "_SYS_BIC"."prd.ev::PARSE_20" (:IP_ORDER_TYPE);
+ 
+
+   MARC = SELECT  MARC."MATNR",MARC."WERKS",MARC."DISPO",MARC."EKGRP"
+          FROM    "_SYS_BIC"."prd.global.ecc/CV_MARC" MARC
+          JOIN    (SELECT DISTINCT VBAP_MATNR,VBAP_WERKS FROM "ALEX_CUSTOM"."ZT_M_SALES_ORDER_STATUS_V2") PRST 
+          ON      PRST.VBAP_WERKS = MARC."WERKS" 
+          AND     PRST.VBAP_MATNR = MARC."MATNR"
+          AND    :MARC_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER MARC DATA IS RETREIVED OR NOT
+        
+   MBEW_2000 = SELECT  "MATNR", "STPRS" AS STPRS_2000
+          FROM    "_SYS_BIC"."prd.global.ecc/CV_MBEW" MBEW
+          JOIN    (SELECT DISTINCT VBAP_MATNR FROM "ALEX_CUSTOM"."ZT_M_SALES_ORDER_STATUS_V2") PRST 
+          ON      PRST.VBAP_MATNR = MBEW."MATNR"
+          WHERE   "BWKEY" = 2000
+          AND    :MBEW_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER MBEW DATA IS RETREIVED OR NOT;
+
+   MBEW_3120 = SELECT  "MATNR", "STPRS" AS STPRS_3120
+          FROM    "_SYS_BIC"."prd.global.ecc/CV_MBEW" MBEW
+          JOIN    (SELECT DISTINCT VBAP_MATNR FROM "ALEX_CUSTOM"."ZT_M_SALES_ORDER_STATUS_V2") PRST 
+          ON      PRST.VBAP_MATNR = MBEW."MATNR"
+          WHERE   "BWKEY" = 3120
+          AND    :MBEW_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER MBEW DATA IS RETREIVED OR NOT;   
+        
+   AFKO = SELECT AFKO.AUFNR,AFKO.AUFPL
+          FROM    "_SYS_BIC"."prd.global.ecc/CV_AFKO" AFKO
+          JOIN   (SELECT DISTINCT VBAK_AUFNR FROM "ALEX_CUSTOM"."ZT_M_SALES_ORDER_STATUS_V2" ) PRST
+          ON     PRST.VBAK_AUFNR = AFKO."AUFNR"
+          WHERE :AFVC_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER AFVC DATA IS RETREIVED OR NOT;
+        
+   ACT = SELECT  ACT."AUFPL"
+                ,ACT."LARNT"
+       	 FROM   (SELECT  AFVCHeader."AUFPL"
+	                    ,AFVC."LARNT"
+	             FROM   (SELECT  "AUFPL"
+		                        ,MIN("VORNR") "VORNR"
+		                 FROM   "_SYS_BIC"."prd.global.ecc/CV_AFVC"
+		                 GROUP BY "AUFPL"
+	                    ) AFVCHeader
+	             LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_AFVC" AFVC
+	             ON AFVCHeader."AUFPL" = AFVC."AUFPL" AND AFVCHeader."VORNR" = AFVC."VORNR"
+                 ) ACT
+         JOIN  :AFKO AFKO
+         ON    AFKO."AUFPL" = ACT."AUFPL"
+         WHERE :AFVC_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER AFVC DATA IS RETREIVED OR NOT;
+       
+   VEKP =  SELECT  VEKP."VPOBJKEY",VEKP."EXIDV2"        
+           FROM   (SELECT  v."VPOBJKEY"
+ 				          ,MAX(v."EXIDV2") AS "EXIDV2" 
+ 		           FROM     "_SYS_BIC"."prd.global.ecc/CV_VEKP" v
+		           GROUP BY "VPOBJKEY" ) VEKP
+		   JOIN   (SELECT DISTINCT F1_VBELN FROM "ALEX_CUSTOM"."ZT_M_SALES_ORDER_STATUS_V2") PRST
+           ON      PRST.F1_VBELN  = VEKP."VPOBJKEY" 
+           WHERE  :VEKP_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER VEKP DATA IS RETREIVED OR NOT; 
+ 
+ 	 
+ HD_INCOTERM =  SELECT  VBKD."VBELN", VBKD."INCO1",VBKD."KURSK", VBKD."PRSDT"
+	            FROM    (SELECT "VBELN","INCO1","KURSK","PRSDT" 
+	                     FROM   "_SYS_BIC"."prd.global.ecc/CVNS_VBKD"
+	                     WHERE  "POSNR" = '000000') VBKD
+	            JOIN    (SELECT DISTINCT VBELN FROM "ALEX_CUSTOM"."ZT_M_SALES_ORDER_STATUS_V2") PRST
+	            ON      PRST."VBELN" = VBKD."VBELN"
+	            WHERE  :VBKD_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER VBKD DATA IS RETREIVED OR NOT;
+	           
+ LN_INCOTERM =  SELECT  LN_INCOTERM."VBELN",LN_INCOTERM."POSNR",LN_INCOTERM."IHREZ",LN_INCOTERM."INCO1",LN_INCOTERM."ZTERM"
+                FROM    "_SYS_BIC"."prd.global.ecc/CVNS_VBKD" LN_INCOTERM 
+                JOIN    (SELECT DISTINCT VBELN,POSNR FROM "ALEX_CUSTOM"."ZT_M_SALES_ORDER_STATUS_V2") PRST
+                ON      PRST."VBELN" = LN_INCOTERM."VBELN" AND PRST."POSNR" = LN_INCOTERM."POSNR"
+                WHERE  :VBKD_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER VBKD DATA IS RETREIVED OR NOT; 
+                
+  PART = SELECT DISTINCT "Part","Consumable"
+         FROM   "_SYS_BIC"."prd.gops.GLIS/CV_PART" PART
+         JOIN   (SELECT DISTINCT VBAP_MATNR FROM "ALEX_CUSTOM"."ZT_M_SALES_ORDER_STATUS_V2") PRST
+         ON     PART."Part" = PRST.VBAP_MATNR ;
+ 	 
+ 	 var_out =   
+ 	 
+ 	 select xyzz.*,
+ 
+ 	 CASE WHEN xyzz."GrossSOPriceUSD" > 50000 THEN 'True' ELSE 'False' END AS "HighDollarFlag"
+ 	  from
+ 	 (SELECT
+ 
+PRST.ORDER_STATUS AS "OrderStatus"
+,case when PRST."VBAK_AUART" in ('ZAS','ZAV','ZFD','ZO11','ZSA','ZSB','ZSR','RK','ZCR1','ZDR1') THEN 'OTH'
+     when PRST."VBAK_AUART" in ('AG','ZQ01','ZQ03','ZQ04','ZQFO','ZQIS','ZQUP','ZQUX','ZUQT') THEN 'QT'
+     when PRST."VBAK_AUART" in ('ZO03','ZRA1','ZSO1') THEN 'RPO'
+     when PRST."VBAK_AUART" in ('ZR11','ZR03','ZR04','ZR05','ZR08','ZR4B','ZUPC','ZUPR','ZFOC') THEN 'RTN'
+     when PRST."VBAK_AUART" in ('ZO09','ZO12','ZSD','TA','ZCON','ZFO','ZSO','ZUP','ZUPX','ZO04') THEN 'SO'
+     ELSE 'SO' END AS "OrderGroup"
+,PRST."VBELN" AS "Order"
+,LTRIM(PRST."VBELN",'0') AS "OrderWZ"
+,PRST."POSNR" AS "Line"
+,LTRIM(PRST."POSNR",'0') AS "LineWZ"
+,PRST."ETENR" AS "ScheduleLine"
+,LTRIM(PRST."ETENR",'0') AS "ScheduleLineWZ"
+,PRST."VBAK_AUART" AS "OrderType"
+,PRST."VBAP_ABGRU" AS "RejectionCodeLine"
+,PRST."VBAK_ERDAT" AS "CreationDate"
+,PRST."VBAP_ERDAT" AS "LineItemCreationDate"
+,PRST."VBAP_ERZET" AS "LineItemCreationTime"
+
+,PRST."VBEP_H_EDATU" AS "RequestDate"
+,PRST."VBEP_EDATU" AS "DeliveryDueDate" --Schedule Line
+,Null AS "StatRelvDate"
+,Null AS "ItemDeliveryDate"
+,PRST."VBAK_LIFSK" AS "HeaderDlvBlk"  --DeliveryBlockHeader
+,PRST."VBEP_LIFSP" AS "ItemDlvBlk"
+,CASE WHEN IFNULL(PRST."VBAK_FAKSK",'') <> '' THEN 'BLK(H) ' || PRST."VBAK_FAKSK"
+	  WHEN IFNULL(PRST."VBAP_FAKSP",'') <> '' THEN 'BLK(L) ' || PRST."VBAP_FAKSP"
+	  ELSE '' 
+ END AS "BillingBlk"
+,PRST."VBAP_KWMENG" AS "OrderLineQty"
+,PRST."VBEP_BMENG" AS "CommittedQty"
+
+ ,CASE WHEN IFNULL(PRST."delvd_qty",0) >=  IFNULL(PRST."ExpectedQtyCumulative",0) THEN IFNULL(PRST."VBEP_BMENG",0)
+      WHEN IFNULL(PRST."delvd_qty",0) <   IFNULL(PRST."ExpectedQtyCumulative",0) THEN GREATEST(IFNULL(PRST."VBEP_BMENG",0) - (IFNULL(PRST."ExpectedQtyCumulative",0) - IFNULL(PRST."delvd_qty",0)),0)
+      ELSE 0
+ END AS "PGIQty"
+
+,Null AS "Intransit"
+,Null AS "GRQty"
+
+,CASE WHEN IFNULL(PRST."VBUK_WBSTK",'') <> 'C' --Total goods movement status aka not Completed(Open Order)
+        AND PRST."VBAP_ABGRU" = '' --items is not rejected 
+        AND IFNULL(PRST."VBUP_LFSTA",'') <> '' --delivery status
+        AND IFNULL(PRST."VBAP_KWMENG",0) > IFNULL(PRST."delvd_qty",0) --Open qtys
+        AND IFNULL(PRST."VBEP_BMENG",0) > 0 
+        AND CASE WHEN IFNULL(PRST."ExpectedQtyCumulative",0) <= IFNULL(PRST."delvd_qty",0)  THEN 0
+                 WHEN IFNULL(PRST."ExpectedQtyCumulative",0) -  IFNULL(PRST."delvd_qty",0) <= IFNULL(PRST."VBEP_BMENG",0) THEN IFNULL(PRST."ExpectedQtyCumulative",0) -  IFNULL(PRST."delvd_qty",0)
+                 ELSE IFNULL(PRST."VBEP_BMENG",0)
+            END > 0  --Show only scheduled lines that have back orders
+            THEN CASE WHEN IFNULL(PRST."ExpectedQtyCumulative",0) <= IFNULL(PRST."delvd_qty",0)  THEN 0
+	                  WHEN IFNULL(PRST."ExpectedQtyCumulative",0) -  IFNULL(PRST."delvd_qty",0) <= IFNULL(PRST."VBEP_BMENG",0) THEN IFNULL(PRST."ExpectedQtyCumulative",0) -  IFNULL(PRST."delvd_qty",0)
+                      ELSE IFNULL(PRST."VBEP_BMENG",0)
+                 END     
+     ELSE 0
+ END AS "OpenQty"  
+
+,IFNULL(PRST."MARD_LABST",0) +  IFNULL(PRST."MARD_KINSM",0) AS "OnHandQty"
+,PRST."MARD_KLABS" AS "VendorOwned"
+,CASE WHEN IFNULL(PRST."VBEP_BMENG",0) < IFNULL((IFNULL("MARD_LABST",0) + IFNULL("MARD_KLABS",0) + IFNULL("MARD_KINSM",0)),0) 
+		   THEN IFNULL(PRST."VBEP_BMENG",0)
+      ELSE IFNULL((IFNULL("MARD_LABST",0) + IFNULL("MARD_KLABS",0) + IFNULL("MARD_KINSM",0)),0) 
+ END  AS "AvailToShip"
+
+,IFNULL(PRST."OpenDlvDoc",'')  AS "LastDlvDoc"
+,PRST."OpenDlvQty" AS "LastDlvQty"
+,PRST."QtyShippedTtLine" AS "QtyShippedTtLine"
+,NULL AS "QtyNetReceivedLine" 
+
+,IFNULL(PRST."DlvStatus",'None') AS "LastDlvStatus"
+,Null AS "PurchaseOrg"
+,PRST."VBAK_VKORG" AS "SalesOrg"
+,PRST."VBAK_KUNNR" AS "SoldTo"
+,LTRIM(PRST."VBAK_KUNNR",'0') AS "SoldToWZ"
+
+,KNA1."NAME1" AS "SoldToName"
+
+,PRST."ShipTo"
+,LTRIM(PRST."ShipTo",'0') AS "ShipToWZ"
+,PRST."ShipToName"
+,PRST."VBAP_WERKS" AS "VendorPlant"
+,CASE WHEN IFNULL(PRST."VBAP_LGORT",'') IN ('','0010') AND PRST."VBAP_WERKS" = '3000' THEN '0030' 
+      WHEN IFNULL(PRST."VBAP_LGORT",'') <> '' THEN PRST."VBAP_LGORT"
+    ELSE '0010' END AS "VendorSloc"
+,PRST."VBAP_VSTEL" AS "ShippingPoint"
+,Null AS "ReceivingPlant"
+,Null AS "ReceivingSloc"
+,PRST."VBAP_MATNR" AS "Part"
+,PRST."VBAP_ARKTX" AS "PartDescription"
+,PART."Consumable" AS "ConsumableFlag"
+
+,VEKP."EXIDV2" AS "Track"
+,PRST."VBEP_MBDAT" AS "FirmCommitDate"
+
+,PRST."VBAK_AUTLF" AS "CompDlv"
+,MARA."MATKL" AS "MatGrp"
+,LN_INCOTERM."IHREZ" AS "CSRep"
+,PRST."VBAK_BSTNK" AS "CustomerPO"
+
+,CASE WHEN PRST."VBAK_WAERK" IN ('JPY','TWD','KRW') THEN PRST."VBAP_NETPR" * 100
+      ELSE PRST."VBAP_NETPR"
+ END  AS "UnitPriceLocalCurr" 
+,CASE WHEN PRST."VBAK_WAERK" IN ('JPY','TWD','KRW') THEN PRST."VBAP_NETPR" * 100
+      ELSE PRST."VBAP_NETPR"
+ END * PRST."VBEP_BMENG" AS "ExtPriceLocalCurr"
+,PRST."VBAK_WAERK" AS "DocCurrency"
+
+
+,CASE WHEN PRST."VBAK_WAERK" IN ('JPY','TWD') THEN PRST."VBAP_NETPR" * 100
+      ELSE PRST."VBAP_NETPR"  
+ END * CASE WHEN IFNULL(HD_INCOTERM."KURSK",0) = 0 OR PRST."VBAK_WAERK" = 'USD' THEN 1 ELSE HD_INCOTERM."KURSK" 
+END AS "UnitPriceUSD"
+
+,CASE WHEN PRST."VBAK_WAERK" IN ('JPY','TWD') THEN PRST."VBAP_NETPR" * 100
+      ELSE PRST."VBAP_NETPR"  
+ END * CASE WHEN IFNULL(HD_INCOTERM."KURSK",0) = 0 OR PRST."VBAK_WAERK" = 'USD' THEN 1 ELSE HD_INCOTERM."KURSK" END * PRST."VBEP_BMENG" 
+AS "ExtPriceUSD"
+
+
+,COALESCE(MBEW_2000.STPRS_2000,MBEW_3120.STPRS_3120,0) AS "StdCost"
+,(COALESCE(MBEW_2000.STPRS_2000,MBEW_3120.STPRS_3120,0) * PRST."VBEP_BMENG") AS "ExtCost"
+,'USD' AS "StdCurrency"
+,CASE WHEN PRST."VBAP_LPRIO"= '00' THEN '04'
+ 	  ELSE PRST."VBAP_LPRIO"
+ END AS "DPrio"
+,PRST."VBAP_CHARG" AS "BatchNo"
+,PRST."LastPGIDoc" AS "PGIDoc"
+
+,PRST."PGIDate" AS "PGIDate"
+,PRST."VBAK_OBJNR" AS  "NCUPhase2"
+,PRST."VBAK_VSNMR_V" AS "FCID_SlsDocVersion"
+
+,LAB."LBTXT" AS "LabOffice"   -- LabDescription
+,MARC."DISPO" AS "MRPV"
+,Null AS "MRPC"
+,PRST."VBAP_GRKOR" AS "DlvGrp" --DeliveryGroup
+,Null AS "DlvCreationDate"
+,q."QMNUM" AS "SrvcNotif"
+
+,PRST."FrontLoad" AS "FrontLoad"
+,PRST."POReceived" AS "POReceived"
+,PRST."Booking" AS "Booking"
+,PRST."VBAP_PRODH" AS "ProdHier"
+,Null AS "STOItemText"
+,Null AS "MaterialMemo"
+,MARC."EKGRP" AS "PurchaseGrp"
+,MARA."MSTAE" AS "XPlantStatus"
+,PRST."VBAP_KDMAT" AS "CustomerMaterial"
+,PRST."VBAP_ERNAM" AS "LineChangedBy"
+
+
+,CASE WHEN LN_INCOTERM."INCO1" IS NULL THEN HD_INCOTERM."INCO1" 
+      ELSE LN_INCOTERM."INCO1" 
+ END AS "Incoterms"
+
+,PRST."VBAK_IHREZ" AS "CsOwner"
+,PRST."VBAK_ERNAM" AS "CreatedBy"
+,PRST."VBAK_AUFNR" AS "AssocServOrd"
+,PRST."VBAP_AEDAT" AS "LinePrevChangeDate"
+
+
+,CASE WHEN PRST."VBAK_WAERK" = 'KRW' THEN 1 / HD_INCOTERM."KURSK" * 100
+      ELSE 1 / HD_INCOTERM."KURSK"
+ END AS "ExchangeRate"
+
+
+,CAST(HD_INCOTERM."PRSDT" AS VARCHAR) AS "PricingDate"
+
+,CASE WHEN PRST."VBAK_VKORG" = '9000' THEN 'NA'
+	  WHEN PRST."VBAK_VKORG" BETWEEN '2000' AND '2900' THEN 'EU'
+	  WHEN PRST."VBAK_VKORG" BETWEEN '3000' AND '3001' THEN 'JP'
+	  WHEN PRST."VBAK_VKORG" = '3100' THEN 'TW'
+	  WHEN PRST."VBAK_VKORG" = '3200' THEN 'KR'
+	  WHEN PRST."VBAK_VKORG" = '3300' OR PRST."VBAK_VKORG" = '3600'  THEN 'SEA'
+	  WHEN PRST."VBAK_VKORG" = '3400' OR PRST."VBAK_VKORG" = '3410' OR PRST."VBAK_VKORG" = '1000' THEN 'CN'
+	  ELSE 'NEW'
+ END AS "Region"
+
+
+,CASE WHEN MARA."LABOR" = '023' THEN 'SPIN' 
+      WHEN MARA."LABOR" = '024' THEN 'DEP'
+      ELSE 'ETCH+'
+END AS "ToolType"
+
+,CASE WHEN CURRENT_DATE >= PRST."VBEP_EDATU" AND PRST."POReceived" = 'X' THEN 'True' 
+      ELSE 'False' 
+ END AS "ShipmentDueFlag"
+ 
+ ,PRST."VBAK_NETWR" *
+  CASE WHEN PRST."VBAK_WAERK" IN ('JPY','TWD') THEN CASE WHEN IFNULL(HD_INCOTERM."KURSK",0) = 0 THEN 1 ELSE HD_INCOTERM."KURSK" END * 100
+      ELSE CASE WHEN IFNULL(HD_INCOTERM."KURSK",0) = 0 THEN 1 ELSE HD_INCOTERM."KURSK" END 
+  END AS "GrossSOPriceUSD"
+
+ ,CASE WHEN CURRENT_DATE >= PRST."VBEP_EDATU"
+ THEN 'True'ELSE 'False' END AS "DeliveryDueFlag"
+ ,PRST."VBAP_POSEX" AS "CustomerPoLine"
+ ,NULL AS "Cancellation"
+ ,NULL AS "CancellationIndicatorFlag"
+
+ ,PRST."CARRIER" AS "Carrier"
+,PRST."CARRIER_NAME" AS "CarrierName"
+,LN_INCOTERM."ZTERM" AS "CreditCheckBlock"
+,CASE WHEN IFNULL(PRST."VBAP_ABGRU",'') <> '' THEN 'True' ELSE 'False' END AS "SOLineRejectionFlag"
+,ACT."LARNT" AS "ActivityType"
+
+FROM "ALEX_CUSTOM"."ZT_M_SALES_ORDER_STATUS_V2" PRST
+JOIN "_SYS_BIC"."prd.global.ecc/CV_KNA1" KNA1
+ON   PRST.VBAK_KUNNR = KNA1.KUNNR
+
+JOIN "_SYS_BIC"."prd.global.ecc/CV_MARA" MARA
+ON PRST.VBAP_MATNR = MARA."MATNR" 
+
+JOIN :PART PART
+ON   PART."Part" = PRST.VBAP_MATNR
+
+
+LEFT JOIN :MARC MARC
+ON PRST.VBAP_WERKS = MARC."WERKS" AND PRST.VBAP_MATNR = MARC."MATNR"
+
+LEFT JOIN :MBEW_2000 MBEW_2000
+ON   PRST.VBAP_MATNR = MBEW_2000."MATNR"
+
+LEFT JOIN :MBEW_3120 MBEW_3120
+ON   PRST.VBAP_MATNR = MBEW_3120."MATNR"
+
+LEFT JOIN  ( SELECT "LABOR" 
+           			,"LBTXT" --LabOffice
+              FROM   "_SYS_BIC"."prd.global.ecc/CV_T024X" 
+ 		      WHERE  "SPRAS" ='E' 
+ 		     ) LAB
+ ON MARA."LABOR" = LAB."LABOR"
+ 
+LEFT JOIN "_SYS_BIC"."prd.global.ecc/CVNS_QMEL" q
+ON PRST."VBELN" = q."AUFNR"
+
+LEFT JOIN :AFKO AFKO
+ON PRST.VBAK_AUFNR = AFKO."AUFNR"
+
+LEFT JOIN :ACT ACT
+ON AFKO."AUFPL" = ACT."AUFPL"
+
+
+LEFT JOIN :VEKP VEKP
+ON PRST.F1_VBELN  = VEKP."VPOBJKEY" 
+
+LEFT JOIN :HD_INCOTERM HD_INCOTERM 
+ON PRST."VBELN" = HD_INCOTERM."VBELN"
+
+LEFT JOIN :LN_INCOTERM LN_INCOTERM
+ON PRST."VBELN" = LN_INCOTERM."VBELN" AND PRST."POSNR" = LN_INCOTERM."POSNR"
+
+
+
+--WHERE PRST.VBAP_WERKS >= '1900' AND  -- REMOVED THIS CONTDITION TO GET ZSB ORDERS WITH VENDORPLANT = 1000
+WHERE PRST.VBAK_AUART NOT IN ('ZVC','ZR07')
+AND ( PRST.VBAP_ERDAT >= ADD_DAYS(CURRENT_DATE,-732)
+OR    PRST.ORDER_STATUS = 'Open'  )
+
+AND ((:IP_DATE_FLAG = 'L'
+AND PRST."VBAP_ERDAT" >= :IP_ERDAT_FROM
+AND PRST."VBAP_ERDAT" <= :IP_ERDAT_TO)
+OR  (:IP_DATE_FLAG = 'P'
+AND PRST."PGIDate" >= :IP_ERDAT_FROM
+AND PRST."PGIDate" <= :IP_ERDAT_TO )
+OR  (:IP_DATE_FLAG = 'R'
+AND PRST."VBEP_H_EDATU" >= :IP_ERDAT_FROM
+AND PRST."VBEP_H_EDATU" <= :IP_ERDAT_TO )
+OR  (:IP_DATE_FLAG = 'C'
+AND PRST."VBAK_ERDAT" >= :IP_ERDAT_FROM
+AND PRST."VBAK_ERDAT" <= :IP_ERDAT_TO )
+OR  (:IP_DATE_FLAG = 'F'
+AND PRST."VBEP_MBDAT" >= :IP_ERDAT_FROM
+AND PRST."VBEP_MBDAT" <= :IP_ERDAT_TO )
+OR  (:IP_DATE_FLAG = 'A'
+AND PRST."VBAP_AEDAT" >= :IP_ERDAT_FROM
+AND PRST."VBAP_AEDAT" <= :IP_ERDAT_TO )
+OR (:IP_DATE_FLAG = 'N'))
+AND (PRST."VBAK_VKORG" IN (SELECT VKORG FROM :INPUT_SALES_ORG) OR 'ALL' IN (SELECT VKORG FROM :INPUT_SALES_ORG))
+AND (PRST."VBAK_AUART" IN (SELECT AUART FROM :INPUT_ORDER_TYPE) OR 'ALL' IN (SELECT AUART FROM :INPUT_ORDER_TYPE))
+
+     )XYZZ;  
+
+END
+
+/********* End Procedure Script **********/
