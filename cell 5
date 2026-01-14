@@ -1,97 +1,77 @@
-# ------- CELL 1 --------
+# ---------- Source tables ----------
+cv_nha_dtls_path          = "lakehouse.prd_gops_omat.cv_omat_obpn_nha_dtls"
+cv_make_nha_dtls_path     = "lakehouse.prd_gops_omat.cv_omat_obpn_make_nha_dtls"
+cv_mdkp_path              = "lakehouse.prd_global_ecc.cv_mdkp"
+cv_mdtb_path              = "lakehouse.prd_global_ecc.cv_mdtb"
+cv_mseg_path              = "lakehouse.prd_global_ecc.cv_mseg"
+cv_mkpf_path              = "lakehouse.prd_global_ecc.cv_mkpf"
+zt_spares_path            = "lakehouse.alex_custom.zt_csbg_spares_deliveries"
+cv_sql_so2_path           = "lakehouse.prd_gops_glis.cv_sql_so_2"
 
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-from pyspark.sql.types import DecimalType, DoubleType, DateType, TimestampType
-from pyspark.sql import DataFrame
-
-# Standardize time parser
-spark.conf.set("spark.sql.legacy.timeParserPolicy", "CORRECTED")
-
-
-
-
-# ------- CELL 2 --------
-
-
-
-params = {
-    # Transactional
-    "vbuk":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbuk",
-    "vbak":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbak",
-    "vbap":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbap",
-    "vbep":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbep",
-    "vbup":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbup",
-    "vbfa":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbfa",
-    "lips":  "wsf_silk_glb_da_dev.lhs_glb.ecc.lips",
-    "likp":  "wsf_silk_glb_da_dev.lhs_glb.ecc.likp",
-    "vbkd":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbkd",
-    "vbpa":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbpa",
-    "jest":  "wsf_silk_glb_da_dev.lhs_glb.ecc.jest",
-    "qmel":  "wsf_silk_glb_da_dev.lhs_glb.ecc.qmel",
-    
-    # Master Data
-    "kna1":  "wsf_silk_glb_da_dev.lhs_glb.ecc.kna1",
-    "part":  "lhs_glb.eng_test.stg_omat_part",
-    "mara":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mara",
-    "t024x": "wsf_silk_glb_da_dev.lhs_glb.ecc.t024x",
-    "mard":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mard",
-    "marc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.marc",
-    "mbew":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mbew",
-    "tj30t": "wsf_silk_glb_da_dev.lhs_glb.ecc.tj30t",
-    "vekp":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vekp",
-    "afko":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afko",
-    "afvc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afvc",
-    
-    # Currency
-    "tcurr": "wsf_silk_glb_dt_qa.lhg_glb.ecc.tcurr",
-    
-    # Custom/Reporting
-    "csbg":  "wsf_silk_glb_dt_qa.lhg_glb.eng.rpt_csbg_spares_deliveries",
-    
-    # Target
-    "target": "eng_test.sales_order_v1"
-}
+# ---------- Target tables ----------
+make_nha_target_path     = "lakehouse.w_omat.omat_obpn_make_nha_dtls"
+dmd_cons_target_path     = "lakehouse.w_omat.omat_makenha_dmd_consumption_dtls"
+log_table_path           = "lakehouse.w_omat.omat_log_dtls"
 
 
 
 
 
-# ------- CELL 3 --------
 
 
 
-# Main Order Tables   Before using union logic
-df_vbak = spark.read.table(params["vbak"]).alias("a")
-df_vbap = spark.read.table(params["vbap"]).alias("p")
-df_vbep = spark.read.table(params["vbep"]).alias("e")
-df_vbuk = spark.read.table(params["vbuk"]).alias("u")
-df_vbup = spark.read.table(params["vbup"]).alias("b")
 
-# Master Data & Lookups
-df_kna1 = spark.read.table(params["kna1"]).alias("k")
-df_mara = spark.read.table(params["mara"]).alias("m")
-df_part = spark.read.table(params["part"]).alias("pp")
-df_marc = spark.read.table(params["marc"]).alias("z")
-df_mard = spark.read.table(params["mard"]).alias("r")
-df_mbew = spark.read.table(params["mbew"]).alias("w")
-df_t024x = spark.read.table(params["t024x"]).alias("i")
+today = F.current_date()
 
-# Flow & Status
-df_vbfa = spark.read.table(params["vbfa"])
-df_lips = spark.read.table(params["lips"])
-df_likp = spark.read.table(params["likp"])
-df_vbkd = spark.read.table(params["vbkd"])
-df_vbpa = spark.read.table(params["vbpa"])
-df_jest = spark.read.table(params["jest"])
-df_tj30t = spark.read.table(params["tj30t"])
-df_vekp = spark.read.table(params["vekp"])
-df_qmel = spark.read.table(params["qmel"]).alias("q")
+from_date = F.add_months(today, -12)
+to_date   = F.add_months(today, 12)
 
-# Production & Spares
-df_afko = spark.read.table(params["afko"]).alias("afko")
-df_afvc = spark.read.table(params["afvc"])
-df_spares = spark.read.table(params["csbg"])
+dt1wk = F.next_day(today, "Sun") - F.expr("interval 7 days")
+dt26wk = F.next_day(dt1wk + F.expr("interval 182 days"), "Sat")
 
-# Currency
-df_tcurr = spark.read.table(params["tcurr"])
+
+
+
+
+
+
+
+
+nha = spark.read.table(cv_nha_dtls_path)
+make_nha = spark.read.table(cv_make_nha_dtls_path)
+mdkp = spark.read.table(cv_mdkp_path)
+mdtb = spark.read.table(cv_mdtb_path)
+mseg = spark.read.table(cv_mseg_path)
+mkpf = spark.read.table(cv_mkpf_path)
+spares = spark.read.table(zt_spares_path)
+so2 = spark.read.table(cv_sql_so2_path)
+
+
+
+
+
+
+
+
+new_make_nha = (
+    nha.alias("a")
+    .join(
+        make_nha.select("cmpprtno","nha").alias("b"),
+        (F.col("a.cmpprtno")==F.col("b.cmpprtno")) & (F.col("a.nha")==F.col("b.nha")),
+        "left"
+    )
+    .where(
+        (F.col("a.cmpprtno") != F.col("a.nha")) &
+        F.col("b.cmpprtno").isNull() &
+        (~F.col("a.nha").like("%DELTA%")) &
+        (F.col("a.nha_status_inactive") != "X") &
+        (F.col("a.matkl").isin("M","MN","X")) &
+        (~F.col("a.mstae").isin("OB","OS","OP"))
+    )
+    .groupBy("a.cmpprtno","a.nha","a.level","a.matkl","a.mstae")
+    .agg(F.sum("a.cmpqpa").alias("cmpqpa"))
+    .withColumn("last_modified_on", F.current_date())
+    .withColumn("isprocessed", F.lit("N"))
+)
+
+new_make_nha.write.mode("append").saveAsTable(make_nha_target_path)
