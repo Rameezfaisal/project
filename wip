@@ -1,79 +1,89 @@
-AnalysisException                         Traceback (most recent call last)
-Cell In[70], line 46
-     13 df_main = df_vbuk.alias("u").join(df_vbak.alias("a"), F.col("u.VBELN") == F.col("a.VBELN")) \
-     14     .join(df_kna1.alias("k"), F.col("a.KUNNR") == F.col("k.KUNNR")) \
-     15     .join(df_p_prep.alias("p"), F.col("a.VBELN") == F.col("p.VBELN")) \
-     16     .join(df_part.alias("pp"), F.col("p.MATNR") == F.col("pp.Part")) \
-     17     .join(df_vbep.alias("e"), (F.col("p.VBELN") == F.col("e.VBELN")) & (F.col("p.POSNR") == F.col("e.POSNR")))
-     19 # 3. Attach Lookups (Left Joins)
-     20 # We chain the joins using the aliases defined above.
-     21 df_prst = df_main \
-     22     .join(df_h, (F.col("p.VBELN") == F.col("h_VBELN")) & (F.col("p.POSNR") == F.col("h_POSNR"))) \
-     23     .join(df_t, (F.col("e.VBELN") == F.col("t.VBELN")) & (F.col("e.POSNR") == F.col("t.POSNR")) & (F.col("e.ETENR") == F.col("t.ETENR"))) \
-     24     .join(df_vbup.alias("b"), (F.col("p.VBELN") == F.col("b.VBELN")) & (F.col("p.POSNR") == F.col("b.POSNR"))) \
-     25     .join(df_f1, (F.col("b.VBELN") == F.col("f1_VBELV")) & (F.col("b.POSNR") == F.col("f1_POSNV")), "left") \
-     26     .join(df_f2, (F.col("b.VBELN") == F.col("f2_VBELV")) & (F.col("b.POSNR") == F.col("f2_POSNV")), "left") \
-     27     .join(df_c, F.col("a.VBELN") == F.col("c_VBELN"), "left") \
-     28     .join(df_mara.alias("m"), F.col("p.MATNR") == F.col("m.MATNR")) \
-     29     .join(df_t024x.alias("i"), F.col("m.LABOR") == F.col("i.LABOR"), "left") \
-     30     .join(df_mard.alias("r"), 
-     31           (F.col("p.WERKS") == F.col("r.WERKS")) & 
-     32           (F.col("p.MATNR") == F.col("r.MATNR")) & 
-     33           (F.col("p.Calc_LGORT") == F.col("r.LGORT")), 
-     34           "left") \
-     35     .join(df_marc.alias("z"), (F.col("p.WERKS") == F.col("z.WERKS")) & (F.col("p.MATNR") == F.col("z.MATNR")), "left") \
-     36     .join(df_l, (F.col("p.VBELN") == F.col("l_VGBEL")) & (F.col("p.POSNR") == F.col("l_VGPOS")), "left") \
-     37     .join(df_mbew.alias("w"), (F.col("p.MATNR") == F.col("w.MATNR")) & (F.col("w.BWKEY") == "2000"), "left") \
-     38     .join(df_mbew.alias("w3"), (F.col("p.MATNR") == F.col("w3.MATNR")) & (F.col("w3.BWKEY") == "3120"), "left") \
-     39     .join(df_vbkd.alias("hd"), (F.col("p.VBELN") == F.col("hd.VBELN")) & (F.col("hd.POSNR") == "000000"), "left") \
-     40     .join(df_vbkd.alias("d"), (F.col("p.VBELN") == F.col("d.VBELN")) & (F.col("p.POSNR") == F.col("d.POSNR")), "left") \
-     41     .join(df_j, F.col("a.OBJNR") == F.col("j.OBJNR"), "left") \
-     42     .join(df_vekp.alias("y"), F.col("f1_VBELV") == F.col("y.VPOBJKEY"), "left") \
-     43     .join(df_qmel.alias("q"), F.col("a.VBELN") == F.col("q.AUFNR"), "left") \
-     44     .join(df_spares.alias("xy"), (F.col("p.VBELN") == F.col("xy.ORDER_NO")) & (F.col("p.POSNR") == F.col("xy.ORDER_LINE_NO")), "left") \
-     45     .join(df_afko.alias("afko"), F.col("a.AUFNR") == F.col("afko.AUFNR"), "left") \
----> 46     .join(df_act, F.col("afko.AUFPL") == F.col("df_act.AUFPL"), "left")
-     48 # 4. Helper Columns for complex Logic
-     49 # Used for OpenQty and PGIQty calculations in next step
-     50 cond_bo_1 = F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("delvd_qty"), F.lit(0))
+# ------- CELL 5 (CORRECTED): The Main Join (Logic & Deduplication) --------
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:2493, in DataFrame.join(self, other, on, how)
-   2491         on = self._jseq([])
-   2492     assert isinstance(how, str), "how should be a string"
--> 2493     jdf = self._jdf.join(other._jdf, on, how)
-   2494 return DataFrame(jdf, self.sparkSession)
+# 1. Prepare VBAP with Logic for "Calc_LGORT" (Used in MARD join)
+df_p_prep = df_vbap.withColumn("Calc_LGORT", 
+    F.when((F.coalesce(F.col("LGORT"), F.lit("")) .isin("", "0010")) & (F.col("WERKS") == "3000"), "0030")
+     .when(F.coalesce(F.col("LGORT"), F.lit("")) != "", F.col("LGORT"))
+     .otherwise("0010")
+)
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
+# 2. Base Join Sequence (Inner Joins)
+# Sequence: VBUK -> VBAK -> KNA1 -> VBAP -> PART -> VBEP
+# We use explicit aliases (u, a, k, p, pp, e) to strictly control column references.
+df_main = df_vbuk.alias("u").join(df_vbak.alias("a"), F.col("u.VBELN") == F.col("a.VBELN")) \
+    .join(df_kna1.alias("k"), F.col("a.KUNNR") == F.col("k.KUNNR")) \
+    .join(df_p_prep.alias("p"), F.col("a.VBELN") == F.col("p.VBELN")) \
+    .join(df_part.alias("pp"), F.col("p.MATNR") == F.col("pp.Part")) \
+    .join(df_vbep.alias("e"), (F.col("p.VBELN") == F.col("e.VBELN")) & (F.col("p.POSNR") == F.col("e.POSNR")))
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
+# 3. Attach Lookups (Left Joins)
+# We chain the joins using the aliases defined above.
+df_prst = df_main \
+    .join(df_h, (F.col("p.VBELN") == F.col("h_VBELN")) & (F.col("p.POSNR") == F.col("h_POSNR"))) \
+    .join(df_t, (F.col("e.VBELN") == F.col("t.VBELN")) & (F.col("e.POSNR") == F.col("t.POSNR")) & (F.col("e.ETENR") == F.col("t.ETENR"))) \
+    .join(df_vbup.alias("b"), (F.col("p.VBELN") == F.col("b.VBELN")) & (F.col("p.POSNR") == F.col("b.POSNR"))) \
+    .join(df_f1, (F.col("b.VBELN") == F.col("f1_VBELV")) & (F.col("b.POSNR") == F.col("f1_POSNV")), "left") \
+    .join(df_f2, (F.col("b.VBELN") == F.col("f2_VBELV")) & (F.col("b.POSNR") == F.col("f2_POSNV")), "left") \
+    .join(df_c, F.col("a.VBELN") == F.col("c_VBELN"), "left") \
+    .join(df_mara.alias("m"), F.col("p.MATNR") == F.col("m.MATNR")) \
+    .join(df_t024x.alias("i"), F.col("m.LABOR") == F.col("i.LABOR"), "left") \
+    .join(df_mard.alias("r"), 
+          (F.col("p.WERKS") == F.col("r.WERKS")) & 
+          (F.col("p.MATNR") == F.col("r.MATNR")) & 
+          (F.col("p.Calc_LGORT") == F.col("r.LGORT")), 
+          "left") \
+    .join(df_marc.alias("z"), (F.col("p.WERKS") == F.col("z.WERKS")) & (F.col("p.MATNR") == F.col("z.MATNR")), "left") \
+    .join(df_l, (F.col("p.VBELN") == F.col("l_VGBEL")) & (F.col("p.POSNR") == F.col("l_VGPOS")), "left") \
+    .join(df_mbew.alias("w"), (F.col("p.MATNR") == F.col("w.MATNR")) & (F.col("w.BWKEY") == "2000"), "left") \
+    .join(df_mbew.alias("w3"), (F.col("p.MATNR") == F.col("w3.MATNR")) & (F.col("w3.BWKEY") == "3120"), "left") \
+    .join(df_vbkd.alias("hd"), (F.col("p.VBELN") == F.col("hd.VBELN")) & (F.col("hd.POSNR") == "000000"), "left") \
+    .join(df_vbkd.alias("d"), (F.col("p.VBELN") == F.col("d.VBELN")) & (F.col("p.POSNR") == F.col("d.POSNR")), "left") \
+    .join(df_j, F.col("a.OBJNR") == F.col("j.OBJNR"), "left") \
+    .join(df_vekp.alias("y"), F.col("f1_VBELV") == F.col("y.VPOBJKEY"), "left") \
+    .join(df_qmel.alias("q"), F.col("a.VBELN") == F.col("q.AUFNR"), "left") \
+    .join(df_spares.alias("xy"), (F.col("p.VBELN") == F.col("xy.ORDER_NO")) & (F.col("p.POSNR") == F.col("xy.ORDER_LINE_NO")), "left") \
+    .join(df_afko.alias("afko"), F.col("a.AUFNR") == F.col("afko.AUFNR"), "left") \
+    .join(df_act.alias("act"), F.col("afko.AUFPL") == F.col("act.AUFPL"), "left")
 
-AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `df_act`.`AUFPL` cannot be resolved. Did you mean one of the following? [`agg_afvc`.`AUFPL`, `a`.`bpn`, `a`.`tas`, `d`.`abtnr`, `d`.`acdatv`].;
-'Join LeftOuter, (AUFPL#144464 = 'df_act.AUFPL)
-:- Join LeftOuter, (AUFNR#120560 = AUFNR#144421)
-:  :- Join LeftOuter, ((VBELN#122344 = ORDER_NO#147106) AND (POSNR#122345 = ORDER_LINE_NO#147107))
-:  :  :- Join LeftOuter, (VBELN#120470 = AUFNR#143323)
-:  :  :  :- Join LeftOuter, (f1_VBELV#150804 = VPOBJKEY#142286)
-:  :  :  :  :- Join LeftOuter, (OBJNR#120544 = OBJNR#142030)
-:  :  :  :  :  :- Join LeftOuter, ((VBELN#122344 = VBELN#211475) AND (POSNR#122345 = POSNR#211476))
-:  :  :  :  :  :  :- Join LeftOuter, ((VBELN#122344 = VBELN#140928) AND (POSNR#140929 = 000000))
-:  :  :  :  :  :  :  :- Join LeftOuter, ((MATNR#122346 = MATNR#202039) AND (BWKEY#202040 = 3120))
-:  :  :  :  :  :  :  :  :- Join LeftOuter, ((MATNR#122346 = MATNR#134672) AND (BWKEY#134673 = 2000))
-:  :  :  :  :  :  :  :  :  :- Join LeftOuter, ((VBELN#122344 = l_VGBEL#153045) AND (POSNR#122345 = l_VGPOS#153046))
-:  :  :  :  :  :  :  :  :  :  :- Join LeftOuter, ((WERKS#122411 = WERKS#131779) AND (MATNR#122346 = MATNR#131778))
-:  :  :  :  :  :  :  :  :  :  :  :- Join LeftOuter, (((WERKS#122411 = WERKS#134122) AND (MATNR#122346 = MATNR#134121)) AND (Calc_LGORT#154762 = LGORT#134123))
+# 4. Helper Columns for complex Logic
+# Used for OpenQty and PGIQty calculations in next step
+cond_bo_1 = F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("delvd_qty"), F.lit(0))
+cond_bo_2 = (F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("delvd_qty"), F.lit(0))) <= F.coalesce(F.col("e.BMENG"), F.lit(0))
+
+# 5. Apply "Logic" Columns (Status & OpenQty) + Filtering
+# Logic: We filter FIRST to reduce data volume, then calculate expensive case statements.
+# Filter: (Order Type Check) AND (Date Range OR Open Status)
+df_logic = df_prst.filter(
+    (~F.col("a.AUART").isin("ZVC", "ZR07")) & 
+    (
+        (F.col("p.ERDAT") >= F.date_add(F.current_date(), -732)) |
+        (
+             # Replicating "ORDER_STATUS = 'Open'" logic inline for filtering
+            (F.coalesce(F.col("u.WBSTK"), F.lit("")) != "C") & 
+            (F.coalesce(F.col("p.ABGRU"), F.lit("")) == "") & 
+            (F.coalesce(F.col("b.LFSTA"), F.lit("")) != "") &
+            (F.coalesce(F.col("p.KWMENG"), F.lit(0)) > F.coalesce(F.col("delvd_qty"), F.lit(0))) &
+            (F.coalesce(F.col("e.BMENG"), F.lit(0)) > 0)
+        )
+    )
+).withColumn("OrderStatus", 
+        F.when(
+            (F.coalesce(F.col("u.WBSTK"), F.lit("")) != "C") & 
+            (F.coalesce(F.col("p.ABGRU"), F.lit("")) == "") & 
+            (F.coalesce(F.col("b.LFSTA"), F.lit("")) != "") &
+            (F.coalesce(F.col("p.KWMENG"), F.lit(0)) > F.coalesce(F.col("delvd_qty"), F.lit(0))) &
+            (F.coalesce(F.col("e.BMENG"), F.lit(0)) > 0),
+            "Open"
+        ).otherwise("Closed")
+    ).withColumn("OpenQty",
+        F.when(
+            (F.coalesce(F.col("u.WBSTK"), F.lit("")) != "C") & 
+            (F.col("p.ABGRU") == "") & 
+            (F.coalesce(F.col("b.LFSTA"), F.lit("")) != "") &
+            (F.coalesce(F.col("p.KWMENG"), F.lit(0)) > F.coalesce(F.col("delvd_qty"), F.lit(0))) & 
+            (F.coalesce(F.col("e.BMENG"), F.lit(0)) > 0),
+            F.when(cond_bo_1, 0)
+             .when(cond_bo_2, F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("delvd_qty"), F.lit(0)))
+             .otherwise(F.coalesce(F.col("e.BMENG"), F.lit(0)))
+        ).otherwise(0)
+    )
