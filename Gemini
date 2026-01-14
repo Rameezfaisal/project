@@ -1,1 +1,46 @@
+AttributeError                            Traceback (most recent call last)
+Cell In[28], line 53
+     34 df_f2 = df_vbfa.filter(
+     35         (F.col("STUFE") == "00") & 
+     36         (F.col("VBTYP_N").isin("T", "J")) & 
+   (...)
+     45         ).alias("PGIQty")
+     46     ).alias("f2")
+     48 # 5. Subquery 'l': Delivery Status (LIPS/LIKP Join)
+     49 # Logic: Aggregates on Preceding Doc (VGBEL/VGPOS)
+     50 df_l = df_lips.filter((F.col("VGBEL") != "") & 
+     51                       (~F.col("VGBEL").like("4%")) & 
+     52                       (~F.col("VGBEL").like("3%"))) \
+---> 53     .join(df_likp, df_lips.VBELN == df_likp.VBELN) \
+     54     .filter(df_likp.WADAT_IST != "") \
+     55     .groupBy(df_lips.VGBEL, df_lips.VGPOS) \
+     56     .agg(
+     57         F.max(df_lips.VBELN).alias("OpenDlvDoc"),
+     58         F.sum(df_lips.LGMNG).alias("OpenDlvQty"),
+     59         F.sum(F.when(df_likp.WADAT_IST == "", 0).otherwise(df_lips.LFIMG)).alias("QtyShippedTtLine"),
+     60         F.max(df_likp.WADAT_IST).alias("PGIDate")
+     61     ) \
+     62     .withColumn("DlvStatus", F.when(F.col("PGIDate") == "", "Created").otherwise("Shipped")) \
+     63     .select(F.col("VGBEL").alias("l_VGBEL"), 
+     64             F.col("VGPOS").alias("l_VGPOS"), 
+     65             "OpenDlvDoc", "OpenDlvQty", "QtyShippedTtLine", "PGIDate", "DlvStatus") \
+     66     .alias("l")
+     68 # 6. Subquery 'x': Exchange Rates
+     69 # Logic: Get Min GDATU for USD to find the active rate
+     70 df_tcurr_usd = df_tcurr.filter(F.col("TCURR") == "USD")
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3129, in DataFrame.__getattr__(self, name)
+   3096 """Returns the :class:`Column` denoted by ``name``.
+   3097 
+   3098 .. versionadded:: 1.3.0
+   (...)
+   3126 +---+
+   3127 """
+   3128 if name not in self.columns:
+-> 3129     raise AttributeError(
+   3130         "'%s' object has no attribute '%s'" % (self.__class__.__name__, name)
+   3131     )
+   3132 jc = self._jdf.apply(name)
+   3133 return Column(jc)
+
+AttributeError: 'DataFrame' object has no attribute 'VBELN'
