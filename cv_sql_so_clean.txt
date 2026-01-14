@@ -1,3 +1,12 @@
+/*---------------------------------------------------------------------
+*Program Name : CV_SQL_SO
+*Project      : Creating sales_order_v1
+*Developer    : DHARANIDHAR MALLURI
+*Requestor    : SANKAR TADINADA
+*Create Date  : 15/12/2019
+*Call By      : USER QUERIES
+*--------------------------------------------------------------------- 
+
 /************* Begin Procedure Script **************/ 
  BEGIN 
  	 var_out =   
@@ -452,5 +461,6 @@ ORDER BY a."VBELN"
 		,p."POSNR"
 		,e."ETENR")	xyzz;
 END
+
 
 /********* End Procedure Script **********/
