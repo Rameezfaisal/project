@@ -1,37 +1,35 @@
----------------------------------------------------------------------------
-AnalysisException                         Traceback (most recent call last)
-Cell In[19], line 22
-      1 new_make_nha = (
-      2     nha.alias("a")
-      3     .join(
-   (...)
-     19     .withColumn("isprocessed", F.lit("N"))
-     20 )
----> 22 new_make_nha.write.mode("append").saveAsTable(make_nha_target_path)
+CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_makenha_dmd_consumption_dtls (
+  cmpprtno                STRING,
+  last_modified_on        DATE,
+  mfg_12mnths_consumption INT,
+  mfg_5yrs_consumption    INT,
+  mfg_dmd                 INT,
+  nha                     STRING,
+  sprs_5yrs_consumption   INT,
+  sprs_dmd                INT
+)
+USING DELTA;
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/readwriter.py:1586, in DataFrameWriter.saveAsTable(self, name, format, mode, partitionBy, **options)
-   1584 if format is not None:
-   1585     self.format(format)
--> 1586 self._jwrite.saveAsTable(name)
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
+CREATE TABLE IF NOT EXISTS omat_test.rpt_omat_obpn_make_nha_dtls (
+  cmpprtno         STRING,
+  cmpqpa           INT,
+  isprocessed      STRING,
+  last_modified_on DATE,
+  level            INT,
+  matkl            STRING,
+  mstae            STRING,
+  nha              STRING
+)
+USING DELTA;
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
 
-AnalysisException: [DELTA_FAILED_TO_MERGE_FIELDS] Failed to merge fields 'cmpqpa' and 'cmpqpa'
+CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_log_dtls (
+  executed_on        TIMESTAMP,  -- SECONDDATE
+  obprtno_cnt        INT,
+  obprtno_nha_cnt    INT,
+  obpr_cnt           INT,
+  program_name       STRING
+)
+USING DELTA;
+
