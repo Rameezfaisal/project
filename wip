@@ -1,34 +1,106 @@
-# Main Order Tables   Before using union logic
-df_vbak = spark.read.table(params["vbak"]).alias("a")
-df_vbap = spark.read.table(params["vbap"]).alias("p")
-df_vbep = spark.read.table(params["vbep"]).alias("e")
-df_vbuk = spark.read.table(params["vbuk"]).alias("u")
-df_vbup = spark.read.table(params["vbup"]).alias("b")
+# 1. Currency (Prefix 'x_')
+w_curr = Window.partitionBy("fcurr").orderBy(F.col("gdatu").asc())
+df_curr_calc = df_tcurr.filter(F.col("tcurr") == 'USD') \
+    .withColumn("rn", F.row_number().over(w_curr)) \
+    .filter(F.col("rn") == 1) \
+    .select(
+        F.col("fcurr").alias("x_fcurr"), 
+        F.abs(F.col("ukurs")).alias("x_ukurs"),
+        F.col("tcurr").alias("x_tcurr")
+    )
 
-# Master Data & Lookups
-df_kna1 = spark.read.table(params["kna1"]).alias("k")
-df_mara = spark.read.table(params["mara"]).alias("m")
-df_part = spark.read.table(params["part"]).alias("pp")
-df_marc = spark.read.table(params["marc"]).alias("z")
-df_mard = spark.read.table(params["mard"]).alias("r")
-df_mbew = spark.read.table(params["mbew"]).alias("w")
-df_t024x = spark.read.table(params["t024x"]).alias("i")
+# 2. Cumulative Quantity (Prefix 'e_')
+# Added e_ prefix to avoid collision with standard vbep columns
+w_cum = Window.partitionBy("vbeln", "posnr").orderBy("etenr").rowsBetween(Window.unboundedPreceding, Window.currentRow)
+df_vbep_calc = df_vbep.withColumn("e_ExpectedQtyCumulative", F.sum("bmeng").over(w_cum))
 
-# Flow & Status
-df_vbfa = spark.read.table(params["vbfa"])
-df_lips = spark.read.table(params["lips"])
-df_likp = spark.read.table(params["likp"])
-df_vbkd = spark.read.table(params["vbkd"])
-df_vbpa = spark.read.table(params["vbpa"])
-df_jest = spark.read.table(params["jest"])
-df_tj30t = spark.read.table(params["tj30t"])
-df_vekp = spark.read.table(params["vekp"])
-df_qmel = spark.read.table(params["qmel"]).alias("q")
+# 3. Header Schedule Line (Prefix 'h_')
+df_h = df_vbep.filter(F.col("etenr") == '0001').select(
+    F.col("vbeln").alias("h_vbeln"), 
+    F.col("posnr").alias("h_posnr"), 
+    F.col("edatu").alias("h_edatu")
+)
 
-# Production & Spares
-df_afko = spark.read.table(params["afko"]).alias("afko")
-df_afvc = spark.read.table(params["afvc"])
-df_spares = spark.read.table(params["csbg"])
+# 4. Delivery Flow (Prefix 'f1_')
+df_f1 = df_vbfa.filter((F.col("stufe") == '00') & (F.col("vbtyp_n").isin('T', 'J'))) \
+    .groupBy("vbelv", "posnv").agg(
+        F.sum(
+            F.when((F.col("vbtyp_n") == 'R') & (F.col("plmin") == '+'), F.coalesce(F.col("rfmng_flo"), F.lit(0)))
+            .when(F.col("vbtyp_n") == 'h', F.coalesce(F.col("rfmng_flo"), F.lit(0)) * -1)
+            .otherwise(0)
+        ).alias("f1_delvd_qty") # <--- Renamed
+    ).withColumnRenamed("vbelv", "f1_vbeln").withColumnRenamed("posnv", "f1_posnr")
 
-# Currency
-df_tcurr = spark.read.table(params["tcurr"])
+# 5. PGI Flow (Prefix 'f2_')
+df_f2 = df_vbfa.filter((F.col("stufe") == '00') & (F.col("vbtyp_n").isin('T', 'J')) & (F.col("vbeln").startswith('49'))) \
+    .groupBy("vbelv", "posnv").agg(
+        F.max("vbeln").alias("f2_LastPGIDoc"), # <--- Renamed
+        F.sum(
+            F.when(F.col("vbtyp_n") == 'R', F.coalesce(F.col("rfmng"), F.lit(0)))
+            .when(F.col("vbtyp_n") == 'h', F.coalesce(F.col("rfmng"), F.lit(0)) * -1)
+            .otherwise(0)
+        ).alias("f2_PGIQty") # <--- Renamed
+    ).withColumnRenamed("vbelv", "f2_vbeln").withColumnRenamed("posnv", "f2_posnr")
+
+# 6. Delivery Docs (Prefix 'l_')
+df_l = df_lips.filter((F.col("vgbel") != '') & (~F.col("vgbel").startswith('4')) & (~F.col("vgbel").startswith('3'))) \
+    .join(df_likp, df_lips.vbeln == df_likp.vbeln) \
+    .filter(df_likp.wadat_ist != '') \
+    .groupBy(df_lips.vgbel, df_lips.vgpos).agg(
+        F.max(df_lips.vbeln).alias("l_OpenDlvDoc"),
+        F.sum(df_lips.lgmng).alias("l_OpenDlvQty"),
+        F.sum(df_lips.lfimg).alias("l_QtyShippedTtLine"),
+        F.max(df_likp.wadat_ist).alias("l_PGIDate"),
+        F.when(F.max(df_likp.wadat_ist) == '', 'Created').otherwise('Shipped').alias("l_DlvStatus")
+    ).withColumnRenamed("vgbel", "l_vbeln").withColumnRenamed("vgpos", "l_posnr")
+
+# 7. Statuses (Prefix 'j_')
+df_j = df_jest.filter(F.col("stat").isin('E0001', 'E0004', 'E0005', 'E0008', 'E0009') & (F.col("inact") != 'X')) \
+    .join(df_tj30t, (F.col("stat") == df_tj30t.estat) & (df_tj30t.stsma == 'Z0000003') & (df_tj30t.spras == 'E'), "left") \
+    .groupBy("objnr").agg(
+        F.max(F.when(F.col("stat") == 'E0008', 'X').otherwise('')).alias("j_FrontLoad"),
+        F.max(F.when(F.col("stat") == 'E0009', 'X').otherwise('')).alias("j_POReceived"),
+        F.max(F.when(F.col("stat").isin('E0001', 'E0004', 'E0005'), F.col("txt04")).otherwise('')).alias("j_Booking")
+    ).withColumnRenamed("objnr", "j_objnr")
+
+# 8. Spares (Prefix 'xy_')
+df_xy = df_spares.groupBy("order_no", "order_line_no").agg(
+    F.max("carrier").alias("xy_carrier"), 
+    F.max("carrier_name").alias("xy_carrier_name")
+).withColumnRenamed("order_no", "xy_vbeln").withColumnRenamed("order_line_no", "xy_posnr")
+
+# 9. Lab Office (Prefix 'i_')
+df_lab = df_t024x.filter(F.col("spras") == 'E').select(
+    F.col("labor").alias("i_labor"), 
+    F.col("lbtxt").alias("i_LabOffice") # <--- Renamed
+)
+
+# 10. Production (Prefix 'act_')
+df_act = df_afvc.groupBy("aufpl").agg(F.min("vornr").alias("vornr")) \
+    .join(df_afvc, ["aufpl", "vornr"], "left") \
+    .select(F.col("aufpl").alias("act_aufpl"), F.col("larnt").alias("act_larnt"))
+
+# 11. Partners (Prefix 'c_')
+df_c = df_vbpa.filter((F.col("posnr") == '000000') & (F.col("parvw") == 'WE')) \
+    .join(df_kna1, df_vbpa.kunnr == df_kna1.kunnr) \
+    .select(
+        df_vbpa.vbeln.alias("c_vbeln"), 
+        df_vbpa.kunnr.alias("c_ShipTo"), 
+        df_kna1.name1.alias("c_ShipToName")
+    )
+
+# 12. Incoterms (Prefix 'hd_' and 'd_')
+df_hd = df_vbkd.filter(F.col("posnr") == '000000').select(F.col("vbeln").alias("hd_vbeln"), F.col("inco1").alias("hd_inco1"), F.col("kursk").alias("hd_kursk"), F.col("prsdt").alias("hd_prsdt"))
+df_d = df_vbkd.select(F.col("vbeln").alias("d_vbeln"), F.col("posnr").alias("d_posnr"), F.col("inco1").alias("d_inco1"), F.col("zterm").alias("d_zterm"), F.col("ihrez").alias("d_ihrez"))
+
+# 13. MARD (Prefix 'r_') to resolve QOH logic clearly
+df_mard_calc = df_mard.withColumn("r_QOH", F.coalesce(F.col("labst"), F.lit(0)) + F.coalesce(F.col("klabs"), F.lit(0)) + F.coalesce(F.col("kinsm"), F.lit(0))) \
+    .select(
+        F.col("werks").alias("r_werks"),
+        F.col("matnr").alias("r_matnr"),
+        F.col("lgort").alias("r_lgort"),
+        F.col("labst").alias("r_labst"),
+        F.col("klabs").alias("r_klabs"),
+        F.col("kinsm").alias("r_kinsm"),
+        F.col("r_QOH")
+    )
