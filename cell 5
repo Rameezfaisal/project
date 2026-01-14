@@ -1,77 +1,37 @@
-# ---------- Source tables ----------
-cv_nha_dtls_path          = "lakehouse.prd_gops_omat.cv_omat_obpn_nha_dtls"
-cv_make_nha_dtls_path     = "lakehouse.prd_gops_omat.cv_omat_obpn_make_nha_dtls"
-cv_mdkp_path              = "lakehouse.prd_global_ecc.cv_mdkp"
-cv_mdtb_path              = "lakehouse.prd_global_ecc.cv_mdtb"
-cv_mseg_path              = "lakehouse.prd_global_ecc.cv_mseg"
-cv_mkpf_path              = "lakehouse.prd_global_ecc.cv_mkpf"
-zt_spares_path            = "lakehouse.alex_custom.zt_csbg_spares_deliveries"
-cv_sql_so2_path           = "lakehouse.prd_gops_glis.cv_sql_so_2"
+---------------------------------------------------------------------------
+AnalysisException                         Traceback (most recent call last)
+Cell In[19], line 22
+      1 new_make_nha = (
+      2     nha.alias("a")
+      3     .join(
+   (...)
+     19     .withColumn("isprocessed", F.lit("N"))
+     20 )
+---> 22 new_make_nha.write.mode("append").saveAsTable(make_nha_target_path)
 
-# ---------- Target tables ----------
-make_nha_target_path     = "lakehouse.w_omat.omat_obpn_make_nha_dtls"
-dmd_cons_target_path     = "lakehouse.w_omat.omat_makenha_dmd_consumption_dtls"
-log_table_path           = "lakehouse.w_omat.omat_log_dtls"
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/readwriter.py:1586, in DataFrameWriter.saveAsTable(self, name, format, mode, partitionBy, **options)
+   1584 if format is not None:
+   1585     self.format(format)
+-> 1586 self._jwrite.saveAsTable(name)
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-
-
-
-
-
-
-today = F.current_date()
-
-from_date = F.add_months(today, -12)
-to_date   = F.add_months(today, 12)
-
-dt1wk = F.next_day(today, "Sun") - F.expr("interval 7 days")
-dt26wk = F.next_day(dt1wk + F.expr("interval 182 days"), "Sat")
-
-
-
-
-
-
-
-
-
-nha = spark.read.table(cv_nha_dtls_path)
-make_nha = spark.read.table(cv_make_nha_dtls_path)
-mdkp = spark.read.table(cv_mdkp_path)
-mdtb = spark.read.table(cv_mdtb_path)
-mseg = spark.read.table(cv_mseg_path)
-mkpf = spark.read.table(cv_mkpf_path)
-spares = spark.read.table(zt_spares_path)
-so2 = spark.read.table(cv_sql_so2_path)
-
-
-
-
-
-
-
-
-new_make_nha = (
-    nha.alias("a")
-    .join(
-        make_nha.select("cmpprtno","nha").alias("b"),
-        (F.col("a.cmpprtno")==F.col("b.cmpprtno")) & (F.col("a.nha")==F.col("b.nha")),
-        "left"
-    )
-    .where(
-        (F.col("a.cmpprtno") != F.col("a.nha")) &
-        F.col("b.cmpprtno").isNull() &
-        (~F.col("a.nha").like("%DELTA%")) &
-        (F.col("a.nha_status_inactive") != "X") &
-        (F.col("a.matkl").isin("M","MN","X")) &
-        (~F.col("a.mstae").isin("OB","OS","OP"))
-    )
-    .groupBy("a.cmpprtno","a.nha","a.level","a.matkl","a.mstae")
-    .agg(F.sum("a.cmpqpa").alias("cmpqpa"))
-    .withColumn("last_modified_on", F.current_date())
-    .withColumn("isprocessed", F.lit("N"))
-)
-
-new_make_nha.write.mode("append").saveAsTable(make_nha_target_path)
+AnalysisException: [DELTA_FAILED_TO_MERGE_FIELDS] Failed to merge fields 'cmpqpa' and 'cmpqpa'
