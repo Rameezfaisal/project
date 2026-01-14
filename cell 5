@@ -1,67 +1,11 @@
-Cell 6 — Manufacturing 26-Week Demand (MFGDMD26WK)
-Business purpose
-For every OB Parent → NHA, calculate:
-“How much manufacturing demand exists for this NHA in the next 26 weeks?”
-This uses: • Planned orders (MDKP)
-• Order lines (MDTB)
-• Only manufacturing plants
-• Only active demand
-• Only the next 26-week horizon
-This is future manufacturing load.
+today = F.current_date()
 
+from_date = F.add_months(today, -12)
+to_date   = F.add_months(today, 12)
 
+sap_weekday = (F.dayofweek(today) + 5) % 7
+dt1wk = F.date_sub(today, sap_weekday)
 
-
-
-
-mfg_dmd26wk = (
-    mdkp
-        .select(
-            F.col("dtnum").alias("dtnum"),
-            F.col("matnr").alias("d_matnr"),
-            F.col("plwrk").alias("plwrk")
-        )
-        .alias("d")
-    .join(
-        mknha
-            .select(
-                F.col("cmpprtno").alias("m_cmpprtno"),
-                F.col("nha").alias("m_nha")
-            )
-            .alias("m"),
-        F.col("d.d_matnr") == F.col("m.m_nha"),
-        "inner"
-    )
-    .join(
-        mdtb
-            .select(
-                F.col("dtnum").alias("f_dtnum"),
-                F.col("plumi").alias("plumi"),
-                F.col("mng01").alias("mng01"),
-                F.col("dat00").alias("dat00"),
-                F.col("delkz").alias("delkz")
-            )
-            .alias("f"),
-        F.col("d.dtnum") == F.col("f.f_dtnum"),
-        "inner"
-    )
-    .where(
-        F.col("f.plumi").isin("+", "-") &
-        ((F.col("d.plwrk") < 2001) | (F.col("d.plwrk") == 3120)) &
-        F.col("f.delkz").isin("AR", "SB") &
-        (F.col("f.dat00") >= dt1wk) &
-        (F.col("f.dat00") <= dt26wk)
-    )
-    .groupBy(
-        F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("d.d_matnr").alias("nha")
-    )
-    .agg(
-        F.sum(
-            F.when(F.col("f.plumi") == "-", F.col("f.mng01"))
-             .otherwise(-F.col("f.mng01"))
-        ).cast("int").alias("mfg_dmd")
-    )
-)
-
-mfg_dmd26wk.cache()
+dt26_base = F.date_add(dt1wk, 182)
+sap_weekday_26 = (F.dayofweek(dt26_base) + 5) % 7
+dt26wk = F.date_add(F.date_sub(dt26_base, sap_weekday_26), 6)
