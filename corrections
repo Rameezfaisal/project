@@ -1,81 +1,141 @@
-
-
-
-CREATE TABLE IF NOT EXISTS lakehouse.target_materialized_table (
-    booking                 STRING,
-    carrier                 STRING,
-    carrier_name            STRING,
-    dlvstatus               STRING,
-    etenr                   STRING NOT NULL, -- PK/Key
-    expectedqtycumulative   DECIMAL(13,3),
-    f1_vbeln                STRING,
-    frontload               STRING,
-    last_changed            TIMESTAMP,
-    lastpgidoc              STRING,
-    mard_kinsm              DECIMAL(13,3),
-    mard_klabs              DECIMAL(13,3),
-    mard_labst              DECIMAL(13,3),
-    mard_lgort              STRING,
-    mard_matnr              STRING,
-    mard_werks              STRING,
-    order_status            STRING,
-    opendlvdoc              STRING,
-    opendlvqty              DECIMAL(13,3),
-    pgidate                 DATE,
-    pgiqty                  DECIMAL(15,3),
-    poreceived              STRING,
-    posnr                   STRING NOT NULL, -- PK/Key
-    qtyshippedttline        DECIMAL(13,3),
-    shipto                  STRING,
-    shiptoname              STRING,
-    vbak_auart              STRING,
-    vbak_aufnr              STRING,
-    vbak_autlf              STRING,
-    vbak_bstnk              STRING,
-    vbak_erdat              DATE,
-    vbak_ernam              STRING,
-    vbak_faksk              STRING,
-    vbak_ihrez              STRING,
-    vbak_kunnr              STRING,
-    vbak_lifsk              STRING,
-    vbak_netwr              DECIMAL(15,2),
-    vbak_objnr              STRING,
-    vbak_vkorg              STRING,
-    vbak_vsnmr_v            STRING,
-    vbak_waerk              STRING,
-    vbap_abgru              STRING,
-    vbap_aedat              DATE,
-    vbap_arktx              STRING,
-    vbap_charg              STRING,
-    vbap_erdat              DATE,
-    vbap_ernam              STRING,
-    vbap_erzet              STRING, -- Mapped TIME to STRING for compatibility
-    vbap_faksp              STRING,
-    vbap_grkor              STRING,
-    vbap_kdmat              STRING,
-    vbap_kwmeng             DECIMAL(15,3),
-    vbap_lgort              STRING,
-    vbap_lprio              STRING,
-    vbap_matnr              STRING,
-    vbap_netpr              DECIMAL(11,2),
-    vbap_posex              STRING,
-    vbap_prodh              STRING,
-    vbap_vstel              STRING,
-    vbap_werks              STRING,
-    vbeln                   STRING NOT NULL, -- PK/Key
-    vbep_bmeng              DECIMAL(13,3),
-    vbep_edatu              DATE,
-    vbep_h_edatu            DATE,
-    vbep_lifsp              STRING,
-    vbep_mbdat              DATE,
-    vbuk_lfgsk              STRING,
-    vbuk_wbstk              STRING,
-    vbup_lfsta              STRING,
-    delvd_qty               DOUBLE
-) USING DELTA;
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
 
 
 
 
 
+# ---------- Source tables ----------
+cv_nha_dtls_path          = "lakehouse.prd_gops_omat.cv_omat_obpn_nha_dtls"
+cv_make_nha_dtls_path     = "lakehouse.prd_gops_omat.cv_omat_obpn_make_nha_dtls"
+cv_mdkp_path              = "lakehouse.prd_global_ecc.cv_mdkp"
+cv_mdtb_path              = "lakehouse.prd_global_ecc.cv_mdtb"
+cv_mseg_path              = "lakehouse.prd_global_ecc.cv_mseg"
+cv_mkpf_path              = "lakehouse.prd_global_ecc.cv_mkpf"
+zt_spares_path            = "lakehouse.alex_custom.zt_csbg_spares_deliveries"
+cv_sql_so2_path           = "lakehouse.prd_gops_glis.cv_sql_so_2"
+
+# ---------- Target tables ----------
+make_nha_target_path     = "lakehouse.w_omat.omat_obpn_make_nha_dtls"
+dmd_cons_target_path     = "lakehouse.w_omat.omat_makenha_dmd_consumption_dtls"
+log_table_path           = "lakehouse.w_omat.omat_log_dtls"
+
+
+
+
+
+
+
+
+today = F.current_date()
+
+from_date = F.add_months(today, -12)
+to_date   = F.add_months(today, 12)
+
+dt1wk = F.next_day(today, "Sun") - F.expr("interval 7 days")
+dt26wk = F.next_day(dt1wk + F.expr("interval 182 days"), "Sat")
+
+
+
+
+
+
+
+
+nha = spark.read.table(cv_nha_dtls_path)
+make_nha = spark.read.table(cv_make_nha_dtls_path)
+mdkp = spark.read.table(cv_mdkp_path)
+mdtb = spark.read.table(cv_mdtb_path)
+mseg = spark.read.table(cv_mseg_path)
+mkpf = spark.read.table(cv_mkpf_path)
+spares = spark.read.table(zt_spares_path)
+so2 = spark.read.table(cv_sql_so2_path)
+
+
+
+
+
+
+new_make_nha = (
+    nha.alias("a")
+    .join(
+        make_nha.select("cmpprtno","nha").alias("b"),
+        (F.col("a.cmpprtno")==F.col("b.cmpprtno")) & (F.col("a.nha")==F.col("b.nha")),
+        "left"
+    )
+    .where(
+        (F.col("a.cmpprtno") != F.col("a.nha")) &
+        F.col("b.cmpprtno").isNull() &
+        (~F.col("a.nha").like("%DELTA%")) &
+        (F.col("a.nha_status_inactive") != "X") &
+        (F.col("a.matkl").isin("M","MN","X")) &
+        (~F.col("a.mstae").isin("OB","OS","OP"))
+    )
+    .groupBy("a.cmpprtno","a.nha","a.level","a.matkl","a.mstae")
+    .agg(F.sum("a.cmpqpa").alias("cmpqpa"))
+    .withColumn("last_modified_on", F.current_date())
+    .withColumn("isprocessed", F.lit("N"))
+)
+
+new_make_nha.write.mode("append").saveAsTable(make_nha_target_path)
+
+
+
+
+
+
+
+
+mknha = (
+    spark.read.table(make_nha_target_path)
+    .filter("isprocessed='N'")
+    .select(
+        F.col("cmpprtno").alias("cmpprtno"),
+        F.col("nha").alias("nha")
+    )
+)
+
+
+
+
+
+
+mfg_dmd = (
+    mdkp.alias("d")
+    .join(mknha.alias("m"), F.col("d.matnr")==F.col("m.nha"))
+    .join(mdtb.alias("f"), "dtnum")
+    .where(
+        F.col("f.plumi").isin("+","-") &
+        ((F.col("d.plwrk")<2001)|(F.col("d.plwrk")==3120)) &
+        F.col("f.delkz").isin("AR","SB") &
+        (F.col("f.dat00").between(dt1wk, dt26wk))
+    )
+    .groupBy("m.cmpprtno","d.matnr")
+    .agg(
+        F.sum(F.when(F.col("f.plumi")=="-",F.col("f.mng01"))
+              .otherwise(-F.col("f.mng01"))).alias("mfg_dmd")
+    )
+)
+
+
+
+
+
+
+
+
+
+mfg_5yr = (
+    mseg.alias("b")
+    .join(mkpf.alias("d"), "mblnr")
+    .join(mknha.alias("a"), F.col("b.matnr")==F.col("a.nha"))
+    .where(
+        F.col("b.bwart").isin("261","262") &
+        (F.col("d.bldat") > F.date_sub(F.current_date(),365*5)) &
+        ((F.col("b.werks")<2001)|(F.col("b.werks")==3120))
+    )
+    .groupBy("a.cmpprtno","b.matnr")
+    .agg(F.sum(F.when(F.col("b.shkzg")=="S",-F.col("b.menge"))
+               .otherwise(F.col("b.menge"))).alias("mfg_5yrs"))
+)
