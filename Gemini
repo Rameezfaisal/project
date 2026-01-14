@@ -1,46 +1,100 @@
-AttributeError                            Traceback (most recent call last)
-Cell In[28], line 53
-     34 df_f2 = df_vbfa.filter(
-     35         (F.col("STUFE") == "00") & 
-     36         (F.col("VBTYP_N").isin("T", "J")) & 
-   (...)
-     45         ).alias("PGIQty")
-     46     ).alias("f2")
-     48 # 5. Subquery 'l': Delivery Status (LIPS/LIKP Join)
-     49 # Logic: Aggregates on Preceding Doc (VGBEL/VGPOS)
-     50 df_l = df_lips.filter((F.col("VGBEL") != "") & 
-     51                       (~F.col("VGBEL").like("4%")) & 
-     52                       (~F.col("VGBEL").like("3%"))) \
----> 53     .join(df_likp, df_lips.VBELN == df_likp.VBELN) \
-     54     .filter(df_likp.WADAT_IST != "") \
-     55     .groupBy(df_lips.VGBEL, df_lips.VGPOS) \
-     56     .agg(
-     57         F.max(df_lips.VBELN).alias("OpenDlvDoc"),
-     58         F.sum(df_lips.LGMNG).alias("OpenDlvQty"),
-     59         F.sum(F.when(df_likp.WADAT_IST == "", 0).otherwise(df_lips.LFIMG)).alias("QtyShippedTtLine"),
-     60         F.max(df_likp.WADAT_IST).alias("PGIDate")
-     61     ) \
-     62     .withColumn("DlvStatus", F.when(F.col("PGIDate") == "", "Created").otherwise("Shipped")) \
-     63     .select(F.col("VGBEL").alias("l_VGBEL"), 
-     64             F.col("VGPOS").alias("l_VGPOS"), 
-     65             "OpenDlvDoc", "OpenDlvQty", "QtyShippedTtLine", "PGIDate", "DlvStatus") \
-     66     .alias("l")
-     68 # 6. Subquery 'x': Exchange Rates
-     69 # Logic: Get Min GDATU for USD to find the active rate
-     70 df_tcurr_usd = df_tcurr.filter(F.col("TCURR") == "USD")
+# ------- CELL 4 (CORRECTED): Pre-Calculations (The "CTEs") --------
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3129, in DataFrame.__getattr__(self, name)
-   3096 """Returns the :class:`Column` denoted by ``name``.
-   3097 
-   3098 .. versionadded:: 1.3.0
-   (...)
-   3126 +---+
-   3127 """
-   3128 if name not in self.columns:
--> 3129     raise AttributeError(
-   3130         "'%s' object has no attribute '%s'" % (self.__class__.__name__, name)
-   3131     )
-   3132 jc = self._jdf.apply(name)
-   3133 return Column(jc)
+# 1. Subquery 't': Cumulative Committed Qty (Replaces VBEP Self-Join)
+w_cum = Window.partitionBy("VBELN", "POSNR").orderBy("ETENR").rowsBetween(Window.unboundedPreceding, Window.currentRow)
 
-AttributeError: 'DataFrame' object has no attribute 'VBELN'
+df_t = df_vbep.filter(F.col("BMENG") > 0) \
+    .select("VBELN", "POSNR", "ETENR", "BMENG") \
+    .withColumn("ExpectedQtyCumulative", F.sum("BMENG").over(w_cum)) \
+    .alias("t")
+
+# 2. Subquery 'h': Schedule Line 0001 only (Request Date)
+df_h = df_vbep.filter(F.col("ETENR") == "0001") \
+    .select(F.col("VBELN").alias("h_VBELN"), 
+            F.col("POSNR").alias("h_POSNR"), 
+            F.col("EDATU").alias("RequestDate")) \
+    .alias("h")
+
+# 3. Subquery 'f1': Delivered Qty (VBFA Aggregation)
+df_f1 = df_vbfa.filter((F.col("STUFE") == "00") & (F.col("VBTYP_N").isin("T", "J"))) \
+    .groupBy(F.col("VBELV").alias("f1_VBELV"), F.col("POSNV").alias("f1_POSNV")) \
+    .agg(
+        F.sum(
+            F.when((F.col("VBTYP_N") == "R") & (F.col("PLMIN") == "+"), F.coalesce(F.col("RFMNG_FLO"), F.lit(0)))
+            .when(F.col("VBTYP_N") == "h", F.coalesce(F.col("RFMNG_FLO"), F.lit(0)) * -1)
+            .otherwise(0)
+        ).alias("delvd_qty")
+    ).alias("f1")
+
+# 4. Subquery 'f2': PGI Qty and Last PGI Doc (VBFA Aggregation)
+df_f2 = df_vbfa.filter(
+        (F.col("STUFE") == "00") & 
+        (F.col("VBTYP_N").isin("T", "J")) & 
+        (F.col("VBELN").like("49%"))
+    ).groupBy(F.col("VBELV").alias("f2_VBELV"), F.col("POSNV").alias("f2_POSNV")) \
+    .agg(
+        F.max("VBELN").alias("LastPGIDoc"),
+        F.sum(
+            F.when(F.col("VBTYP_N") == "R", F.coalesce(F.col("RFMNG"), F.lit(0)))
+            .when(F.col("VBTYP_N") == "h", F.coalesce(F.col("RFMNG"), F.lit(0)) * -1)
+            .otherwise(0)
+        ).alias("PGIQty")
+    ).alias("f2")
+
+# 5. Subquery 'l': Delivery Status (LIPS/LIKP Join)
+# Logic: Aggregates on Preceding Doc (VGBEL/VGPOS)
+# FIXED: Using explicit aliasing and F.col() to avoid AttributeError
+df_lips_tmp = df_lips.alias("lips_tmp")
+df_likp_tmp = df_likp.alias("likp_tmp")
+
+df_l = df_lips_tmp.filter((F.col("VGBEL") != "") & 
+                      (~F.col("VGBEL").like("4%")) & 
+                      (~F.col("VGBEL").like("3%"))) \
+    .join(df_likp_tmp, F.col("lips_tmp.VBELN") == F.col("likp_tmp.VBELN")) \
+    .filter(F.col("likp_tmp.WADAT_IST") != "") \
+    .groupBy(F.col("lips_tmp.VGBEL"), F.col("lips_tmp.VGPOS")) \
+    .agg(
+        F.max(F.col("lips_tmp.VBELN")).alias("OpenDlvDoc"),
+        F.sum(F.col("lips_tmp.LGMNG")).alias("OpenDlvQty"),
+        F.sum(F.when(F.col("likp_tmp.WADAT_IST") == "", 0).otherwise(F.col("lips_tmp.LFIMG"))).alias("QtyShippedTtLine"),
+        F.max(F.col("likp_tmp.WADAT_IST")).alias("PGIDate")
+    ) \
+    .withColumn("DlvStatus", F.when(F.col("PGIDate") == "", "Created").otherwise("Shipped")) \
+    .select(F.col("VGBEL").alias("l_VGBEL"), 
+            F.col("VGPOS").alias("l_VGPOS"), 
+            "OpenDlvDoc", "OpenDlvQty", "QtyShippedTtLine", "PGIDate", "DlvStatus") \
+    .alias("l")
+
+# 6. Subquery 'x': Exchange Rates
+df_tcurr_usd = df_tcurr.filter(F.col("TCURR") == "USD")
+df_bc = df_tcurr_usd.groupBy("FCURR", "TCURR").agg(F.min("GDATU").alias("min_gdatu"))
+
+df_x = df_tcurr.alias("ab").join(df_bc.alias("bc"), 
+    (F.col("ab.FCURR") == F.col("bc.FCURR")) & 
+    (F.col("ab.TCURR") == F.col("bc.TCURR")) & 
+    (F.col("ab.GDATU") == F.col("bc.min_gdatu"))
+).select(
+    F.col("ab.FCURR").alias("x_FCURR"), 
+    F.abs(F.col("ab.UKURS")).alias("UKURS2")
+).alias("x")
+
+# 7. Subquery 'c': ShipTo Party
+df_c = df_vbpa.alias("v").filter((F.col("POSNR") == "000000") & (F.col("PARVW") == "WE")) \
+    .join(df_kna1.alias("k"), F.col("v.KUNNR") == F.col("k.KUNNR")) \
+    .select(F.col("v.VBELN").alias("c_VBELN"), 
+            F.col("v.KUNNR").alias("ShipTo"), 
+            F.col("k.NAME1").alias("ShipToName")) \
+    .alias("c")
+
+# 8. Subquery 'j': JEST/TJ30T Statuses
+# FIXED: Using F.col() instead of df.col attribute access
+df_j = df_jest.filter(
+        F.col("STAT").isin("E0001", "E0004", "E0005", "E0008", "E0009") & 
+        (F.col("INACT") != "X")
+    ).join(df_tj30t, (F.col("STAT") == F.col("ESTAT")) & (F.col("STSMA") == "Z0000003") & (F.col("SPRAS") == "E"), "left") \
+    .groupBy("OBJNR") \
+    .agg(
+        F.max(F.when(F.col("STAT") == "E0008", "X").otherwise("")).alias("FrontLoad"),
+        F.max(F.when(F.col("STAT") == "E0009", "X").otherwise("")).alias("POReceived"),
+        F.max(F.when(F.col("STAT").isin("E0001", "E0004", "E0005"), F.col("TXT04")).otherwise("")).alias("Booking")
+    ).alias("j")
