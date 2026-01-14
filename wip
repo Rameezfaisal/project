@@ -1,1 +1,119 @@
 
+# CELL 6: Business Logic & Filtering (Replica of CV_SQL_SO)
+
+# --- 1. Define Logic for Quantities (Used in Filter) ---
+# Logic: Calculate Open Qty and PGI Qty based on Cumulative Expected Qty vs Delivered Qty
+# Note: referencing columns directly from 'prst' alias (e.g. "prst.bmeng")
+
+expr_pgi_qty = (
+    F.when(F.coalesce(F.col("prst.f1_delvd_qty"), F.lit(0)) >= F.coalesce(F.col("prst.e_ExpectedQtyCumulative"), F.lit(0)), 
+           F.coalesce(F.col("prst.bmeng"), F.lit(0)))
+     .when(F.coalesce(F.col("prst.f1_delvd_qty"), F.lit(0)) < F.coalesce(F.col("prst.e_ExpectedQtyCumulative"), F.lit(0)), 
+           F.greatest(
+               F.coalesce(F.col("prst.bmeng"), F.lit(0)) - (F.coalesce(F.col("prst.e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("prst.f1_delvd_qty"), F.lit(0))), 
+               F.lit(0)
+           ))
+     .otherwise(0)
+)
+
+expr_open_qty_val = (
+     F.when(F.coalesce(F.col("prst.e_ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("prst.f1_delvd_qty"), F.lit(0)), 0)
+      .when((F.coalesce(F.col("prst.e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("prst.f1_delvd_qty"), F.lit(0))) <= F.coalesce(F.col("prst.bmeng"), F.lit(0)),
+            F.coalesce(F.col("prst.e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("prst.f1_delvd_qty"), F.lit(0)))
+      .otherwise(F.coalesce(F.col("prst.bmeng"), F.lit(0)))
+)
+
+# --- 2. Define Filter Condition (Replica of WHERE clause) ---
+# Condition: History (Last 732 days) OR (Open Orders with specific criteria)
+
+cond_history = (F.col("prst.erdat") >= F.date_add(F.current_date(), -732))
+
+cond_is_open = (
+    (F.coalesce(F.col("prst.wbstk"), F.lit('')) != 'C') &
+    (F.coalesce(F.col("prst.abgru"), F.lit('')) == '') &
+    (F.coalesce(F.col("prst.lfsta"), F.lit('')) != '') &
+    (expr_open_qty_val > 0)
+)
+
+# Apply Filter: WERKS >= 1900 AND Exclude specific Order Types AND (History OR Open)
+df_filtered = df_joined.filter(
+    (F.col("prst.werks") >= '1900') & 
+    (~F.col("prst.auart").isin('ZVC', 'ZR07')) & 
+    (cond_history | cond_is_open)
+)
+
+# --- 3. Define Business Columns (Region, Groups, Prices) ---
+
+# OrderGroup
+col_OrderGroup = (
+    F.when(F.col("prst.auart").isin('ZAS','ZAV','ZFD','ZO11','ZSA','ZSB','ZSR','RK','ZCR1','ZDR1'), 'OTH')
+     .when(F.col("prst.auart").isin('AG','ZQ01','ZQ03','ZQ04','ZQFO','ZQIS','ZQUP','ZQUX','ZUQT'), 'QT')
+     .when(F.col("prst.auart").isin('ZO03','ZRA1','ZSO1'), 'RPO')
+     .when(F.col("prst.auart").isin('ZR11','ZR03','ZR04','ZR05','ZR08','ZR4B','ZUPC','ZUPR','ZFOC'), 'RTN')
+     .when(F.col("prst.auart").isin('ZO09','ZO12','ZSD','TA','ZCON','ZFO','ZSO','ZUP','ZUPX','ZO04'), 'SO')
+     .otherwise('SO')
+)
+
+# BillingBlk (Checks Header FAKSK then Item FAKSP)
+col_BillingBlk = (
+    F.when(F.coalesce(F.col("prst.faksk"), F.lit('')) != '', F.concat(F.lit("BLK(H) "), F.col("prst.faksk")))
+     .when(F.coalesce(F.col("prst.faksp"), F.lit('')) != '', F.concat(F.lit("BLK(L) "), F.col("prst.faksp")))
+     .otherwise('')
+)
+
+# VendorSloc (Logic involving WERKS 3000)
+col_VendorSloc = (
+    F.when((F.coalesce(F.col("prst.lgort"), F.lit('')) == '') & (F.col("prst.werks") == '3000'), '0030')
+     .when(F.coalesce(F.col("prst.lgort"), F.lit('')) != '', F.col("prst.lgort"))
+     .otherwise('0010')
+)
+
+# Region (Based on Sales Org VKORG)
+col_Region = (
+    F.when(F.col("prst.vkorg") == '9000', 'NA')
+     .when(F.col("prst.vkorg").between('2000', '2900'), 'EU')
+     .when(F.col("prst.vkorg").between('3000', '3001'), 'JP')
+     .when(F.col("prst.vkorg") == '3100', 'TW')
+     .when(F.col("prst.vkorg") == '3200', 'KR')
+     .when(F.col("prst.vkorg").isin('3300', '3600'), 'SEA')
+     .when(F.col("prst.vkorg").isin('3400', '3410', '1000'), 'CN')
+     .otherwise('NEW')
+)
+
+# ToolType (Based on Labor)
+col_ToolType = (
+    F.when(F.col("m.labor") == '023', 'SPIN')
+     .when(F.col("m.labor") == '024', 'DEP')
+     .otherwise('ETCH+')
+)
+
+# Prices (USD Calculation)
+# Logic: If Currency is JPY/TWD/KRW, Price = Price * 100. Then multiply by Exchange Rate (hd_kursk).
+# If Rate is 0 or Curr is USD, Rate = 1.
+rate_calc = F.when((F.coalesce(F.col("hd_inco.hd_kursk"), F.lit(0)) == 0) | (F.col("prst.waerk") == 'USD'), 1).otherwise(F.col("hd_inco.hd_kursk"))
+
+col_UnitPriceUSD = (
+    (F.when(F.col("prst.waerk").isin('JPY','TWD'), F.col("prst.netpr") * 100).otherwise(F.col("prst.netpr"))) * rate_calc
+)
+
+col_GrossSOPriceUSD = (
+    F.col("prst.netwr") * F.when(F.col("prst.waerk").isin('JPY','TWD'), rate_calc * 100).otherwise(rate_calc)
+)
+
+# --- 4. Apply Calculations to DataFrame ---
+# We keep all columns ("*") and add the calculated ones with "calc_" prefix for safety in Cell 7.
+df_final_logic = df_filtered.select(
+    "*", 
+    col_OrderGroup.alias("calc_OrderGroup"),
+    col_BillingBlk.alias("calc_BillingBlk"),
+    col_VendorSloc.alias("calc_VendorSloc"),
+    col_Region.alias("calc_Region"),
+    col_ToolType.alias("calc_ToolType"),
+    col_UnitPriceUSD.alias("calc_UnitPriceUSD"),
+    col_GrossSOPriceUSD.alias("calc_GrossSOPriceUSD"),
+    expr_pgi_qty.alias("calc_PGIQty"),
+    F.when(cond_is_open, expr_open_qty_val).otherwise(0).alias("calc_OpenQty"),
+    F.when(cond_is_open, 'Open').otherwise('Closed').alias("calc_OrderStatus")
+)
+
+print("Cell 6 Complete: Business Logic applied. Rows filtered.")
