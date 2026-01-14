@@ -1,6 +1,7 @@
-# CELL 6: Final Selection & Calculations (Comprehensive Column List)
+# CELL 6: Business Logic Calculations (Replica of CV_SQL_SO)
 
-# 1. PGI Qty Logic
+# --- 1. Base Logic for Status & Quantities ---
+# PGI Qty
 expr_pgi_qty = (
     F.when(F.coalesce(F.col("f1_delvd_qty"), F.lit(0)) >= F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)), 
            F.coalesce(F.col("e.bmeng"), F.lit(0)))
@@ -12,7 +13,7 @@ expr_pgi_qty = (
      .otherwise(0)
 )
 
-# 2. Open Qty Logic
+# Open Qty (Internal Calculation)
 expr_open_qty_val = (
      F.when(F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("f1_delvd_qty"), F.lit(0)), 0)
       .when((F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) <= F.coalesce(F.col("e.bmeng"), F.lit(0)),
@@ -20,249 +21,263 @@ expr_open_qty_val = (
       .otherwise(F.coalesce(F.col("e.bmeng"), F.lit(0)))
 )
 
-# 3. Status Check Logic
-expr_is_open_status = (
+# Order Status Condition
+cond_is_open = (
     (F.coalesce(F.col("u.wbstk"), F.lit('')) != 'C') &
     (F.coalesce(F.col("p.abgru"), F.lit('')) == '') &
     (F.coalesce(F.col("b.lfsta"), F.lit('')) != '') &
     (expr_open_qty_val > 0)
 )
 
+# --- 2. Define Complex Columns ---
+
+# OrderGroup
+col_OrderGroup = (
+    F.when(F.col("a.auart").isin('ZAS','ZAV','ZFD','ZO11','ZSA','ZSB','ZSR','RK','ZCR1','ZDR1'), 'OTH')
+     .when(F.col("a.auart").isin('AG','ZQ01','ZQ03','ZQ04','ZQFO','ZQIS','ZQUP','ZQUX','ZUQT'), 'QT')
+     .when(F.col("a.auart").isin('ZO03','ZRA1','ZSO1'), 'RPO')
+     .when(F.col("a.auart").isin('ZR11','ZR03','ZR04','ZR05','ZR08','ZR4B','ZUPC','ZUPR','ZFOC'), 'RTN')
+     .when(F.col("a.auart").isin('ZO09','ZO12','ZSD','TA','ZCON','ZFO','ZSO','ZUP','ZUPX','ZO04'), 'SO')
+     .otherwise('SO')
+)
+
+# BillingBlk
+col_BillingBlk = (
+    F.when(F.coalesce(F.col("a.faksk"), F.lit('')) != '', F.concat(F.lit("BLK(H) "), F.col("a.faksk")))
+     .when(F.coalesce(F.col("p.faksp"), F.lit('')) != '', F.concat(F.lit("BLK(L) "), F.col("p.faksp")))
+     .otherwise('')
+)
+
+# VendorSloc
+col_VendorSloc = (
+    F.when((F.coalesce(F.col("p.lgort"), F.lit('')) == '') & (F.col("p.werks") == '3000'), '0030')
+     .when(F.coalesce(F.col("p.lgort"), F.lit('')) != '', F.col("p.lgort"))
+     .otherwise('0010')
+)
+
+# Region
+col_Region = (
+    F.when(F.col("a.vkorg") == '9000', 'NA')
+     .when(F.col("a.vkorg").between('2000', '2900'), 'EU')
+     .when(F.col("a.vkorg").between('3000', '3001'), 'JP')
+     .when(F.col("a.vkorg") == '3100', 'TW')
+     .when(F.col("a.vkorg") == '3200', 'KR')
+     .when(F.col("a.vkorg").isin('3300', '3600'), 'SEA')
+     .when(F.col("a.vkorg").isin('3400', '3410', '1000'), 'CN')
+     .otherwise('NEW')
+)
+
+# ToolType
+col_ToolType = (
+    F.when(F.col("m.labor") == '023', 'SPIN')
+     .when(F.col("m.labor") == '024', 'DEP')
+     .otherwise('ETCH+')
+)
+
+# Prices (USD Calculation)
+# Logic: If JPY/TWD/KRW -> Price * 100. Then convert to USD using Header Rate (hd.kursk).
+# Handle Division by Zero for Exchange Rate if needed, though Script uses multiplication for UnitPriceUSD
+rate_calc = F.when((F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0) | (F.col("a.waerk") == 'USD'), 1).otherwise(F.col("hd_kursk"))
+
+col_UnitPriceUSD = (
+    (F.when(F.col("a.waerk").isin('JPY','TWD'), F.col("p.netpr") * 100).otherwise(F.col("p.netpr"))) * rate_calc
+)
+
+col_GrossSOPriceUSD = (
+    F.col("a.netwr") * F.when(F.col("a.waerk").isin('JPY','TWD'), rate_calc * 100).otherwise(rate_calc)
+)
+
+# --- 3. Apply Logic to DataFrame ---
 df_final_logic = df_filtered.select(
-    # --- Identifiers ---
+    # Passthrough the aliases needed for calculations
+    "*", 
+    col_OrderGroup.alias("calc_OrderGroup"),
+    col_BillingBlk.alias("calc_BillingBlk"),
+    col_VendorSloc.alias("calc_VendorSloc"),
+    col_Region.alias("calc_Region"),
+    col_ToolType.alias("calc_ToolType"),
+    col_UnitPriceUSD.alias("calc_UnitPriceUSD"),
+    col_GrossSOPriceUSD.alias("calc_GrossSOPriceUSD"),
+    expr_pgi_qty.alias("calc_PGIQty"),
+    F.when(cond_is_open, expr_open_qty_val).otherwise(0).alias("calc_OpenQty"),
+    F.when(cond_is_open, 'Open').otherwise('Closed').alias("calc_OrderStatus")
+)
+
+
+
+
+
+
+
+
+
+
+
+# CELL 7: Final Projection (107 Columns - Exact Replica) & Write
+
+df_final_107 = df_final_logic.select(
+    # --- 1. Status & Grouping ---
+    F.col("calc_OrderStatus").alias("OrderStatus"),
+    F.col("calc_OrderGroup").alias("OrderGroup"),
     F.col("a.vbeln").alias("Order"),
     F.expr("ltrim('0', a.vbeln)").alias("OrderWZ"),
     F.col("p.posnr").alias("Line"),
     F.expr("ltrim('0', p.posnr)").alias("LineWZ"),
     F.col("e.etenr").alias("ScheduleLine"),
     F.expr("ltrim('0', e.etenr)").alias("ScheduleLineWZ"),
-    
-    # --- Statuses ---
-    F.when(expr_is_open_status, 'Open').otherwise('Closed').alias("OrderStatus"),
     F.col("a.auart").alias("OrderType"),
-
-    # --- Dates ---
+    
+    # --- 2. Dates & Times ---
+    F.col("p.abgru").alias("RejectionCodeLine"),
     F.col("a.erdat").alias("CreationDate"),
     F.col("p.erdat").alias("LineItemCreationDate"),
     F.col("p.erzet").alias("LineItemCreationTime"),
     F.col("h_edatu").alias("RequestDate"),
     F.col("e.edatu").alias("DeliveryDueDate"),
+    F.lit(None).cast("string").alias("StatRelvDate"),
+    F.lit(None).cast("string").alias("ItemDeliveryDate"),
     
-    # --- Quantities ---
+    # --- 3. Blocks ---
+    F.col("a.lifsk").alias("HeaderDlvBlk"),
+    F.col("e.lifsp").alias("ItemDlvBlk"),
+    F.col("calc_BillingBlk").alias("BillingBlk"),
+    
+    # --- 4. Quantities ---
     F.col("p.kwmeng").alias("OrderLineQty"),
     F.col("e.bmeng").alias("CommittedQty"),
-    expr_pgi_qty.alias("PGIQty"),
-    F.when(expr_is_open_status, expr_open_qty_val).otherwise(0).alias("OpenQty"),
+    F.col("calc_PGIQty").alias("PGIQty"),
+    F.lit(None).cast("string").alias("Intransit"),
+    F.lit(None).cast("string").alias("GRQty"),
+    F.col("calc_OpenQty").alias("OpenQty"),
     
-    # --- Inventory ---
+    # --- 5. Inventory ---
     (F.coalesce(F.col("r_labst"), F.lit(0)) + F.coalesce(F.col("r_kinsm"), F.lit(0))).alias("OnHandQty"),
     F.col("r_klabs").alias("VendorOwned"),
-    F.when(F.coalesce(F.col("e.bmeng"), F.lit(0)) < F.coalesce(F.col("r_QOH"), F.lit(0)), F.coalesce(F.col("e.bmeng"), F.lit(0))) 
-     .otherwise(F.coalesce(F.col("r_QOH"), F.lit(0))).alias("AvailToShip"), 
-    
-    # --- Pre-Calcs ---
-    F.col("l_OpenDlvDoc").alias("LastDlvDoc"), 
-    F.col("l_OpenDlvQty").alias("LastDlvQty"), 
+    F.when(F.coalesce(F.col("e.bmeng"), F.lit(0)) < F.coalesce(F.col("r_QOH"), F.lit(0)), F.coalesce(F.col("e.bmeng"), F.lit(0)))
+     .otherwise(F.coalesce(F.col("r_QOH"), F.lit(0))).alias("AvailToShip"),
+     
+    # --- 6. Delivery Info ---
+    F.col("l_OpenDlvDoc").alias("LastDlvDoc"),
+    F.col("l_OpenDlvQty").alias("LastDlvQty"),
+    F.col("l_QtyShippedTtLine").alias("QtyShippedTtLine"),
+    F.lit(None).cast("string").alias("QtyNetReceivedLine"),
     F.col("l_DlvStatus").alias("LastDlvStatus"),
     
-    # --- Partners ---
+    # --- 7. Partners ---
+    F.lit(None).cast("string").alias("PurchaseOrg"),
     F.col("a.vkorg").alias("SalesOrg"),
     F.col("a.kunnr").alias("SoldTo"),
+    F.expr("ltrim('0', a.kunnr)").alias("SoldToWZ"),
+    F.col("k_name1").alias("SoldToName"), # Ensure Cell 5 aliases df_kna1 to 'k' or fix here
     F.col("c_ShipTo").alias("ShipTo"),
+    F.expr("ltrim('0', c_ShipTo)").alias("ShipToWZ"),
     F.col("c_ShipToName").alias("ShipToName"),
+    
+    # --- 8. Plant / Part ---
     F.col("p.werks").alias("VendorPlant"),
+    F.col("calc_VendorSloc").alias("VendorSloc"),
+    F.col("p.vstel").alias("ShippingPoint"),
+    F.lit(None).cast("string").alias("ReceivingPlant"),
+    F.lit(None).cast("string").alias("ReceivingSloc"),
+    F.col("p.matnr").alias("Part"),
+    F.col("p.arktx").alias("PartDescription"),
+    F.col("pp_Consumable").alias("ConsumableFlag"),
+    F.col("v_agg.track").alias("Track"),
+    F.col("e.mbdat").alias("FirmCommitDate"),
+    F.col("a.autlf").alias("CompDlv"),
+    F.col("m.matkl").alias("MatGrp"),
+    F.col("ln_inco.ln_ihrez").alias("CSRep"),
+    F.col("a.bstnk").alias("CustomerPO"),
     
-    # --- Pricing ---
+    # --- 9. Pricing (Local) ---
+    F.when(F.col("a.waerk").isin('JPY','TWD','KRW'), F.col("p.netpr") * 100).otherwise(F.col("p.netpr")).alias("UnitPriceLocalCurr"),
+    (F.when(F.col("a.waerk").isin('JPY','TWD','KRW'), F.col("p.netpr") * 100).otherwise(F.col("p.netpr")) * F.col("e.bmeng")).alias("ExtPriceLocalCurr"),
     F.col("a.waerk").alias("DocCurrency"),
-    (F.col("a.netwr") * F.when(F.col("a.waerk").isin('JPY','TWD'), 
-            F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")) * 100)
-     .otherwise(F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")))
-    ).alias("GrossSOPriceUSD"),
     
-    # --- Flags & Carrier ---
+    # --- 10. Pricing (USD) ---
+    F.col("calc_UnitPriceUSD").alias("UnitPriceUSD"),
+    (F.col("calc_UnitPriceUSD") * F.col("e.bmeng")).alias("ExtPriceUSD"),
+    
+    # --- 11. Costs ---
+    F.coalesce(F.col("m2000.stprs_2000"), F.lit(0)).alias("StdCost"), # Logic simplification based on script (script just joins 2000)
+    (F.coalesce(F.col("m2000.stprs_2000"), F.lit(0)) * F.col("e.bmeng")).alias("ExtCost"),
+    F.lit('USD').alias("StdCurrency"),
+    
+    # --- 12. Misc 1 ---
+    F.when(F.col("p.lprio") == '00', '04').otherwise(F.col("p.lprio")).alias("DPrio"),
+    F.col("p.charg").alias("BatchNo"),
+    F.col("f2_LastPGIDoc").alias("PGIDoc"),
+    F.col("l_PGIDate").alias("PGIDate"),
+    F.col("a.objnr").alias("NCUPhase2"),
+    F.col("a.vsnmr_v").alias("FCID_SlsDocVersion"),
+    F.col("i_LabOffice").alias("LabOffice"),
+    F.col("z.dispo").alias("MRPV"),
+    F.lit(None).cast("string").alias("MRPC"),
+    F.col("p.grkor").alias("DlvGrp"),
+    F.lit(None).cast("string").alias("DlvCreationDate"),
+    F.col("q.qmnum").alias("SrvcNotif"),
+    
+    # --- 13. JEST Flags ---
     F.col("j_FrontLoad").alias("FrontLoad"),
     F.col("j_POReceived").alias("POReceived"),
     F.col("j_Booking").alias("Booking"),
-    F.col("i_LabOffice").alias("LabOffice"),
+    
+    # --- 14. Misc 2 ---
+    F.col("p.prodh").alias("ProdHier"),
+    F.lit(None).cast("string").alias("STOItemText"),
+    F.lit(None).cast("string").alias("MaterialMemo"),
+    F.col("z.ekgrp").alias("PurchaseGrp"),
+    F.col("m.mstae").alias("XPlantStatus"),
+    F.col("p.kdmat").alias("CustomerMaterial"),
+    F.col("p.ernam").alias("LineChangedBy"),
+    
+    # --- 15. Incoterms & Metadata ---
+    F.coalesce(F.col("ln_inco.ln_inco1"), F.col("hd_inco.hd_inco1")).alias("Incoterms"),
+    F.col("a.ihrez").alias("CsOwner"),
+    F.col("a.ernam").alias("CreatedBy"),
+    F.col("a.aufnr").alias("AssocServOrd"),
+    F.col("p.aedat").alias("LinePrevChangeDate"),
+    
+    # --- 16. Exchange Rate & Region ---
+    F.when(F.col("a.waerk") == 'KRW', (1 / F.col("hd_kursk")) * 100).otherwise(1 / F.col("hd_kursk")).alias("ExchangeRate"),
+    F.col("hd_prsdt").cast("string").alias("PricingDate"),
+    F.col("calc_Region").alias("Region"),
+    
+    # --- 17. Tool & Flags ---
+    F.col("calc_ToolType").alias("ToolType"),
+    
+    F.when((F.current_date() >= F.col("e.edatu")) & (F.col("j_POReceived") == 'X'), 'True').otherwise('False').alias("ShipmentDueFlag"),
+    
+    F.col("calc_GrossSOPriceUSD").alias("GrossSOPriceUSD"),
+    
+    F.when(F.current_date() >= F.col("e.edatu"), 'True').otherwise('False').alias("DeliveryDueFlag"),
+    F.col("p.posex").alias("CustomerPoLine"),
+    F.lit(None).cast("string").alias("Cancellation"),
+    F.lit(None).cast("string").alias("CancellationIndicatorFlag"),
+    
     F.col("xy_carrier").alias("Carrier"),
     F.col("xy_carrier_name").alias("CarrierName"),
-
-    # --- Keys for Write ---
-    F.col("a.vbeln"),
-    F.col("p.posnr"),
-    F.col("e.etenr"),
-    
-    # --- FULL RAW COLUMN MAPPING (Including newly added ones) ---
-    F.col("a.auart").alias("vbak_auart"),
-    F.col("a.aufnr").alias("vbak_aufnr"),     # Added
-    F.col("a.autlf").alias("vbak_autlf"),
-    F.col("a.bstnk").alias("vbak_bstnk"),     # Added
-    F.col("a.erdat").alias("vbak_erdat"),
-    F.col("a.ernam").alias("vbak_ernam"),     # Added
-    F.col("a.faksk").alias("vbak_faksk"),     # Added
-    F.col("a.ihrez").alias("vbak_ihrez"),     # Added
-    F.col("a.kunnr").alias("vbak_kunnr"),
-    F.col("a.lifsk").alias("vbak_lifsk"),     # Added
-    F.col("a.netwr").alias("vbak_netwr"),
-    F.col("a.objnr").alias("vbak_objnr"),     # Added
-    F.col("a.vkorg").alias("vbak_vkorg"),
-    F.col("a.vsnmr_v").alias("vbak_vsnmr_v"), # Added
-    F.col("a.waerk").alias("vbak_waerk"),
-    
-    F.col("p.abgru").alias("vbap_abgru"),
-    F.col("p.aedat").alias("vbap_aedat"),     # Added
-    F.col("p.arktx").alias("vbap_arktx"),     # Added
-    F.col("p.charg").alias("vbap_charg"),     # Added
-    F.col("p.erdat").alias("vbap_erdat"),     # Already added previously
-    F.col("p.ernam").alias("vbap_ernam"),     # Added
-    F.col("p.erzet").alias("vbap_erzet"),
-    F.col("p.faksp").alias("vbap_faksp"),     # Added
-    F.col("p.grkor").alias("vbap_grkor"),     # Added
-    F.col("p.kdmat").alias("vbap_kdmat"),     # Added
-    F.col("p.kwmeng").alias("vbap_kwmeng"),
-    F.col("p.lgort").alias("vbap_lgort"),
-    F.col("p.lprio").alias("vbap_lprio"),     # Added
-    F.col("p.matnr").alias("vbap_matnr"),
-    F.col("p.netpr").alias("vbap_netpr"),
-    F.col("p.posex").alias("vbap_posex"),
-    F.col("p.prodh").alias("vbap_prodh"),     # Added
-    F.col("p.vstel").alias("vbap_vstel"),     # Added
-    F.col("p.werks").alias("vbap_werks"),
-    
-    F.col("e.bmeng").alias("vbep_bmeng"),
-    F.col("e.edatu").alias("vbep_edatu"),
-    F.col("h_edatu").alias("vbep_h_edatu"),
-    F.col("e.lifsp").alias("vbep_lifsp"),     # Added
-    F.col("e.mbdat").alias("vbep_mbdat"),
-    
-    F.col("u.lfgsk").alias("vbuk_lfgsk"),
-    F.col("u.wbstk").alias("vbuk_wbstk"),
-    F.col("b.lfsta").alias("vbup_lfsta"),
-    
-    # --- Extra Calcs for Write ---
-    F.col("f1_delvd_qty").alias("delvd_qty"),
-    F.col("e_ExpectedQtyCumulative").alias("expectedqtycumulative"),
-    F.col("f2_LastPGIDoc").alias("lastpgidoc"),
-    F.col("l_OpenDlvDoc").alias("opendlvdoc"),
-    F.col("l_OpenDlvQty").alias("opendlvqty"),
-    F.col("l_PGIDate").alias("pgidate"),
-    F.col("l_QtyShippedTtLine").alias("qtyshippedttline"),
-    F.col("f1_vbeln"),
-    
-    # --- MARD Passthroughs ---
-    F.col("r_kinsm").alias("mard_kinsm"),
-    F.col("r_klabs").alias("mard_klabs"),
-    F.col("r_labst").alias("mard_labst"),
-    F.col("r_lgort").alias("mard_lgort"),
-    F.col("r_matnr").alias("mard_matnr"),
-    F.col("r_werks").alias("mard_werks")
+    F.col("ln_inco.ln_zterm").alias("CreditCheckBlock"),
+    F.when(F.col("p.abgru") != '', 'True').otherwise('False').alias("SOLineRejectionFlag"),
+    F.col("act.act_larnt").alias("ActivityType")
 )
 
-# Apply HighDollarFlag
-df_final = df_final_logic.withColumn(
+# Apply HighDollarFlag (Column 107)
+df_final_output = df_final_107.withColumn(
     "HighDollarFlag",
     F.when(F.col("GrossSOPriceUSD") > 50000, "True").otherwise("False")
 )
 
-
-
-
-
-
-# CELL 7: Final Schema Mapping & Write to Delta
-
-df_write = df_final.select(
-    # --- Business Columns ---
-    F.col("Booking").alias("booking"),
-    F.col("Carrier").alias("carrier"),
-    F.col("CarrierName").alias("carrier_name"),
-    F.col("LastDlvStatus").alias("dlvstatus"),
-    F.col("etenr"),
-    F.col("expectedqtycumulative").cast("decimal(13,3)"),
-    F.col("f1_vbeln"),
-    F.col("FrontLoad").alias("frontload"),
-    F.current_timestamp().alias("last_changed"),
-    F.col("lastpgidoc"),
-    F.col("mard_kinsm").cast("decimal(13,3)"),
-    F.col("mard_klabs").cast("decimal(13,3)"),
-    F.col("mard_labst").cast("decimal(13,3)"),
-    F.col("mard_lgort"),
-    F.col("mard_matnr"),
-    F.col("mard_werks"),
-    F.col("OrderStatus").alias("order_status"),
-    F.col("opendlvdoc"),
-    F.col("opendlvqty").cast("decimal(13,3)"),
-    F.col("pgidate"),
-    F.col("PGIQty").cast("decimal(15,3)").alias("pgiqty"),
-    F.col("POReceived").alias("poreceived"),
-    F.col("posnr"),
-    F.col("qtyshippedttline").cast("decimal(13,3)"),
-    F.col("ShipTo").alias("shipto"),
-    F.col("ShipToName").alias("shiptoname"),
-    
-    # --- VBAK Columns ---
-    F.col("vbak_auart"),
-    F.col("vbak_aufnr"),     # Added
-    F.col("vbak_autlf"),
-    F.col("vbak_bstnk"),     # Added
-    F.col("vbak_erdat"),
-    F.col("vbak_ernam"),     # Added
-    F.col("vbak_faksk"),     # Added
-    F.col("vbak_ihrez"),     # Added
-    F.col("vbak_kunnr"),
-    F.col("vbak_lifsk"),     # Added
-    F.col("vbak_netwr").cast("decimal(15,2)"),
-    F.col("vbak_objnr"),     # Added
-    F.col("vbak_vkorg"),
-    F.col("vbak_vsnmr_v"),   # Added
-    F.col("vbak_waerk"),
-    
-    # --- VBAP Columns ---
-    F.col("vbap_abgru"),
-    F.col("vbap_aedat"),     # Added
-    F.col("vbap_arktx"),     # Added
-    F.col("vbap_charg"),     # Added
-    F.col("vbap_erdat"),
-    F.col("vbap_ernam"),     # Added
-    F.col("vbap_erzet"), 
-    F.col("vbap_faksp"),     # Added
-    F.col("vbap_grkor"),     # Added
-    F.col("vbap_kdmat"),     # Added
-    F.col("vbap_kwmeng").cast("decimal(15,3)"),
-    F.col("vbap_lgort"),
-    F.col("vbap_lprio"),     # Added
-    F.col("vbap_matnr"),
-    F.col("vbap_netpr").cast("decimal(11,2)"),
-    F.col("vbap_posex"),
-    F.col("vbap_prodh"),     # Added
-    F.col("vbap_vstel"),     # Added
-    F.col("vbap_werks"),
-    
-    # --- VBEP Columns ---
-    F.col("vbeln"),
-    F.col("vbep_bmeng").cast("decimal(13,3)"),
-    F.col("vbep_edatu"),
-    F.col("vbep_h_edatu"),
-    F.col("vbep_lifsp"),     # Added
-    F.col("vbep_mbdat"),
-    
-    # --- VBUK/VBUP Columns ---
-    F.col("vbuk_lfgsk"),
-    F.col("vbuk_wbstk"),
-    F.col("vbup_lfsta"),
-    
-    # --- Misc ---
-    F.col("delvd_qty").cast("double")
-)
-
-# Mandatory Safety Filter
-df_write_safe = df_write.filter("vbeln IS NOT NULL AND posnr IS NOT NULL AND etenr IS NOT NULL")
-
-# Write to Delta Table
-df_write_safe.write \
+# WRITE to Lakehouse (Base Table)
+df_final_output.write \
     .format("delta") \
     .mode("overwrite") \
     .option("overwriteSchema", "true") \
-    .saveAsTable(params["target"])
+    .saveAsTable(params["target"]) # e.g. "lakehouse.sales_order_v1"
 
-print(f"Successfully wrote {df_write_safe.count()} rows to {params['target']}")
+print(f"Successfully wrote {df_final_output.count()} rows with 107 columns to {params['target']}")
+
+
+
+
+
