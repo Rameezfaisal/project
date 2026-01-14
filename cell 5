@@ -1,163 +1,97 @@
-# CELL 4: Pre-Calculation & Aggregates (Final Logic - Deduplicates LFSTA)
+# ------- CELL 1 --------
 
-# --- 1. Helper Function ---
-def get_cols(df, alias, exclude_cols):
-    return [F.col(f"{alias}.{c}") for c in df.columns if c not in exclude_cols]
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from pyspark.sql.types import DecimalType, DoubleType, DateType, TimestampType
+from pyspark.sql import DataFrame
 
-# --- 2. MBEW ---
-df_mbew_2000 = df_mbew.filter(F.col("w.bwkey") == '2000').select(F.col("w.matnr"), F.col("w.stprs").alias("stprs_2000"))
-df_mbew_3120 = df_mbew.filter(F.col("w.bwkey") == '3120').select(F.col("w.matnr"), F.col("w.stprs").alias("stprs_3120"))
+# Standardize time parser
+spark.conf.set("spark.sql.legacy.timeParserPolicy", "CORRECTED")
 
-# --- 3. JEST ---
-df_j = df_jest.join(df_tj30t, df_jest["stat"] == df_tj30t["estat"], "inner") \
-    .filter(
-        (F.col("stat").isin('E0001', 'E0004', 'E0005', 'E0008', 'E0009')) &
-        (F.col("inact") != 'X') &
-        (F.col("stsma") == 'Z0000003') &
-        (F.col("spras") == 'E')
-    ) \
-    .groupBy("objnr") \
-    .agg(
-        F.max(F.when(F.col("stat") == 'E0008', 'X').otherwise('')).alias("FrontLoad"),
-        F.max(F.when(F.col("stat") == 'E0009', 'X').otherwise('')).alias("POReceived"),
-        F.max(F.when(F.col("stat").isin('E0001','E0004','E0005'), F.col("txt04")).otherwise('')).alias("Booking")
-    ).alias("j") \
-    .select(F.col("j.objnr").alias("j_objnr"), "FrontLoad", "POReceived", "Booking")
 
-# --- 4. LIPS/LIKP ---
-df_l = df_lips.join(df_likp, df_lips["vbeln"] == df_likp["vbeln"], "inner") \
-    .filter(
-        (F.col("lips.vgbel") != '') &
-        (~F.col("lips.vgbel").startswith('4')) &
-        (~F.col("lips.vgbel").startswith('3')) &
-        (F.col("likp.wadat_ist") != '')
-    ) \
-    .groupBy(F.col("lips.vgbel").alias("l_vbeln"), F.col("lips.vgpos").alias("l_posnr")) \
-    .agg(
-        F.max("lips.vbeln").alias("l_OpenDlvDoc"),
-        F.sum("lips.lgmng").alias("l_OpenDlvQty"),
-        F.sum(F.when(F.col("likp.wadat_ist") == '', 0).otherwise(F.col("lips.lfimg"))).alias("l_QtyShippedTtLine"),
-        F.max("likp.wadat_ist").alias("l_PGIDate"),
-        F.when(F.max("likp.wadat_ist") == '', 'Created').otherwise('Shipped').alias("l_DlvStatus")
-    )
 
-# --- 5. VBFA (f1) ---
-df_f1 = df_vbfa.filter(
-        (F.col("stufe") == '00') & 
-        (F.col("vbtyp_n").isin('T', 'J'))
-    ) \
-    .groupBy(F.col("vbelv").alias("f1_vbeln"), F.col("posnv").alias("f1_posnr")) \
-    .agg(
-        F.sum(
-            F.when((F.col("vbtyp_n") == 'R') & (F.col("plmin") == '+'), F.coalesce(F.col("rfmng_flo"), F.lit(0)))
-             .when(F.col("vbtyp_n") == 'h', F.coalesce(F.col("rfmng_flo"), F.lit(0)) * -1)
-             .otherwise(0)
-        ).alias("f1_delvd_qty")
-    )
 
-# --- 6. VBFA (f2) ---
-df_f2 = df_vbfa.alias("a").join(df_vbfa.alias("b"), 
-        (F.col("a.vbeln") == F.col("b.vbelv")) & (F.col("a.posnn") == F.col("b.posnv")), 
-        "inner"
-    ) \
-    .filter(
-        (F.col("a.stufe") == '00') & 
-        (F.col("a.vbtyp_n").isin('T', 'J')) & 
-        (F.col("b.vbeln").startswith('49'))
-    ) \
-    .groupBy(F.col("a.vbelv").alias("f2_vbeln"), F.col("a.posnv").alias("f2_posnr")) \
-    .agg(
-        F.max("b.vbeln").alias("f2_LastPGIDoc"),
-        F.sum(
-            F.when(F.col("b.vbtyp_n") == 'R', F.coalesce(F.col("b.rfmng"), F.lit(0)))
-             .when(F.col("b.vbtyp_n") == 'h', F.coalesce(F.col("b.rfmng"), F.lit(0)) * -1)
-             .otherwise(0)
-        ).alias("f2_PGIQty")
-    )
+# ------- CELL 2 --------
 
-# --- 7. VBEP (t) ---
-df_t = df_vbep.alias("t1").join(df_vbep.alias("t2"),
-        (F.col("t1.vbeln") == F.col("t2.vbeln")) &
-        (F.col("t1.posnr") == F.col("t2.posnr")) &
-        (F.col("t1.etenr") >= F.col("t2.etenr")),
-        "inner"
-    ).filter(F.col("t1.bmeng") > 0) \
-    .groupBy(F.col("t1.vbeln").alias("t_vbeln"), F.col("t1.posnr").alias("t_posnr"), F.col("t1.etenr").alias("t_etenr")) \
-    .agg(F.sum("t2.bmeng").alias("e_ExpectedQtyCumulative"))
 
-# --- 8. CSBG (xy) ---
-df_xy = df_spares.groupBy("order_no", "order_line_no") \
-    .agg(
-        F.max("carrier").alias("xy_carrier"),
-        F.max("carrier_name").alias("xy_carrier_name")
-    ) \
-    .withColumnRenamed("order_no", "xy_vbeln") \
-    .withColumnRenamed("order_line_no", "xy_posnr")
 
-# --- 9. VBKD ---
-df_hd_incoterm = df_vbkd.filter(F.col("posnr") == '000000').select(
-    F.col("vbeln").alias("hd_vbeln"), 
-    F.col("inco1").alias("hd_inco1"),
-    F.col("kursk").alias("hd_kursk"),
-    F.col("prsdt").alias("hd_prsdt")
-)
-df_ln_incoterm = df_vbkd.select(
-    F.col("vbeln").alias("ln_vbeln"),
-    F.col("posnr").alias("ln_posnr"),
-    F.col("inco1").alias("ln_inco1"),
-    F.col("zterm").alias("ln_zterm"),
-    F.col("ihrez").alias("ln_ihrez")
-)
+params = {
+    # Transactional
+    "vbuk":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbuk",
+    "vbak":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbak",
+    "vbap":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbap",
+    "vbep":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbep",
+    "vbup":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbup",
+    "vbfa":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbfa",
+    "lips":  "wsf_silk_glb_da_dev.lhs_glb.ecc.lips",
+    "likp":  "wsf_silk_glb_da_dev.lhs_glb.ecc.likp",
+    "vbkd":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbkd",
+    "vbpa":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbpa",
+    "jest":  "wsf_silk_glb_da_dev.lhs_glb.ecc.jest",
+    "qmel":  "wsf_silk_glb_da_dev.lhs_glb.ecc.qmel",
+    
+    # Master Data
+    "kna1":  "wsf_silk_glb_da_dev.lhs_glb.ecc.kna1",
+    "part":  "lhs_glb.eng_test.stg_omat_part",
+    "mara":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mara",
+    "t024x": "wsf_silk_glb_da_dev.lhs_glb.ecc.t024x",
+    "mard":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mard",
+    "marc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.marc",
+    "mbew":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mbew",
+    "tj30t": "wsf_silk_glb_da_dev.lhs_glb.ecc.tj30t",
+    "vekp":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vekp",
+    "afko":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afko",
+    "afvc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afvc",
+    
+    # Currency
+    "tcurr": "wsf_silk_glb_dt_qa.lhg_glb.ecc.tcurr",
+    
+    # Custom/Reporting
+    "csbg":  "wsf_silk_glb_dt_qa.lhg_glb.eng.rpt_csbg_spares_deliveries",
+    
+    # Target
+    "target": "eng_test.sales_order_v1"
+}
 
-# --- 10. Helpers ---
-df_lab = df_t024x.filter(F.col("i.spras") == 'E').select(F.col("i.labor").alias("lab_labor"), F.col("i.lbtxt").alias("lab_description"))
 
-df_vekp_agg = df_vekp.groupBy("vpobjkey").agg(F.max("exidv2").alias("track")) \
-        .select(F.col("vpobjkey").alias("vekp_key"), F.col("track"))
 
-df_afvc_header = df_afvc.groupBy("aufpl").agg(F.min("vornr").alias("vornr"))
-df_act_base = df_afvc_header.join(df_afvc, ["aufpl", "vornr"], "left").select("aufpl", "larnt")
-df_act = df_afko.select("aufnr", "aufpl").join(df_act_base, "aufpl") \
-    .select(F.col("aufnr").alias("act_aufnr"), F.col("larnt").alias("act_larnt"))
 
-# --- 11. Base Skeleton (df_prst) with COMPLETE Deduplication ---
-# UPDATED EXCLUSION LISTS:
-# - a (VBAK): Exclude 'wbstk', 'lfsta'
-# - p (VBAP): Exclude keys, 'erdat', 'wbstk', 'lfsta'
-# - u (VBUK): Exclude keys, 'lfsta' (Keep 'wbstk' here)
-# - b (VBUP): Exclude keys, 'wbstk' (Keep 'lfsta' here)
 
-a_exclude = ["wbstk", "lfsta"] 
-p_exclude = ["vbeln", "aufnr", "objnr", "erdat", "ernam", "aedat", "wbstk", "lfsta"]
-u_exclude = ["vbeln", "aufnr", "objnr", "lfsta"]
-b_exclude = ["vbeln", "posnr", "aufnr", "objnr", "wbstk"]
+# ------- CELL 3 --------
 
-df_prst = df_vbep.filter(F.col("e.bmeng") > 0) \
-    .join(df_vbap, (F.col("e.vbeln") == F.col("p.vbeln")) & (F.col("e.posnr") == F.col("p.posnr")), "inner") \
-    .join(df_vbak, F.col("a.vbeln") == F.col("p.vbeln"), "inner") \
-    .join(df_vbuk, F.col("u.vbeln") == F.col("p.vbeln"), "inner") \
-    .join(df_vbup, (F.col("b.vbeln") == F.col("p.vbeln")) & (F.col("b.posnr") == F.col("p.posnr")), "inner") \
-    .join(df_t.alias("t"), (F.col("e.vbeln") == F.col("t.t_vbeln")) & (F.col("e.posnr") == F.col("t.t_posnr")) & (F.col("e.etenr") == F.col("t.t_etenr")), "inner") \
-    .join(df_f1.alias("f1"), (F.col("b.vbeln") == F.col("f1.f1_vbeln")) & (F.col("b.posnr") == F.col("f1.f1_posnr")), "left") \
-    .join(df_f2.alias("f2"), (F.col("b.vbeln") == F.col("f2.f2_vbeln")) & (F.col("b.posnr") == F.col("f2.f2_posnr")), "left") \
-    .select(
-        *get_cols(df_vbak, "a", a_exclude),                              
-        *get_cols(df_vbap, "p", p_exclude),                              
-        F.col("p.erdat").alias("p_erdat"),                               
-        F.col("p.ernam").alias("p_ernam"),                               
-        F.col("p.aedat").alias("p_aedat"),                               
-        *get_cols(df_vbep, "e", ["vbeln", "posnr", "aufnr", "objnr"]),   
-        *get_cols(df_vbuk, "u", u_exclude),                              
-        *get_cols(df_vbup, "b", b_exclude),                              
-        F.col("t.*"), F.col("f1.*"), F.col("f2.*")
-    ).alias("prst")
 
-# Add MARD Join Keys
-df_prst = df_prst.withColumn(
-    "calc_mard_lgort",
-    F.when((F.coalesce(F.col("lgort"), F.lit('')) == '') & (F.col("werks") == '3000'), '0030')
-     .when(F.coalesce(F.col("lgort"), F.lit('')) != '', F.col("lgort"))
-     .otherwise('0010')
-)
 
-print("Cell 4 Complete: Fixed 'lfsta' ambiguity.")
+# Main Order Tables   Before using union logic
+df_vbak = spark.read.table(params["vbak"]).alias("a")
+df_vbap = spark.read.table(params["vbap"]).alias("p")
+df_vbep = spark.read.table(params["vbep"]).alias("e")
+df_vbuk = spark.read.table(params["vbuk"]).alias("u")
+df_vbup = spark.read.table(params["vbup"]).alias("b")
+
+# Master Data & Lookups
+df_kna1 = spark.read.table(params["kna1"]).alias("k")
+df_mara = spark.read.table(params["mara"]).alias("m")
+df_part = spark.read.table(params["part"]).alias("pp")
+df_marc = spark.read.table(params["marc"]).alias("z")
+df_mard = spark.read.table(params["mard"]).alias("r")
+df_mbew = spark.read.table(params["mbew"]).alias("w")
+df_t024x = spark.read.table(params["t024x"]).alias("i")
+
+# Flow & Status
+df_vbfa = spark.read.table(params["vbfa"])
+df_lips = spark.read.table(params["lips"])
+df_likp = spark.read.table(params["likp"])
+df_vbkd = spark.read.table(params["vbkd"])
+df_vbpa = spark.read.table(params["vbpa"])
+df_jest = spark.read.table(params["jest"])
+df_tj30t = spark.read.table(params["tj30t"])
+df_vekp = spark.read.table(params["vekp"])
+df_qmel = spark.read.table(params["qmel"]).alias("q")
+
+# Production & Spares
+df_afko = spark.read.table(params["afko"]).alias("afko")
+df_afvc = spark.read.table(params["afvc"])
+df_spares = spark.read.table(params["csbg"])
+
+# Currency
+df_tcurr = spark.read.table(params["tcurr"])
