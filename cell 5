@@ -1,161 +1,53 @@
-# CELL 4: Pre-Calculation & Aggregates (Final Status Fix)
+AnalysisException                         Traceback (most recent call last)
+Cell In[73], line 34
+     26 cond_is_open = (
+     27     (F.coalesce(F.col("prst.wbstk"), F.lit('')) != 'C') &
+     28     (F.coalesce(F.col("prst.abgru"), F.lit('')) == '') &
+     29     (F.coalesce(F.col("prst.lfsta"), F.lit('')) != '') &
+     30     (expr_open_qty_val > 0)
+     31 )
+     33 # Apply Filter
+---> 34 df_filtered = df_joined.filter(
+     35     (F.col("prst.werks") >= '1900') & 
+     36     (~F.col("prst.auart").isin('ZVC', 'ZR07')) & 
+     37     (cond_history | cond_is_open)
+     38 )
+     40 # --- 3. Define Business Columns ---
+     41 col_OrderGroup = (
+     42     F.when(F.col("prst.auart").isin('ZAS','ZAV','ZFD','ZO11','ZSA','ZSB','ZSR','RK','ZCR1','ZDR1'), 'OTH')
+     43      .when(F.col("prst.auart").isin('AG','ZQ01','ZQ03','ZQ04','ZQFO','ZQIS','ZQUP','ZQUX','ZUQT'), 'QT')
+   (...)
+     47      .otherwise('SO')
+     48 )
 
-# --- 1. Helper Function ---
-def get_cols(df, alias, exclude_cols):
-    return [F.col(f"{alias}.{c}") for c in df.columns if c not in exclude_cols]
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3331, in DataFrame.filter(self, condition)
+   3329     jdf = self._jdf.filter(condition)
+   3330 elif isinstance(condition, Column):
+-> 3331     jdf = self._jdf.filter(condition._jc)
+   3332 else:
+   3333     raise PySparkTypeError(
+   3334         error_class="NOT_COLUMN_OR_STR",
+   3335         message_parameters={"arg_name": "condition", "arg_type": type(condition).__name__},
+   3336     )
 
-# --- 2. MBEW ---
-df_mbew_2000 = df_mbew.filter(F.col("w.bwkey") == '2000').select(F.col("w.matnr"), F.col("w.stprs").alias("stprs_2000"))
-df_mbew_3120 = df_mbew.filter(F.col("w.bwkey") == '3120').select(F.col("w.matnr"), F.col("w.stprs").alias("stprs_3120"))
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
-# --- 3. JEST ---
-df_j = df_jest.join(df_tj30t, df_jest["stat"] == df_tj30t["estat"], "inner") \
-    .filter(
-        (F.col("stat").isin('E0001', 'E0004', 'E0005', 'E0008', 'E0009')) &
-        (F.col("inact") != 'X') &
-        (F.col("stsma") == 'Z0000003') &
-        (F.col("spras") == 'E')
-    ) \
-    .groupBy("objnr") \
-    .agg(
-        F.max(F.when(F.col("stat") == 'E0008', 'X').otherwise('')).alias("FrontLoad"),
-        F.max(F.when(F.col("stat") == 'E0009', 'X').otherwise('')).alias("POReceived"),
-        F.max(F.when(F.col("stat").isin('E0001','E0004','E0005'), F.col("txt04")).otherwise('')).alias("Booking")
-    ).alias("j") \
-    .select(F.col("j.objnr").alias("j_objnr"), "FrontLoad", "POReceived", "Booking")
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-# --- 4. LIPS/LIKP ---
-df_l = df_lips.join(df_likp, df_lips["vbeln"] == df_likp["vbeln"], "inner") \
-    .filter(
-        (F.col("lips.vgbel") != '') &
-        (~F.col("lips.vgbel").startswith('4')) &
-        (~F.col("lips.vgbel").startswith('3')) &
-        (F.col("likp.wadat_ist") != '')
-    ) \
-    .groupBy(F.col("lips.vgbel").alias("l_vbeln"), F.col("lips.vgpos").alias("l_posnr")) \
-    .agg(
-        F.max("lips.vbeln").alias("l_OpenDlvDoc"),
-        F.sum("lips.lgmng").alias("l_OpenDlvQty"),
-        F.sum(F.when(F.col("likp.wadat_ist") == '', 0).otherwise(F.col("lips.lfimg"))).alias("l_QtyShippedTtLine"),
-        F.max("likp.wadat_ist").alias("l_PGIDate"),
-        F.when(F.max("likp.wadat_ist") == '', 'Created').otherwise('Shipped').alias("l_DlvStatus")
-    )
-
-# --- 5. VBFA (f1) ---
-df_f1 = df_vbfa.filter(
-        (F.col("stufe") == '00') & 
-        (F.col("vbtyp_n").isin('T', 'J'))
-    ) \
-    .groupBy(F.col("vbelv").alias("f1_vbeln"), F.col("posnv").alias("f1_posnr")) \
-    .agg(
-        F.sum(
-            F.when((F.col("vbtyp_n") == 'R') & (F.col("plmin") == '+'), F.coalesce(F.col("rfmng_flo"), F.lit(0)))
-             .when(F.col("vbtyp_n") == 'h', F.coalesce(F.col("rfmng_flo"), F.lit(0)) * -1)
-             .otherwise(0)
-        ).alias("f1_delvd_qty")
-    )
-
-# --- 6. VBFA (f2) ---
-df_f2 = df_vbfa.alias("a").join(df_vbfa.alias("b"), 
-        (F.col("a.vbeln") == F.col("b.vbelv")) & (F.col("a.posnn") == F.col("b.posnv")), 
-        "inner"
-    ) \
-    .filter(
-        (F.col("a.stufe") == '00') & 
-        (F.col("a.vbtyp_n").isin('T', 'J')) & 
-        (F.col("b.vbeln").startswith('49'))
-    ) \
-    .groupBy(F.col("a.vbelv").alias("f2_vbeln"), F.col("a.posnv").alias("f2_posnr")) \
-    .agg(
-        F.max("b.vbeln").alias("f2_LastPGIDoc"),
-        F.sum(
-            F.when(F.col("b.vbtyp_n") == 'R', F.coalesce(F.col("b.rfmng"), F.lit(0)))
-             .when(F.col("b.vbtyp_n") == 'h', F.coalesce(F.col("b.rfmng"), F.lit(0)) * -1)
-             .otherwise(0)
-        ).alias("f2_PGIQty")
-    )
-
-# --- 7. VBEP (t) ---
-df_t = df_vbep.alias("t1").join(df_vbep.alias("t2"),
-        (F.col("t1.vbeln") == F.col("t2.vbeln")) &
-        (F.col("t1.posnr") == F.col("t2.posnr")) &
-        (F.col("t1.etenr") >= F.col("t2.etenr")),
-        "inner"
-    ).filter(F.col("t1.bmeng") > 0) \
-    .groupBy(F.col("t1.vbeln").alias("t_vbeln"), F.col("t1.posnr").alias("t_posnr"), F.col("t1.etenr").alias("t_etenr")) \
-    .agg(F.sum("t2.bmeng").alias("e_ExpectedQtyCumulative"))
-
-# --- 8. CSBG (xy) ---
-df_xy = df_spares.groupBy("order_no", "order_line_no") \
-    .agg(
-        F.max("carrier").alias("xy_carrier"),
-        F.max("carrier_name").alias("xy_carrier_name")
-    ) \
-    .withColumnRenamed("order_no", "xy_vbeln") \
-    .withColumnRenamed("order_line_no", "xy_posnr")
-
-# --- 9. VBKD ---
-df_hd_incoterm = df_vbkd.filter(F.col("posnr") == '000000').select(
-    F.col("vbeln").alias("hd_vbeln"), 
-    F.col("inco1").alias("hd_inco1"),
-    F.col("kursk").alias("hd_kursk"),
-    F.col("prsdt").alias("hd_prsdt")
-)
-df_ln_incoterm = df_vbkd.select(
-    F.col("vbeln").alias("ln_vbeln"),
-    F.col("posnr").alias("ln_posnr"),
-    F.col("inco1").alias("ln_inco1"),
-    F.col("zterm").alias("ln_zterm"),
-    F.col("ihrez").alias("ln_ihrez")
-)
-
-# --- 10. Helpers ---
-df_lab = df_t024x.filter(F.col("i.spras") == 'E').select(F.col("i.labor").alias("lab_labor"), F.col("i.lbtxt").alias("lab_description"))
-
-df_vekp_agg = df_vekp.groupBy("vpobjkey").agg(F.max("exidv2").alias("track")) \
-        .select(F.col("vpobjkey").alias("vekp_key"), F.col("track"))
-
-df_afvc_header = df_afvc.groupBy("aufpl").agg(F.min("vornr").alias("vornr"))
-df_act_base = df_afvc_header.join(df_afvc, ["aufpl", "vornr"], "left").select("aufpl", "larnt")
-df_act = df_afko.select("aufnr", "aufpl").join(df_act_base, "aufpl") \
-    .select(F.col("aufnr").alias("act_aufnr"), F.col("larnt").alias("act_larnt"))
-
-# --- 11. Base Skeleton (df_prst) with STRICT Deduplication & Renaming ---
-# EXCLUSION LISTS:
-# We proactively exclude columns from tables p, u, b if they clash with 'a' or each other.
-# 'wbstk' is excluded from p and b so only u.wbstk remains.
-# 'erdat' is excluded from p so we can manually rename it to p_erdat.
-
-p_exclude = ["vbeln", "aufnr", "objnr", "erdat", "ernam", "aedat", "wbstk"] # Added wbstk
-b_exclude = ["vbeln", "posnr", "aufnr", "objnr", "wbstk"] # Added wbstk
-u_exclude = ["vbeln", "aufnr", "objnr"]
-
-df_prst = df_vbep.filter(F.col("e.bmeng") > 0) \
-    .join(df_vbap, (F.col("e.vbeln") == F.col("p.vbeln")) & (F.col("e.posnr") == F.col("p.posnr")), "inner") \
-    .join(df_vbak, F.col("a.vbeln") == F.col("p.vbeln"), "inner") \
-    .join(df_vbuk, F.col("u.vbeln") == F.col("p.vbeln"), "inner") \
-    .join(df_vbup, (F.col("b.vbeln") == F.col("p.vbeln")) & (F.col("b.posnr") == F.col("p.posnr")), "inner") \
-    .join(df_t.alias("t"), (F.col("e.vbeln") == F.col("t.t_vbeln")) & (F.col("e.posnr") == F.col("t.t_posnr")) & (F.col("e.etenr") == F.col("t.t_etenr")), "inner") \
-    .join(df_f1.alias("f1"), (F.col("b.vbeln") == F.col("f1.f1_vbeln")) & (F.col("b.posnr") == F.col("f1.f1_posnr")), "left") \
-    .join(df_f2.alias("f2"), (F.col("b.vbeln") == F.col("f2.f2_vbeln")) & (F.col("b.posnr") == F.col("f2.f2_posnr")), "left") \
-    .select(
-        *get_cols(df_vbak, "a", []),                                     # Keep ALL Header Cols (a.erdat, a.objnr)
-        *get_cols(df_vbap, "p", p_exclude),                              # Keep Item cols (p.abgru)
-        F.col("p.erdat").alias("p_erdat"),                               # RENAME Item Creation Date
-        F.col("p.ernam").alias("p_ernam"),                               # RENAME Item Created By
-        F.col("p.aedat").alias("p_aedat"),                               # RENAME Item Changed On
-        *get_cols(df_vbep, "e", ["vbeln", "posnr", "aufnr", "objnr"]),   
-        *get_cols(df_vbuk, "u", u_exclude),                              # Keep Header Status (u.wbstk)
-        *get_cols(df_vbup, "b", b_exclude),                              # Keep Item Status (b.lfsta)
-        F.col("t.*"), F.col("f1.*"), F.col("f2.*")
-    ).alias("prst")
-
-# Add MARD Join Keys
-df_prst = df_prst.withColumn(
-    "calc_mard_lgort",
-    F.when((F.coalesce(F.col("lgort"), F.lit('')) == '') & (F.col("werks") == '3000'), '0030')
-     .when(F.coalesce(F.col("lgort"), F.lit('')) != '', F.col("lgort"))
-     .otherwise('0010')
-)
-
-print("Cell 4 Complete: Fixed 'wbstk' ambiguity.")
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `prst`.`wbstk` is ambiguous, could be: [`prst`.`wbstk`, `prst`.`wbstk`].
