@@ -1,13 +1,40 @@
-from pyspark.sql import functions as F
+Cell 7 — Manufacturing 5-Year Consumption (MFGCONS5YRS)
+Business purpose
+For each OB Parent → NHA, calculate:
+“How much of this NHA has been consumed in manufacturing in the last 5 years?”
+This measures historical usage from:
+Goods issue movements (261, 262)
+Only manufacturing plants
+Last 5 years only
+This is the OB risk driver.
 
-mfg_dmd26wk = (
-    mdkp
+
+
+
+
+
+mfg_5yrs = (
+    mseg
     .select(
-        F.col("dtnum").alias("d_dtnum"),
-        F.col("matnr").alias("d_matnr"),
-        F.col("plwrk").cast("int").alias("plwrk")
+        F.col("mblnr").alias("mblnr"),
+        F.col("matnr").alias("b_matnr"),
+        F.col("werks").cast("int").alias("werks"),
+        F.col("bwart").alias("bwart"),
+        F.col("shkzg").alias("shkzg"),
+        F.col("menge").cast("int").alias("menge"),
+        F.col("cpudt_mkpf").alias("cpudt_mkpf")
     )
-    .alias("d")
+    .alias("b")
+    .join(
+        mkpf
+        .select(
+            F.col("mblnr").alias("d_mblnr"),
+            F.to_date("bldat", "yyyyMMdd").alias("bldat_dt")
+        )
+        .alias("d"),
+        F.col("b.mblnr") == F.col("d.d_mblnr"),
+        "inner"
+    )
     .join(
         mknha
         .select(
@@ -15,39 +42,26 @@ mfg_dmd26wk = (
             F.col("nha").alias("m_nha")
         )
         .alias("m"),
-        F.col("d.d_matnr") == F.col("m.m_nha"),
-        "inner"
-    )
-    .join(
-        mdtb
-        .select(
-            F.col("dtnum").alias("f_dtnum"),
-            F.to_date("dat00", "yyyyMMdd").alias("dat00_dt"),
-            F.col("plumi").alias("plumi"),
-            F.col("mng01").cast("int").alias("mng01"),
-            F.col("delkz").alias("delkz")
-        )
-        .alias("f"),
-        F.col("d.d_dtnum") == F.col("f.f_dtnum"),
+        F.col("b.b_matnr") == F.col("m.m_nha"),
         "inner"
     )
     .where(
-        F.col("f.plumi").isin("+", "-") &
-        ((F.col("d.plwrk") < 2001) | (F.col("d.plwrk") == 3120)) &
-        F.col("f.delkz").isin("AR", "SB") &
-        (F.col("f.dat00_dt") >= dt1wk) &
-        (F.col("f.dat00_dt") <= dt26wk)
+        F.col("b.bwart").isin("261", "262") &
+        (F.col("d.bldat_dt") > F.date_sub(F.current_date(), 365 * 5)) &
+        (F.col("d.bldat_dt") < F.current_date()) &
+        ((F.col("b.werks") < 2001) | (F.col("b.werks") == 3120)) &
+        (F.to_date("b.cpudt_mkpf", "yyyyMMdd") > F.date_sub(F.current_date(), 365 * 5))
     )
     .groupBy(
         F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("d.d_matnr").alias("nha")
+        F.col("b.b_matnr").alias("nha")
     )
     .agg(
         F.sum(
-            F.when(F.col("f.plumi") == "-", F.col("f.mng01"))
-             .otherwise(-F.col("f.mng01"))
-        ).cast("int").alias("mfg_dmd")
+            F.when(F.col("b.shkzg") == "S", -F.col("b.menge"))
+             .otherwise(F.col("b.menge"))
+        ).cast("int").alias("mfg_5yrs_consumption")
     )
 )
 
-mfg_dmd26wk.cache()
+mfg_5yrs.cache()
