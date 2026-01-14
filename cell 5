@@ -1,49 +1,34 @@
-from pyspark.sql import functions as F
+CELL 4 — Insert New MAKE-NHAs (Delta-safe, Fabric-correct)
+Business purpose
+Register newly detected MAKE-NHAs for OB parent parts so that their demand & consumption can be calculated downstream.
+This cell: • Finds new NHAs
+• Aggregates CMPQPA
+• Inserts into rpt_omat_obpn_make_nha_dtls
 
-new_make_nha = (
-    nha.alias("a")
-    .join(
-        make_nha
-            .select(
-                F.col("cmpprtno").alias("b_cmpprtno"),
-                F.col("nha").alias("b_nha")
-            )
-            .alias("b"),
-        (F.col("a.cmpprtno") == F.col("b.b_cmpprtno")) &
-        (F.col("a.nha") == F.col("b.b_nha")),
-        "left"
-    )
-    .where(
-        (F.col("a.cmpprtno") != F.col("a.nha")) &
-        F.col("b.b_cmpprtno").isNull() &
-        (~F.col("a.nha").like("%DELTA%")) &
-        (F.col("a.nha_status_inactive") != "X") &
-        (F.col("a.matkl").isin("M","MN","X")) &
-        (~F.col("a.mstae").isin("OB","OS","OP"))
-    )
-    .groupBy(
-        F.col("a.cmpprtno").alias("cmpprtno"),
-        F.col("a.nha").alias("nha"),
-        F.col("a.level").alias("level"),
-        F.col("a.matkl").alias("matkl"),
-        F.col("a.mstae").alias("mstae")
-    )
-    .agg(
-        # 🚨 Delta INT target → force INT
-        F.sum("a.cmpqpa").cast("int").alias("cmpqpa")
-    )
-    .withColumn("last_modified_on", F.current_date())
-    .withColumn("isprocessed", F.lit("N"))
+
+
+
+
+Cell 5 — Build MKNHA (Unprocessed MAKE-NHAs)
+Business purpose
+This is the driving dataset of the entire procedure.
+It represents:
+“Which OB Parent → NHA combinations are new and still need demand & consumption to be calculated.”
+
+
+
+
+
+
+
+mknha = (
+    spark.read.table(make_nha_target_path)
+    .filter(F.col("isprocessed") == "N")
     .select(
-        "cmpprtno",
-        "cmpqpa",
-        "isprocessed",
-        "last_modified_on",
-        "level",
-        "matkl",
-        "mstae",
-        "nha"
+        F.col("cmpprtno").alias("cmpprtno"),
+        F.col("nha").alias("nha")
     )
+    .dropDuplicates()
 )
 
-new_make_nha.write.mode("append").saveAsTable(make_nha_target_path)
+mknha.cache()
