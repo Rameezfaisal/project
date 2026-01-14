@@ -1,14 +1,94 @@
-# Validation: Check Totals by Currency
-# Compare these numbers with a simple "SELECT SUM(NETWR), WAERK..." in SAP
+# CELL 7: Final Projection (Strict Schema Match)
+# Selecting exactly the 70 columns requested, mostly from the Base Table (prst)
 
-df_validation = spark.read.table("lakehouse.rpt_sales_order_optimized")
-
-display(
-    df_validation.groupBy("DocCurrency")
-    .agg(
-        F.count("*").alias("Row_Count"),
-        F.sum("GrossSOPriceUSD").alias("Total_Gross_USD"),
-        F.sum("OrderLineQty").alias("Total_Qty")
-    )
-    .orderBy("DocCurrency")
+df_final_logic = df_filtered.select(
+    # --- Keys ---
+    F.col("prst.vbeln"),
+    F.col("prst.posnr"),
+    F.col("prst.etenr"),
+    
+    # --- Strings / Identifiers ---
+    F.col("prst.booking"),
+    F.col("prst.carrier"),
+    F.col("prst.carrier_name"),
+    F.col("prst.dlvstatus"),
+    F.col("prst.f1_vbeln"),
+    F.col("prst.frontload"),
+    F.col("prst.lastpgidoc"),
+    F.col("prst.opendlvdoc"),
+    F.col("prst.order_status"),
+    F.col("prst.poreceived"),
+    F.col("prst.shipto"),
+    F.col("prst.shiptoname"),
+    
+    # --- VBAK Columns ---
+    F.col("prst.vbak_auart"),
+    F.col("prst.vbak_aufnr"),
+    F.col("prst.vbak_autlf"),
+    F.col("prst.vbak_bstnk"),
+    F.col("prst.vbak_ernam"),
+    F.col("prst.vbak_faksk"),
+    F.col("prst.vbak_ihrez"),
+    F.col("prst.vbak_kunnr"),
+    F.col("prst.vbak_lifsk"),
+    F.col("prst.vbak_objnr"),
+    F.col("prst.vbak_vkorg"),
+    F.col("prst.vbak_vsnmr_v"),
+    F.col("prst.vbak_waerk"),
+    
+    # --- VBAP Columns ---
+    F.col("prst.vbap_abgru"),
+    F.col("prst.vbap_arktx"),
+    F.col("prst.vbap_charg"),
+    F.col("prst.vbap_ernam"),
+    F.col("prst.vbap_erzet"),
+    F.col("prst.vbap_faksp"),
+    F.col("prst.vbap_grkor"),
+    F.col("prst.vbap_kdmat"),
+    F.col("prst.vbap_lgort"),
+    F.col("prst.vbap_lprio"),
+    F.col("prst.vbap_matnr"),
+    F.col("prst.vbap_posex"),
+    F.col("prst.vbap_prodh"),
+    F.col("prst.vbap_vstel"),
+    F.col("prst.vbap_werks"),
+    
+    # --- VBEP / VBUK / VBUP ---
+    F.col("prst.vbep_lifsp"),
+    F.col("prst.vbuk_lfgsk"),
+    F.col("prst.vbuk_wbstk"),
+    F.col("prst.vbup_lfsta"),
+    
+    # --- Dates ---
+    F.col("prst.last_changed"),
+    F.col("prst.pgidate"),
+    F.col("prst.vbak_erdat"),
+    F.col("prst.vbap_aedat"),
+    F.col("prst.vbap_erdat"),
+    F.col("prst.vbep_edatu"),
+    F.col("prst.vbep_h_edatu"),
+    F.col("prst.vbep_mbdat"),
+    
+    # --- Numbers / Decimals ---
+    F.col("prst.delvd_qty"),
+    F.col("prst.expectedqtycumulative"),
+    F.col("prst.mard_kinsm"),
+    F.col("prst.mard_klabs"),
+    F.col("prst.mard_labst"),
+    F.col("prst.opendlvqty"),
+    F.col("prst.pgiqty"),
+    F.col("prst.qtyshippedttline"),
+    F.col("prst.vbak_netwr"),
+    F.col("prst.vbap_kwmeng"),
+    F.col("prst.vbap_netpr"),
+    F.col("prst.vbep_bmeng"),
+    
+    # --- MARD Strings ---
+    F.col("prst.mard_lgort"),
+    F.col("prst.mard_matnr"),
+    F.col("prst.mard_werks")
 )
+
+# Note: We are no longer calculating 'GrossSOPriceUSD' or 'Region' 
+# because they were not in your provided schema.
+df_output = df_final_logic
