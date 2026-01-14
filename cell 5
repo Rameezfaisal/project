@@ -1,94 +1,165 @@
-# CELL 7: Final Projection (Strict Schema Match)
-# Selecting exactly the 70 columns requested, mostly from the Base Table (prst)
+# CELL 6: Final Selection & Calculations (Comprehensive Column List)
 
-df_final_logic = df_filtered.select(
-    # --- Keys ---
-    F.col("prst.vbeln"),
-    F.col("prst.posnr"),
-    F.col("prst.etenr"),
-    
-    # --- Strings / Identifiers ---
-    F.col("prst.booking"),
-    F.col("prst.carrier"),
-    F.col("prst.carrier_name"),
-    F.col("prst.dlvstatus"),
-    F.col("prst.f1_vbeln"),
-    F.col("prst.frontload"),
-    F.col("prst.lastpgidoc"),
-    F.col("prst.opendlvdoc"),
-    F.col("prst.order_status"),
-    F.col("prst.poreceived"),
-    F.col("prst.shipto"),
-    F.col("prst.shiptoname"),
-    
-    # --- VBAK Columns ---
-    F.col("prst.vbak_auart"),
-    F.col("prst.vbak_aufnr"),
-    F.col("prst.vbak_autlf"),
-    F.col("prst.vbak_bstnk"),
-    F.col("prst.vbak_ernam"),
-    F.col("prst.vbak_faksk"),
-    F.col("prst.vbak_ihrez"),
-    F.col("prst.vbak_kunnr"),
-    F.col("prst.vbak_lifsk"),
-    F.col("prst.vbak_objnr"),
-    F.col("prst.vbak_vkorg"),
-    F.col("prst.vbak_vsnmr_v"),
-    F.col("prst.vbak_waerk"),
-    
-    # --- VBAP Columns ---
-    F.col("prst.vbap_abgru"),
-    F.col("prst.vbap_arktx"),
-    F.col("prst.vbap_charg"),
-    F.col("prst.vbap_ernam"),
-    F.col("prst.vbap_erzet"),
-    F.col("prst.vbap_faksp"),
-    F.col("prst.vbap_grkor"),
-    F.col("prst.vbap_kdmat"),
-    F.col("prst.vbap_lgort"),
-    F.col("prst.vbap_lprio"),
-    F.col("prst.vbap_matnr"),
-    F.col("prst.vbap_posex"),
-    F.col("prst.vbap_prodh"),
-    F.col("prst.vbap_vstel"),
-    F.col("prst.vbap_werks"),
-    
-    # --- VBEP / VBUK / VBUP ---
-    F.col("prst.vbep_lifsp"),
-    F.col("prst.vbuk_lfgsk"),
-    F.col("prst.vbuk_wbstk"),
-    F.col("prst.vbup_lfsta"),
-    
-    # --- Dates ---
-    F.col("prst.last_changed"),
-    F.col("prst.pgidate"),
-    F.col("prst.vbak_erdat"),
-    F.col("prst.vbap_aedat"),
-    F.col("prst.vbap_erdat"),
-    F.col("prst.vbep_edatu"),
-    F.col("prst.vbep_h_edatu"),
-    F.col("prst.vbep_mbdat"),
-    
-    # --- Numbers / Decimals ---
-    F.col("prst.delvd_qty"),
-    F.col("prst.expectedqtycumulative"),
-    F.col("prst.mard_kinsm"),
-    F.col("prst.mard_klabs"),
-    F.col("prst.mard_labst"),
-    F.col("prst.opendlvqty"),
-    F.col("prst.pgiqty"),
-    F.col("prst.qtyshippedttline"),
-    F.col("prst.vbak_netwr"),
-    F.col("prst.vbap_kwmeng"),
-    F.col("prst.vbap_netpr"),
-    F.col("prst.vbep_bmeng"),
-    
-    # --- MARD Strings ---
-    F.col("prst.mard_lgort"),
-    F.col("prst.mard_matnr"),
-    F.col("prst.mard_werks")
+# 1. PGI Qty Logic
+expr_pgi_qty = (
+    F.when(F.coalesce(F.col("f1_delvd_qty"), F.lit(0)) >= F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)), 
+           F.coalesce(F.col("e.bmeng"), F.lit(0)))
+     .when(F.coalesce(F.col("f1_delvd_qty"), F.lit(0)) < F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)), 
+           F.greatest(
+               F.coalesce(F.col("e.bmeng"), F.lit(0)) - (F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0))), 
+               F.lit(0)
+           ))
+     .otherwise(0)
 )
 
-# Note: We are no longer calculating 'GrossSOPriceUSD' or 'Region' 
-# because they were not in your provided schema.
-df_output = df_final_logic
+# 2. Open Qty Logic
+expr_open_qty_val = (
+     F.when(F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("f1_delvd_qty"), F.lit(0)), 0)
+      .when((F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0))) <= F.coalesce(F.col("e.bmeng"), F.lit(0)),
+            F.coalesce(F.col("e_ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("f1_delvd_qty"), F.lit(0)))
+      .otherwise(F.coalesce(F.col("e.bmeng"), F.lit(0)))
+)
+
+# 3. Status Check Logic
+expr_is_open_status = (
+    (F.coalesce(F.col("u.wbstk"), F.lit('')) != 'C') &
+    (F.coalesce(F.col("p.abgru"), F.lit('')) == '') &
+    (F.coalesce(F.col("b.lfsta"), F.lit('')) != '') &
+    (expr_open_qty_val > 0)
+)
+
+df_final_logic = df_filtered.select(
+    # --- Identifiers ---
+    F.col("a.vbeln").alias("Order"),
+    F.expr("ltrim('0', a.vbeln)").alias("OrderWZ"),
+    F.col("p.posnr").alias("Line"),
+    F.expr("ltrim('0', p.posnr)").alias("LineWZ"),
+    F.col("e.etenr").alias("ScheduleLine"),
+    F.expr("ltrim('0', e.etenr)").alias("ScheduleLineWZ"),
+    
+    # --- Statuses ---
+    F.when(expr_is_open_status, 'Open').otherwise('Closed').alias("OrderStatus"),
+    F.col("a.auart").alias("OrderType"),
+
+    # --- Dates ---
+    F.col("a.erdat").alias("CreationDate"),
+    F.col("p.erdat").alias("LineItemCreationDate"),
+    F.col("p.erzet").alias("LineItemCreationTime"),
+    F.col("h_edatu").alias("RequestDate"),
+    F.col("e.edatu").alias("DeliveryDueDate"),
+    
+    # --- Quantities ---
+    F.col("p.kwmeng").alias("OrderLineQty"),
+    F.col("e.bmeng").alias("CommittedQty"),
+    expr_pgi_qty.alias("PGIQty"),
+    F.when(expr_is_open_status, expr_open_qty_val).otherwise(0).alias("OpenQty"),
+    
+    # --- Inventory ---
+    (F.coalesce(F.col("r_labst"), F.lit(0)) + F.coalesce(F.col("r_kinsm"), F.lit(0))).alias("OnHandQty"),
+    F.col("r_klabs").alias("VendorOwned"),
+    F.when(F.coalesce(F.col("e.bmeng"), F.lit(0)) < F.coalesce(F.col("r_QOH"), F.lit(0)), F.coalesce(F.col("e.bmeng"), F.lit(0))) 
+     .otherwise(F.coalesce(F.col("r_QOH"), F.lit(0))).alias("AvailToShip"), 
+    
+    # --- Pre-Calcs ---
+    F.col("l_OpenDlvDoc").alias("LastDlvDoc"), 
+    F.col("l_OpenDlvQty").alias("LastDlvQty"), 
+    F.col("l_DlvStatus").alias("LastDlvStatus"),
+    
+    # --- Partners ---
+    F.col("a.vkorg").alias("SalesOrg"),
+    F.col("a.kunnr").alias("SoldTo"),
+    F.col("c_ShipTo").alias("ShipTo"),
+    F.col("c_ShipToName").alias("ShipToName"),
+    F.col("p.werks").alias("VendorPlant"),
+    
+    # --- Pricing ---
+    F.col("a.waerk").alias("DocCurrency"),
+    (F.col("a.netwr") * F.when(F.col("a.waerk").isin('JPY','TWD'), 
+            F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")) * 100)
+     .otherwise(F.when(F.coalesce(F.col("hd_kursk"), F.lit(0)) == 0, 1).otherwise(F.col("hd_kursk")))
+    ).alias("GrossSOPriceUSD"),
+    
+    # --- Flags & Carrier ---
+    F.col("j_FrontLoad").alias("FrontLoad"),
+    F.col("j_POReceived").alias("POReceived"),
+    F.col("j_Booking").alias("Booking"),
+    F.col("i_LabOffice").alias("LabOffice"),
+    F.col("xy_carrier").alias("Carrier"),
+    F.col("xy_carrier_name").alias("CarrierName"),
+
+    # --- Keys for Write ---
+    F.col("a.vbeln"),
+    F.col("p.posnr"),
+    F.col("e.etenr"),
+    
+    # --- FULL RAW COLUMN MAPPING (Including newly added ones) ---
+    F.col("a.auart").alias("vbak_auart"),
+    F.col("a.aufnr").alias("vbak_aufnr"),     # Added
+    F.col("a.autlf").alias("vbak_autlf"),
+    F.col("a.bstnk").alias("vbak_bstnk"),     # Added
+    F.col("a.erdat").alias("vbak_erdat"),
+    F.col("a.ernam").alias("vbak_ernam"),     # Added
+    F.col("a.faksk").alias("vbak_faksk"),     # Added
+    F.col("a.ihrez").alias("vbak_ihrez"),     # Added
+    F.col("a.kunnr").alias("vbak_kunnr"),
+    F.col("a.lifsk").alias("vbak_lifsk"),     # Added
+    F.col("a.netwr").alias("vbak_netwr"),
+    F.col("a.objnr").alias("vbak_objnr"),     # Added
+    F.col("a.vkorg").alias("vbak_vkorg"),
+    F.col("a.vsnmr_v").alias("vbak_vsnmr_v"), # Added
+    F.col("a.waerk").alias("vbak_waerk"),
+    
+    F.col("p.abgru").alias("vbap_abgru"),
+    F.col("p.aedat").alias("vbap_aedat"),     # Added
+    F.col("p.arktx").alias("vbap_arktx"),     # Added
+    F.col("p.charg").alias("vbap_charg"),     # Added
+    F.col("p.erdat").alias("vbap_erdat"),     # Already added previously
+    F.col("p.ernam").alias("vbap_ernam"),     # Added
+    F.col("p.erzet").alias("vbap_erzet"),
+    F.col("p.faksp").alias("vbap_faksp"),     # Added
+    F.col("p.grkor").alias("vbap_grkor"),     # Added
+    F.col("p.kdmat").alias("vbap_kdmat"),     # Added
+    F.col("p.kwmeng").alias("vbap_kwmeng"),
+    F.col("p.lgort").alias("vbap_lgort"),
+    F.col("p.lprio").alias("vbap_lprio"),     # Added
+    F.col("p.matnr").alias("vbap_matnr"),
+    F.col("p.netpr").alias("vbap_netpr"),
+    F.col("p.posex").alias("vbap_posex"),
+    F.col("p.prodh").alias("vbap_prodh"),     # Added
+    F.col("p.vstel").alias("vbap_vstel"),     # Added
+    F.col("p.werks").alias("vbap_werks"),
+    
+    F.col("e.bmeng").alias("vbep_bmeng"),
+    F.col("e.edatu").alias("vbep_edatu"),
+    F.col("h_edatu").alias("vbep_h_edatu"),
+    F.col("e.lifsp").alias("vbep_lifsp"),     # Added
+    F.col("e.mbdat").alias("vbep_mbdat"),
+    
+    F.col("u.lfgsk").alias("vbuk_lfgsk"),
+    F.col("u.wbstk").alias("vbuk_wbstk"),
+    F.col("b.lfsta").alias("vbup_lfsta"),
+    
+    # --- Extra Calcs for Write ---
+    F.col("f1_delvd_qty").alias("delvd_qty"),
+    F.col("e_ExpectedQtyCumulative").alias("expectedqtycumulative"),
+    F.col("f2_LastPGIDoc").alias("lastpgidoc"),
+    F.col("l_OpenDlvDoc").alias("opendlvdoc"),
+    F.col("l_OpenDlvQty").alias("opendlvqty"),
+    F.col("l_PGIDate").alias("pgidate"),
+    F.col("l_QtyShippedTtLine").alias("qtyshippedttline"),
+    F.col("f1_vbeln"),
+    
+    # --- MARD Passthroughs ---
+    F.col("r_kinsm").alias("mard_kinsm"),
+    F.col("r_klabs").alias("mard_klabs"),
+    F.col("r_labst").alias("mard_labst"),
+    F.col("r_lgort").alias("mard_lgort"),
+    F.col("r_matnr").alias("mard_matnr"),
+    F.col("r_werks").alias("mard_werks")
+)
+
+# Apply HighDollarFlag
+df_final = df_final_logic.withColumn(
+    "HighDollarFlag",
+    F.when(F.col("GrossSOPriceUSD") > 50000, "True").otherwise("False")
+)
