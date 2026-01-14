@@ -1,21 +1,51 @@
-# CELL 5: Main Join Logic (Replica of CV_SQL_SO Joins)
-# Fixed: Removed 'vbak_' / 'vbap_' prefixes to match the actual columns in df_prst
+---------------------------------------------------------------------------
+AnalysisException                         Traceback (most recent call last)
+Cell In[31], line 12
+      1 # CELL 5: Main Join Logic (Replica of CV_SQL_SO Joins)
+      2 # Fixed: Removed 'vbak_' / 'vbap_' prefixes to match the actual columns in df_prst
+      4 df_joined = df_prst \
+      5     .join(df_kna1.alias("k"), F.col("prst.kunnr") == F.col("k.kunnr"), "inner") \
+      6     .join(df_mara.alias("m"), F.col("prst.matnr") == F.col("m.matnr"), "inner") \
+      7     .join(df_part.alias("pp"), F.col("pp.Part") == F.col("prst.matnr"), "inner") \
+      8     .join(df_marc.alias("z"), (F.col("prst.werks") == F.col("z.werks")) & (F.col("prst.matnr") == F.col("z.matnr")), "left") \
+      9     .join(df_mbew_2000.alias("m2000"), F.col("prst.matnr") == F.col("m2000.matnr"), "left") \
+     10     .join(df_mbew_3120.alias("m3120"), F.col("prst.matnr") == F.col("m3120.matnr"), "left") \
+     11     .join(df_lab.alias("i"), F.col("m.labor") == F.col("i.lab_labor"), "left") \
+---> 12     .join(df_qmel.alias("q"), F.col("prst.vbeln") == F.col("q.aufnr"), "left") \
+     13     .join(df_afko, F.col("prst.aufnr") == F.col("afko.aufnr"), "left") \
+     14     .join(df_act.alias("act"), F.col("prst.aufnr") == F.col("act.act_aufnr"), "left") \
+     15     .join(df_vekp_agg.alias("v_agg"), F.col("prst.f1_vbeln") == F.col("v_agg.vekp_key"), "left") \
+     16     .join(df_hd_incoterm.alias("hd_inco"), F.col("prst.vbeln") == F.col("hd_inco.hd_vbeln"), "left") \
+     17     .join(df_ln_incoterm.alias("ln_inco"), (F.col("prst.vbeln") == F.col("ln_inco.ln_vbeln")) & (F.col("prst.posnr") == F.col("ln_inco.ln_posnr")), "left") \
+     18     .join(df_l.alias("l"), (F.col("prst.vbeln") == F.col("l.l_vbeln")) & (F.col("prst.posnr") == F.col("l.l_posnr")), "left") \
+     19     .join(df_xy.alias("xy"), (F.col("prst.vbeln") == F.col("xy.xy_vbeln")) & (F.col("prst.posnr") == F.col("xy.xy_posnr")), "left") \
+     20     .join(df_j.alias("j"), F.col("prst.objnr") == F.col("j.j_objnr"), "left") \
+     21     .join(df_mard.alias("r"), (F.col("prst.werks") == F.col("r.werks")) & (F.col("prst.matnr") == F.col("r.matnr")) & (F.col("r.lgort") == F.col("prst.calc_mard_lgort")), "left")
 
-df_joined = df_prst \
-    .join(df_kna1.alias("k"), F.col("prst.kunnr") == F.col("k.kunnr"), "inner") \
-    .join(df_mara.alias("m"), F.col("prst.matnr") == F.col("m.matnr"), "inner") \
-    .join(df_part.alias("pp"), F.col("pp.Part") == F.col("prst.matnr"), "inner") \
-    .join(df_marc.alias("z"), (F.col("prst.werks") == F.col("z.werks")) & (F.col("prst.matnr") == F.col("z.matnr")), "left") \
-    .join(df_mbew_2000.alias("m2000"), F.col("prst.matnr") == F.col("m2000.matnr"), "left") \
-    .join(df_mbew_3120.alias("m3120"), F.col("prst.matnr") == F.col("m3120.matnr"), "left") \
-    .join(df_lab.alias("i"), F.col("m.labor") == F.col("i.lab_labor"), "left") \
-    .join(df_qmel.alias("q"), F.col("prst.vbeln") == F.col("q.aufnr"), "left") \
-    .join(df_afko, F.col("prst.aufnr") == F.col("afko.aufnr"), "left") \
-    .join(df_act.alias("act"), F.col("prst.aufnr") == F.col("act.act_aufnr"), "left") \
-    .join(df_vekp_agg.alias("v_agg"), F.col("prst.f1_vbeln") == F.col("v_agg.vekp_key"), "left") \
-    .join(df_hd_incoterm.alias("hd_inco"), F.col("prst.vbeln") == F.col("hd_inco.hd_vbeln"), "left") \
-    .join(df_ln_incoterm.alias("ln_inco"), (F.col("prst.vbeln") == F.col("ln_inco.ln_vbeln")) & (F.col("prst.posnr") == F.col("ln_inco.ln_posnr")), "left") \
-    .join(df_l.alias("l"), (F.col("prst.vbeln") == F.col("l.l_vbeln")) & (F.col("prst.posnr") == F.col("l.l_posnr")), "left") \
-    .join(df_xy.alias("xy"), (F.col("prst.vbeln") == F.col("xy.xy_vbeln")) & (F.col("prst.posnr") == F.col("xy.xy_posnr")), "left") \
-    .join(df_j.alias("j"), F.col("prst.objnr") == F.col("j.j_objnr"), "left") \
-    .join(df_mard.alias("r"), (F.col("prst.werks") == F.col("r.werks")) & (F.col("prst.matnr") == F.col("r.matnr")) & (F.col("r.lgort") == F.col("prst.calc_mard_lgort")), "left")
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:2493, in DataFrame.join(self, other, on, how)
+   2491         on = self._jseq([])
+   2492     assert isinstance(how, str), "how should be a string"
+-> 2493     jdf = self._jdf.join(other._jdf, on, how)
+   2494 return DataFrame(jdf, self.sparkSession)
+
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
+
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
+
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `prst`.`vbeln` is ambiguous, could be: [`prst`.`vbeln`, `prst`.`vbeln`, `prst`.`vbeln`, `prst`.`vbeln`, `prst`.`vbeln`].
