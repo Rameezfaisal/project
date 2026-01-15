@@ -1,13 +1,8 @@
-Cell 4: Master Join & Logic Derivation
+Cell 5: Write Gold Reporting Table (Snapshot)
 ​Business Context:
-This is the core transformation. We join the Sales Order Base (Fact) with all the Dimensions we prepared. Then, we apply the business rules for:
-​Order Grouping: (e.g., classifying ZAS as 'OTH').
-​Region Logic: Deriving 'NA', 'EU', 'JP' from Sales Org.
-​Price & Cost: Calculating Extended Prices in USD, handling currency conversions.
-​Flags: HighDollarFlag, ShipmentDueFlag.
-​Technical Note:
-​We use F.coalesce() heavily to handle potential NULLs from Left Joins.
-​We use broadcast() hints for the smaller dimension tables (KNA1, MARA, etc.) to ensure this join runs efficiently without shuffling the main fact table.
+This final step saves the calculated data to the Gold Table (gold_sales_analysis).
+​Mode: Overwrite: Since this is a "Reporting Snapshot" that reflects the latest logic and status (scoped to 2 Years + Open), we replace the previous table entirely. This ensures no "stale" records remain if business rules change.
+​Optimization: We run a Z-Order optimization on Order and Material columns to ensure Power BI queries are lightning fast.
 
 
 
@@ -16,215 +11,22 @@ This is the core transformation. We join the Sales Order Base (Fact) with all th
 
 
 
-# --- 1. MASTER JOIN ---
-# We start with the scoped Base Fact (df_base) and left-join everything else
-df_final_logic = df_base.alias("f") \
-    .join(df_kna1.alias("k").hint("broadcast"), F.col("f.VBAK_KUNNR") == F.col("k.kunnr"), "left") \
-    .join(df_mara.alias("m").hint("broadcast"), F.col("f.VBAP_MATNR") == F.col("m.matnr"), "left") \
-    .join(df_part.alias("p").hint("broadcast"), F.col("f.VBAP_MATNR") == F.col("p.part_matnr"), "left") \
-    .join(df_marc.alias("mc"), (F.col("f.VBAP_WERKS") == F.col("mc.werks")) & (F.col("f.VBAP_MATNR") == F.col("mc.matnr")), "left") \
-    .join(ds_mbew_2000.alias("mb2").hint("broadcast"), F.col("f.VBAP_MATNR") == F.col("mb2.mbew2_matnr"), "left") \
-    .join(ds_mbew_3120.alias("mb3").hint("broadcast"), F.col("f.VBAP_MATNR") == F.col("mb3.mbew3_matnr"), "left") \
-    .join(df_t024x.alias("lab").hint("broadcast"), F.col("m.labor") == F.col("lab.labor"), "left") \
-    .join(df_qmel.alias("q"), F.col("f.VBELN") == F.col("q.qmel_aufnr"), "left") \
-    .join(ds_act.alias("act"), F.col("f.VBAK_AUFNR") == F.col("act.act_aufnr"), "left") \
-    .join(ds_vekp.alias("vk"), F.col("f.F1_VBELN") == F.col("vk.vpobjkey"), "left") \
-    .join(ds_vbkd_h.alias("vh"), F.col("f.VBELN") == F.col("vh.h_vbeln"), "left") \
-    .join(ds_vbkd_i.alias("vi"), (F.col("f.VBELN") == F.col("vi.i_vbeln")) & (F.col("f.POSNR") == F.col("vi.i_posnr")), "left")
+# --- WRITE TO DELTA LAKE ---
+# We use Overwrite mode to replace the old snapshot with the fresh 2-year window.
+# 'overwriteSchema' allows you to add new columns in the future without errors.
 
-# --- 2. COLUMN DERIVATIONS ---
+print(f"Writing Gold Table to: {T_GOLD_ANALYSIS} ...")
 
-# Helper Expressions for complex logic
-# ------------------------------------
-# Order Group Logic
-exp_order_group = F.when(F.col("f.VBAK_AUART").isin("ZAS","ZAV","ZFD","ZO11","ZSA","ZSB","ZSR","RK","ZCR1","ZDR1"), "OTH") \
-                   .when(F.col("f.VBAK_AUART").isin("AG","ZQ01","ZQ03","ZQ04","ZQFO","ZQIS","ZQUP","ZQUX","ZUQT"), "QT") \
-                   .when(F.col("f.VBAK_AUART").isin("ZO03","ZRA1","ZSO1"), "RPO") \
-                   .when(F.col("f.VBAK_AUART").isin("ZR11","ZR03","ZR04","ZR05","ZR08","ZR4B","ZUPC","ZUPR","ZFOC"), "RTN") \
-                   .when(F.col("f.VBAK_AUART").isin("ZO09","ZO12","ZSD","TA","ZCON","ZFO","ZSO","ZUP","ZUPX","ZO04"), "SO") \
-                   .otherwise("SO")
+df_gold.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .option("overwriteSchema", "true") \
+    .saveAsTable(T_GOLD_ANALYSIS)
 
-# Billing Block Logic
-exp_billing_blk = F.when(F.coalesce(F.col("f.VBAK_FAKSK"), F.lit("")) != "", F.concat(F.lit("BLK(H) "), F.col("f.VBAK_FAKSK"))) \
-                   .when(F.coalesce(F.col("f.VBAP_FAKSP"), F.lit("")) != "", F.concat(F.lit("BLK(L) "), F.col("f.VBAP_FAKSP"))) \
-                   .otherwise("")
+print("Write completed.")
 
-# PGI Quantity Logic (Complex Case)
-# Logic: If Delvd >= ExpCum then BMENG. Else ... (Complex partial logic)
-n_delvd  = F.coalesce(F.col("f.delvd_qty"), F.lit(0))
-n_expcum = F.coalesce(F.col("f.ExpectedQtyCumulative"), F.lit(0))
-n_bmeng  = F.coalesce(F.col("f.VBEP_BMENG"), F.lit(0))
+# --- OPTIMIZE FOR READ SPEED (Power BI) ---
+# Z-Ordering clusters similar data together, making filters on Order/Part/Date instant.
+spark.sql(f"OPTIMIZE {T_GOLD_ANALYSIS} ZORDER BY (Order, Part, CreationDate)")
 
-exp_pgi_qty = F.when(n_delvd >= n_expcum, n_bmeng) \
-               .when(n_delvd < n_expcum, F.greatest(n_bmeng - (n_expcum - n_delvd), F.lit(0))) \
-               .otherwise(0)
-
-# Open Qty Logic (The massive boolean check in SAP)
-# We simplify by checking the 5 conditions first
-cond_open = (
-    (F.coalesce(F.col("f.VBUK_WBSTK"), F.lit("")) != "C") & 
-    (F.coalesce(F.col("f.VBAP_ABGRU"), F.lit("")) == "") & 
-    (F.coalesce(F.col("f.VBUP_LFSTA"), F.lit("")) != "") & 
-    (F.coalesce(F.col("f.VBAP_KWMENG"), F.lit(0)) > n_delvd) & 
-    (n_bmeng > 0)
-)
-# The nested case inside OpenQty
-exp_sched_backorder = F.when(n_expcum <= n_delvd, 0) \
-                       .when((n_expcum - n_delvd) <= n_bmeng, (n_expcum - n_delvd)) \
-                       .otherwise(n_bmeng)
-
-exp_open_qty = F.when(cond_open & (exp_sched_backorder > 0), exp_sched_backorder).otherwise(0)
-
-# Region Logic
-exp_region = F.when(F.col("f.VBAK_VKORG") == "9000", "NA") \
-              .when(F.col("f.VBAK_VKORG").between("2000", "2900"), "EU") \
-              .when(F.col("f.VBAK_VKORG").between("3000", "3001"), "JP") \
-              .when(F.col("f.VBAK_VKORG") == "3100", "TW") \
-              .when(F.col("f.VBAK_VKORG") == "3200", "KR") \
-              .when(F.col("f.VBAK_VKORG").isin("3300", "3600"), "SEA") \
-              .when(F.col("f.VBAK_VKORG").isin("3400", "3410", "1000"), "CN") \
-              .otherwise("NEW")
-
-# Exchange Rate & Price Logic
-n_netpr = F.col("f.VBAP_NETPR")
-s_waerk = F.col("f.VBAK_WAERK")
-n_kursk = F.when((F.coalesce(F.col("vh.h_kursk"), F.lit(0)) == 0) | (s_waerk == "USD"), 1.0) \
-           .otherwise(F.col("vh.h_kursk"))
-
-# Price Adjustment for JPY/TWD/KRW (Multiply by 100)
-n_netpr_adj = F.when(s_waerk.isin("JPY", "TWD", "KRW"), n_netpr * 100).otherwise(n_netpr)
-
-exp_unit_price_usd = F.when(s_waerk.isin("JPY", "TWD"), n_netpr * 100).otherwise(n_netpr) * n_kursk
-exp_gross_so_usd   = F.col("f.VBAK_NETWR") * F.when(s_waerk.isin("JPY", "TWD"), n_kursk * 100).otherwise(n_kursk)
-
-# Cost Logic (Coalesce 2000 vs 3120)
-n_std_cost = F.coalesce(F.col("mb2.stprs_2000"), F.col("mb3.stprs_3120"), F.lit(0))
-
-
-# --- 3. FINAL SELECT ---
-df_gold = df_final_logic.select(
-    # --- Identifiers ---
-    F.col("f.ORDER_STATUS").alias("OrderStatus"),
-    exp_order_group.alias("OrderGroup"),
-    F.col("f.VBELN").alias("Order"),
-    F.expr("ltrim('0', f.VBELN)").alias("OrderWZ"),
-    F.col("f.POSNR").alias("Line"),
-    F.expr("ltrim('0', f.POSNR)").alias("LineWZ"),
-    F.col("f.ETENR").alias("ScheduleLine"),
-    F.expr("ltrim('0', f.ETENR)").alias("ScheduleLineWZ"),
-    F.col("f.VBAK_AUART").alias("OrderType"),
-    
-    # --- Dates ---
-    F.col("f.VBAK_ERDAT").alias("CreationDate"),
-    F.col("f.VBAP_ERDAT").alias("LineItemCreationDate"),
-    F.col("f.VBAP_ERZET").alias("LineItemCreationTime"),
-    F.col("f.VBEP_H_EDATU").alias("RequestDate"),
-    F.col("f.VBEP_EDATU").alias("DeliveryDueDate"),
-    F.col("f.PGIDate").alias("PGIDate"),
-    F.col("f.VBEP_MBDAT").alias("FirmCommitDate"),
-    
-    # --- Quantities & Status ---
-    F.col("f.VBAP_KWMENG").alias("OrderLineQty"),
-    F.col("f.VBEP_BMENG").alias("CommittedQty"),
-    exp_pgi_qty.alias("PGIQty"),
-    exp_open_qty.alias("OpenQty"),
-    (F.coalesce(F.col("f.MARD_LABST"),F.lit(0)) + F.coalesce(F.col("f.MARD_KINSM"),F.lit(0))).alias("OnHandQty"),
-    
-    # AvailToShip Logic (Min of Committed vs OnHand)
-    F.least(
-        F.coalesce(F.col("f.VBEP_BMENG"), F.lit(0)),
-        (F.coalesce(F.col("f.MARD_LABST"),F.lit(0)) + F.coalesce(F.col("f.MARD_KLABS"),F.lit(0)) + F.coalesce(F.col("f.MARD_KINSM"),F.lit(0)))
-    ).alias("AvailToShip"),
-    
-    F.coalesce(F.col("f.OpenDlvDoc"), F.lit("")).alias("LastDlvDoc"),
-    F.col("f.OpenDlvQty").alias("LastDlvQty"),
-    F.col("f.QtyShippedTtLine").alias("QtyShippedTtLine"),
-    F.coalesce(F.col("f.DlvStatus"), F.lit("None")).alias("LastDlvStatus"),
-    
-    # --- Partners ---
-    F.col("f.VBAK_VKORG").alias("SalesOrg"),
-    F.col("f.VBAK_KUNNR").alias("SoldTo"),
-    F.col("k.name1").alias("SoldToName"),
-    F.col("f.ShipTo").alias("ShipTo"),
-    F.col("f.ShipToName").alias("ShipToName"),
-    F.col("f.VBAP_WERKS").alias("VendorPlant"),
-    
-    # Vendor SLoc Logic
-    F.when((F.coalesce(F.col("f.VBAP_LGORT"), F.lit("")).isin("", "0010")) & (F.col("f.VBAP_WERKS") == "3000"), "0030")
-     .when(F.coalesce(F.col("f.VBAP_LGORT"), F.lit("")) != "", F.col("f.VBAP_LGORT"))
-     .otherwise("0010").alias("VendorSloc"),
-     
-    # --- Product ---
-    F.col("f.VBAP_MATNR").alias("Part"),
-    F.col("f.VBAP_ARKTX").alias("PartDescription"),
-    F.col("p.Consumable").alias("ConsumableFlag"),
-    F.col("vk.exidv2").alias("Track"),
-    F.col("m.matkl").alias("MatGrp"),
-    
-    # --- Financials ---
-    n_netpr_adj.alias("UnitPriceLocalCurr"),
-    (n_netpr_adj * n_bmeng).alias("ExtPriceLocalCurr"),
-    s_waerk.alias("DocCurrency"),
-    exp_unit_price_usd.alias("UnitPriceUSD"),
-    (exp_unit_price_usd * n_bmeng).alias("ExtPriceUSD"),
-    exp_gross_so_usd.alias("GrossSOPriceUSD"),
-    
-    # High Dollar Flag
-    F.when(exp_gross_so_usd > 50000, "True").otherwise("False").alias("HighDollarFlag"),
-    
-    # Costs
-    n_std_cost.alias("StdCost"),
-    (n_std_cost * n_bmeng).alias("ExtCost"),
-    F.lit("USD").alias("StdCurrency"),
-    
-    # --- Flags & Misc ---
-    F.when(F.col("f.VBAP_LPRIO") == "00", "04").otherwise(F.col("f.VBAP_LPRIO")).alias("DPrio"),
-    F.col("f.VBAP_CHARG").alias("BatchNo"),
-    F.col("lab.lbtxt").alias("LabOffice"),
-    F.col("mc.dispo").alias("MRPV"),
-    F.col("f.FrontLoad").alias("FrontLoad"),
-    F.col("f.POReceived").alias("POReceived"),
-    F.col("f.Booking").alias("Booking"),
-    F.col("f.VBAP_PRODH").alias("ProdHier"),
-    F.col("mc.ekgrp").alias("PurchaseGrp"),
-    F.col("m.mstae").alias("XPlantStatus"),
-    F.col("f.VBAP_KDMAT").alias("CustomerMaterial"),
-    
-    # Incoterms (Item Level > Header Level)
-    F.coalesce(F.col("vi.i_inco1"), F.col("vh.h_inco1")).alias("Incoterms"),
-    
-    F.col("f.VBAK_IHREZ").alias("CsOwner"),
-    F.col("f.VBAK_ERNAM").alias("CreatedBy"),
-    F.col("f.VBAK_AUFNR").alias("AssocServOrd"),
-    F.col("f.VBAP_AEDAT").alias("LinePrevChangeDate"),
-    
-    # Region
-    exp_region.alias("Region"),
-    
-    # Tool Type
-    F.when(F.col("m.labor") == "023", "SPIN")
-     .when(F.col("m.labor") == "024", "DEP")
-     .otherwise("ETCH+").alias("ToolType"),
-     
-    # Shipment Due Flag
-    F.when((F.current_date() >= F.col("f.VBEP_EDATU")) & (F.col("f.POReceived") == "X"), "True")
-     .otherwise("False").alias("ShipmentDueFlag"),
-     
-    # Delivery Due Flag
-    F.when(F.current_date() >= F.col("f.VBEP_EDATU"), "True").otherwise("False").alias("DeliveryDueFlag"),
-    
-    F.col("f.CARRIER").alias("Carrier"),
-    F.col("f.CARRIER_NAME").alias("CarrierName"),
-    F.col("vi.i_zterm").alias("CreditCheckBlock"),
-    F.when(F.coalesce(F.col("f.VBAP_ABGRU"), F.lit("")) != "", "True").otherwise("False").alias("SOLineRejectionFlag"),
-    F.col("act.act_larnt").alias("ActivityType"),
-    
-    # Audit
-    F.current_timestamp().alias("LastRefreshed")
-)
-
-
-
-
-
-
+print("Optimization completed. Table is ready for Power BI.")
