@@ -1,10 +1,6 @@
-Cell 1: Environment & Parameters
-​Business Context:
-This cell defines the inputs and outputs.
-​Input: The "Silver" Status table (ZT_M_SALES_ORDER_STATUS_V2) we just populated.
-​Masters: All the reference tables (Customers, Materials, Factory Costs).
-​Scope: Instead of dynamic user prompts, we define a Retention Policy. We will keep "All Open Orders" AND "All Closed Orders from the last 2 years" (approx. 732 days). This allows PowerBI to be fast without missing critical history.
 
+
+spark.conf.set("spark.sql.legacy.timeParserPolicy", "CORRECTED")
 
 
 
