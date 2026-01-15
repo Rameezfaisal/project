@@ -1,3 +1,36 @@
-Cell 2: Read Sources & Apply Scope Filters
+Cell 3: Carrier & Ship-To Party Logic
 ​Business Context:
-We load the raw data. Crucially, we apply "Predicate Pushdown" immediately. Instead of loading the entire 10+ years of SAP history, we only load the Sales Orders (vbeln) and their related Deliveries/Flows (vgbel/vbelv) that fall within the parameter range.
+This cell calculates two isolated datasets:
+​Carrier Info (CSBG): Determines the carrier for each order line.
+​Ship-To Party (SHIPTO): Identifies the customer receiving the goods (Partner Function WE) from the header partners.
+​Technical Note:
+​We use groupBy on CSBG to handle potential duplicates, matching the SAP MAX() logic.
+​We filter VBPA for POSNR = '000000' (Header level) and PARVW = 'WE' (Ship-To) before joining to the Customer Master (KNA1).
+
+
+
+
+# --- 1. CSBG LOGIC (Carrier Info) ---
+# SAP: GROUP BY "ORDER_NO","ORDER_LINE_NO" taking MAX of Carrier fields
+ds_csbg = df_csbg.groupBy("order_no", "order_line_no").agg(
+    F.max("carrier").alias("carrier_cd"),
+    F.max("carrier_name").alias("carrier_name_cd")
+)
+
+# --- 2. SHIPTO LOGIC (Partner Function 'WE') ---
+# SAP: Join VBPA with KNA1 where POSNR='000000' and PARVW='WE'
+ds_shipto = df_vbpa.alias("v").join(
+    df_kna1.alias("k"), 
+    F.col("v.kunnr") == F.col("k.kunnr")
+).filter(
+    (F.col("v.posnr") == "000000") & 
+    (F.col("v.parvw") == "WE")
+).select(
+    F.col("v.vbeln").alias("shipto_vbeln"),  # Renamed for join key safety
+    F.col("v.kunnr").alias("shipto_cd"),
+    F.col("k.name1").alias("shiptoname_cd")
+)
+
+
+
+
