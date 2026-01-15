@@ -1,49 +1,38 @@
-# ------- CELL 5 (OPTIMIZED): Filter-First Strategy & Main Join --------
+# ------- CELL 5 (SKEW OPTIMIZED): Divide and Conquer Strategy --------
 
-# --- STEP 1: PRE-FILTERING (Crucial for Performance) ---
-# Instead of joining everything and filtering later, we find the qualified VBELNs first.
+# OPTION 1: Enable Spark Adaptive Query Execution (Crucial for Skew)
+spark.conf.set("spark.sql.adaptive.enabled", "true")
+spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
 
-# 1. Define the Filter Logic cleanly
-# Logic: (Recent Date) OR (Open Status)
-# Note: We use the aliases defined in Cell 3 (a=VBAK, p=VBAP, u=VBUK, b=VBUP)
+# --- STEP 1: FIND QUALIFIED KEYS INDEPENDENTLY ---
 
-# We need a lightweight join to check status/dates first
-df_driver = df_vbak.alias("a") \
-    .join(df_vbap.alias("p"), F.col("a.VBELN") == F.col("p.VBELN")) \
-    .join(df_vbuk.alias("u"), F.col("a.VBELN") == F.col("u.VBELN")) \
-    .join(df_vbup.alias("b"), (F.col("p.VBELN") == F.col("b.VBELN")) & (F.col("p.POSNR") == F.col("b.POSNR"))) \
-    .join(df_f1, (F.col("b.VBELN") == F.col("f1_VBELV")) & (F.col("b.POSNR") == F.col("f1_POSNV")), "left") \
-    .join(df_vbep.alias("e"), (F.col("p.VBELN") == F.col("e.VBELN")) & (F.col("p.POSNR") == F.col("e.POSNR")))
+# Criterion A: Recent Orders (Scan VBAP only)
+# Logic: p.ERDAT >= Last 732 Days
+df_keys_recent = df_vbap.filter(F.col("ERDAT") >= F.date_add(F.current_date(), -732)) \
+    .select("VBELN").distinct()
 
-# Apply the complex WHERE clause here (on the smaller subset)
-df_qualified_keys = df_driver.filter(
-    (F.col("p.WERKS") >= "1900") & 
-    (~F.col("a.AUART").isin("ZVC", "ZR07")) & 
-    (
-        (F.col("p.ERDAT") >= F.date_add(F.current_date(), -732)) |
-        (
-            (F.coalesce(F.col("u.WBSTK"), F.lit("")) != "C") & 
-            (F.coalesce(F.col("u.LFGSK"), F.lit("")) != "C") & 
-            (F.coalesce(F.col("p.ABGRU"), F.lit("")) == "") & 
-            (F.coalesce(F.col("b.LFSTA"), F.lit("")).isin("", "") == False) & 
-            (F.coalesce(F.col("p.KWMENG"), F.lit(0)) > F.coalesce(F.col("delvd_qty"), F.lit(0))) & 
-            (F.coalesce(F.col("e.BMENG"), F.lit(0)) > 0)
-        )
-    )
-).select(F.col("a.VBELN")).distinct()
+# Criterion B: Open Orders (Scan VBUK/VBUP only)
+# Logic: WBSTK != 'C' (Not Complete) AND LFSTA != 'C' (Delivery not Complete) ...
+# We filter strictly on the Status columns first to get candidate keys.
+df_keys_open = df_vbuk.filter((F.coalesce(F.col("WBSTK"), F.lit("")) != "C") & (F.coalesce(F.col("LFGSK"), F.lit("")) != "C")) \
+    .select("VBELN").distinct()
 
-# --- STEP 2: Prune DataFrames ---
-# Filter the main tables to include ONLY the qualified VBELNs.
-# This prevents skew by removing millions of historical rows before the heavy joins.
+# Combine Keys: Union distinct VBELNs
+df_driver_keys = df_keys_recent.union(df_keys_open).distinct()
 
-df_vbak_pruned = df_vbak.join(df_qualified_keys, "VBELN", "left_semi").alias("a")
-df_vbap_pruned = df_vbap.join(df_qualified_keys, "VBELN", "left_semi").alias("p")
-df_vbuk_pruned = df_vbuk.join(df_qualified_keys, "VBELN", "left_semi").alias("u")
-df_vbup_pruned = df_vbup.join(df_qualified_keys, "VBELN", "left_semi").alias("b")
-df_vbep_pruned = df_vbep.join(df_qualified_keys, "VBELN", "left_semi").alias("e")
+# --- STEP 2: PRUNE ALL TABLES BEFORE JOINING ---
+# We treat df_driver_keys as a "Filter List". 
+# By joining this FIRST, we drop 80-90% of the historical data immediately.
 
+# Use 'left_semi' join to filter. 
+# Hint: If df_driver_keys is small enough, Spark might broadcast it automatically.
+df_vbak_pruned = df_vbak.join(df_driver_keys, "VBELN", "left_semi").alias("a")
+df_vbap_pruned = df_vbap.join(df_driver_keys, "VBELN", "left_semi").alias("p")
+df_vbuk_pruned = df_vbuk.join(df_driver_keys, "VBELN", "left_semi").alias("u")
+df_vbup_pruned = df_vbup.join(df_driver_keys, "VBELN", "left_semi").alias("b")
+df_vbep_pruned = df_vbep.join(df_driver_keys, "VBELN", "left_semi").alias("e")
 
-# --- STEP 3: The Main Join (Now on reduced data) ---
+# --- STEP 3: THE MAIN JOIN (On Reduced Data) ---
 
 # Prepare VBAP Logic
 df_p_prep = df_vbap_pruned.withColumn("Calc_LGORT", 
@@ -52,15 +41,15 @@ df_p_prep = df_vbap_pruned.withColumn("Calc_LGORT",
      .otherwise("0010")
 )
 
-# Base Join Sequence (Inner Joins) - Using BROADCAST on Master Data
-# If Master Data tables (KNA1, PART) are small (<2GB), Broadcast prevents skew.
+# Base Join (Inner Joins)
+# Note: We now use the PRUNED dataframes
 df_main = df_vbuk_pruned.join(df_vbak_pruned, F.col("u.VBELN") == F.col("a.VBELN")) \
     .join(df_kna1.alias("k"), F.col("a.KUNNR") == F.col("k.KUNNR")) \
     .join(df_p_prep.alias("p"), F.col("a.VBELN") == F.col("p.VBELN")) \
-    .join(F.broadcast(df_part).alias("pp"), F.col("p.MATNR") == F.col("pp.Part")) \
+    .join(df_part.alias("pp"), F.col("p.MATNR") == F.col("pp.Part")) \
     .join(df_vbep_pruned, (F.col("p.VBELN") == F.col("e.VBELN")) & (F.col("p.POSNR") == F.col("e.POSNR")))
 
-# Attach Lookups (Left Joins) - Using BROADCAST on specific small tables
+# Attach Lookups (Left Joins)
 df_prst = df_main \
     .join(df_h, (F.col("p.VBELN") == F.col("h_VBELN")) & (F.col("p.POSNR") == F.col("h_POSNR"))) \
     .join(df_t, (F.col("e.VBELN") == F.col("t.VBELN")) & (F.col("e.POSNR") == F.col("t.POSNR")) & (F.col("e.ETENR") == F.col("t.ETENR"))) \
@@ -69,7 +58,7 @@ df_prst = df_main \
     .join(df_f2, (F.col("b.VBELN") == F.col("f2_VBELV")) & (F.col("b.POSNR") == F.col("f2_POSNV")), "left") \
     .join(df_c, F.col("a.VBELN") == F.col("c_VBELN"), "left") \
     .join(df_mara.alias("m"), F.col("p.MATNR") == F.col("m.MATNR")) \
-    .join(F.broadcast(df_t024x).alias("i"), F.col("m.LABOR") == F.col("i.LABOR"), "left") \
+    .join(df_t024x.alias("i"), F.col("m.LABOR") == F.col("i.LABOR"), "left") \
     .join(df_mard.alias("r"), 
           (F.col("p.WERKS") == F.col("r.WERKS")) & 
           (F.col("p.MATNR") == F.col("r.MATNR")) & 
@@ -92,8 +81,23 @@ df_prst = df_main \
 cond_bo_1 = F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) <= F.coalesce(F.col("delvd_qty"), F.lit(0))
 cond_bo_2 = (F.coalesce(F.col("ExpectedQtyCumulative"), F.lit(0)) - F.coalesce(F.col("delvd_qty"), F.lit(0))) <= F.coalesce(F.col("e.BMENG"), F.lit(0))
 
-# Logic Calculation (Status & OpenQty)
-df_logic = df_prst.withColumn("OrderStatus", 
+# --- STEP 4: FINAL FILTERING (Business Logic) ---
+# We still apply the strict logic here to calculate fields correctly, 
+# but the heavy lifting of data reduction is already done.
+df_logic = df_prst.filter(
+    (~F.col("a.AUART").isin("ZVC", "ZR07")) &
+    (
+        (F.col("p.ERDAT") >= F.date_add(F.current_date(), -732)) |
+        (
+             # Replicating "ORDER_STATUS = 'Open'" logic inline
+            (F.coalesce(F.col("u.WBSTK"), F.lit("")) != "C") & 
+            (F.coalesce(F.col("p.ABGRU"), F.lit("")) == "") & 
+            (F.coalesce(F.col("b.LFSTA"), F.lit("")) != "") &
+            (F.coalesce(F.col("p.KWMENG"), F.lit(0)) > F.coalesce(F.col("delvd_qty"), F.lit(0))) &
+            (F.coalesce(F.col("e.BMENG"), F.lit(0)) > 0)
+        )
+    )
+).withColumn("OrderStatus", 
         F.when(
             (F.coalesce(F.col("u.WBSTK"), F.lit("")) != "C") & 
             (F.coalesce(F.col("p.ABGRU"), F.lit("")) == "") & 
