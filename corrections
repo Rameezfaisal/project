@@ -1,16 +1,4 @@
-# --- CELL 9: ROBUST MERGE WITH DEDUPLICATION ---
-
-# 1. Enforce Uniqueness (Crucial Fix)
-# We drop duplicates on the Primary Key. 
-# If a join caused an explosion, this arbitrarily picks one (safe for status updates).
-final_df_clean = final_df.dropDuplicates(["VBELN", "POSNR", "ETENR"])
-
-# 2. Filter Null Keys (Safety Net)
-# Delta will fail if the Join Keys are Null.
-final_df_clean = final_df_clean.filter(
-    F.col("VBELN").isNotNull() & 
-    F.col("POSNR").isNotNull() & 
-    F.col("ETENR").isNotNull()---------------------------------------------------------------------------
+---------------------------------------------------------------------------
 Py4JJavaError                             Traceback (most recent call last)
 Cell In[139], line 26
      23 print("Starting Merge...")
@@ -85,30 +73,3 @@ Py4JJavaError: An error occurred while calling o407.sql.
 	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:628)
 	at java.base/java.lang.Thread.run(Thread.java:829)
 Caused by: org.apache.spark.SparkUpgradeException: [INCONSISTENT_BEHAVIOR_CROSS_VERSION.WRITE_ANCIENT_DATETIME] You may get a different result due to the upgrading to Spark >= 3.0:
-)
-
-# 3. Repartition for Write Stability
-# We keep the repartitioning to prevent the Skew error you saw earlier.
-final_df_safe = final_df_clean.repartition(200, "VBELN")
-
-# 4. Register View
-final_df_safe.createOrReplaceTempView("source_updates")
-
-print("Starting Merge...")
-
-# 5. Execute Merge
-spark.sql(f"""
-MERGE INTO {T_SO_STATUS} AS target
-USING source_updates AS source
-ON target.VBELN = source.VBELN 
-   AND target.POSNR = source.POSNR 
-   AND target.ETENR = source.ETENR
-
-WHEN MATCHED THEN
-  UPDATE SET *
-
-WHEN NOT MATCHED THEN
-  INSERT *
-""")
-
-print(f"Merge completed successfully into {T_SO_STATUS}")
