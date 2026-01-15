@@ -1,36 +1,46 @@
-Cell 3: Carrier & Ship-To Party Logic
+Cell 4: Delivery & PGI Status Logic (LIKP/LIPS)
 ​Business Context:
-This cell calculates two isolated datasets:
-​Carrier Info (CSBG): Determines the carrier for each order line.
-​Ship-To Party (SHIPTO): Identifies the customer receiving the goods (Partner Function WE) from the header partners.
+This cell analyzes the Deliveries associated with the Sales Orders. It calculates:
+​Open Delivery Quantity: The quantity currently processing in deliveries.
+​Shipped Quantity: The quantity that has actually been PGI'd (Post Goods Issue).
+​Delivery Status: Whether the line is 'Created' or 'Shipped'.
 ​Technical Note:
-​We use groupBy on CSBG to handle potential duplicates, matching the SAP MAX() logic.
-​We filter VBPA for POSNR = '000000' (Header level) and PARVW = 'WE' (Ship-To) before joining to the Customer Master (KNA1).
+​We replicate the SAP WHERE clause strictness (wadat_ist <> ''), which implies this specific logic block focuses on processed/PGI'd deliveries.
+​We exclude Returns (3%) and Internal/Service Orders (4%) based on the reference document logic.
 
 
 
 
-# --- 1. CSBG LOGIC (Carrier Info) ---
-# SAP: GROUP BY "ORDER_NO","ORDER_LINE_NO" taking MAX of Carrier fields
-ds_csbg = df_csbg.groupBy("order_no", "order_line_no").agg(
-    F.max("carrier").alias("carrier_cd"),
-    F.max("carrier_name").alias("carrier_name_cd")
-)
 
-# --- 2. SHIPTO LOGIC (Partner Function 'WE') ---
-# SAP: Join VBPA with KNA1 where POSNR='000000' and PARVW='WE'
-ds_shipto = df_vbpa.alias("v").join(
-    df_kna1.alias("k"), 
-    F.col("v.kunnr") == F.col("k.kunnr")
+# --- LIKP_LIPS LOGIC ---
+# Join Delivery Item (s) to Header (k)
+ds_likp_lips = df_lips.alias("s").join(
+    df_likp.alias("k"), 
+    F.col("s.vbeln") == F.col("k.vbeln")
 ).filter(
-    (F.col("v.posnr") == "000000") & 
-    (F.col("v.parvw") == "WE")
-).select(
-    F.col("v.vbeln").alias("shipto_vbeln"),  # Renamed for join key safety
-    F.col("v.kunnr").alias("shipto_cd"),
-    F.col("k.name1").alias("shiptoname_cd")
+    (F.col("s.vgbel") != "") & 
+    (~F.col("s.vgbel").like("4%")) & 
+    (~F.col("s.vgbel").like("3%")) &
+    # Replicating SAP Logic: Filter for rows where PGI Date exists
+    # Note: If your Lakehouse converts SAP empty strings to NULL, change to .isNotNull()
+    (F.col("k.wadat_ist") != "") 
+).groupBy(
+    "s.vgbel", "s.vgpos"  # Group by Sales Order Number & Item
+).agg(
+    F.max("s.vbeln").alias("opendlvdoc_cd"),
+    
+    # OpenDlvQty: Sum of Delivery Quantity (LGMNG)
+    F.sum("s.lgmng").alias("opendlvqty_cd"),
+    
+    # QtyShippedTtLine: If PGI Date is present, sum Actual Delivered Qty (LFIMG)
+    # Since we filtered wadat_ist != '' in WHERE, this ELSE condition is the primary path
+    F.when(F.max("k.wadat_ist") == "", 0)
+     .otherwise(F.sum("s.lfimg")).alias("qtyshippedttline_cd"),
+    
+    # PGIDate: Max PGI Date
+    F.max("k.wadat_ist").alias("pgidate_cd"),
+    
+    # DlvStatus: Derived Status
+    F.when(F.max("k.wadat_ist") == "", "Created")
+     .otherwise("Shipped").alias("dlvstatus_cd")
 )
-
-
-
-
