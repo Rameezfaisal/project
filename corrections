@@ -40,6 +40,10 @@ CONST_LANG_KEY = 'E'
 # --- 3. UTILITY ---
 # (Columns are already lowercase in your env, so we just read)
 
+# --- CONFIGURATION (Crucial for SAP Dates) ---
+spark.conf.set("spark.sql.parquet.datetimeRebaseModeInWrite", "LEGACY")
+spark.conf.set("spark.sql.parquet.int96RebaseModeInWrite", "LEGACY")
+spark.conf.set("spark.sql.avro.datetimeRebaseModeInWrite", "LEGACY")
 
 
 
