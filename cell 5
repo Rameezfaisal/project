@@ -1,30 +1,29 @@
-Cell 8 — Spares 5-Year Consumption (SPRSCONS)
+Cell 9 — Spares 26-Week Demand (SPRSDMD26WK)
 Business purpose
 For each OB Parent → NHA, calculate:
-“How many of these NHAs were shipped as spares in the last 5 years?”
-This measures after-market demand from:
-Customer shipments
-Only valid order types
-Excluding stock transfers
-Last 5 years only
-This is one of the strongest OB signals.
+“How much open customer demand exists for this NHA in the next 26 weeks?”
+This comes from:
+Open Sales Orders
+Not closed
+Due in next 26 weeks
+Valid spare order types
+This is the forward-looking aftermarket risk.
 
 
 
 
 
-
-
-sprs_5yrs = (
-    spares
+sprs_dmd26wk = (
+    so2
     .select(
-        F.col("material").alias("a_material"),
-        F.col("qty_shipped").cast("int").alias("qty_shipped"),
-        F.col("source_doc").alias("source_doc"),
-        F.col("order_type").alias("order_type"),
-        F.to_date("actual_gi", "yyyyMMdd").alias("actual_gi_dt")
+        F.col("part").alias("s_part"),
+        F.col("openqty").cast("int").alias("openqty"),
+        F.col("ordergroup").alias("ordergroup"),
+        F.col("orderstatus").alias("orderstatus"),
+        F.to_date("deliveryduedate", "yyyyMMdd").alias("deliveryduedate_dt"),
+        F.col("ordertype").alias("ordertype")
     )
-    .alias("a")
+    .alias("s")
     .join(
         mknha
         .select(
@@ -32,22 +31,23 @@ sprs_5yrs = (
             F.col("nha").alias("m_nha")
         )
         .alias("m"),
-        F.col("a.a_material") == F.col("m.m_nha"),
+        F.col("s.s_part") == F.col("m.m_nha"),
         "inner"
     )
     .where(
-        (F.col("a.source_doc") != "STO") &
-        F.col("a.order_type").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP") &
-        (F.col("a.actual_gi_dt") > F.date_sub(F.current_date(), 365 * 5))
+        (F.col("s.ordergroup") == "SO") &
+        (F.lower(F.col("s.orderstatus")) != "closed") &
+        (F.col("s.deliveryduedate_dt") >= dt1wk) &
+        (F.col("s.deliveryduedate_dt") <= dt26wk) &
+        F.col("s.ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")
     )
     .groupBy(
         F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("a.a_material").alias("nha")
+        F.col("s.s_part").alias("nha")
     )
     .agg(
-        F.sum("a.qty_shipped").cast("int").alias("sprs_5yrs_consumption")
+        F.sum("s.openqty").cast("int").alias("sprs_dmd")
     )
-    .filter(F.col("sprs_5yrs_consumption") > 0)
 )
 
-sprs_5yrs.cache()
+sprs_dmd26wk.cache()
