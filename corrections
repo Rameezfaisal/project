@@ -1,70 +1,68 @@
-Cell 6: Document Flow Logic (F1 & F2)
+​Technical Note:
+​df_vbfa (from Cell 2) contains flow starting with the Sales Order. This serves as "Table A".
+​We need a new read of VBFA for "Table B" because the preceding document for Table B is a Delivery, not a Sales Order, so it wasn't captured in our initial Cell 2 filter.
+​We use left joins or standard inner joins as per SAP logic.
+
+
+
+
+
+Cell 7: Status (JEST) & Inventory (MARD) Logic
 ​Business Context:
-This cell reconstructs the "Document Flow" (VBFA) to track the lifecycle of the order. We are looking for a two-step chain:
-​Sales Order \rightarrow Delivery (Table A)
-​Delivery \rightarrow Goods Issue / Invoice (Table B)
-​We calculate:
-​F1 (Delivered Qty): How much quantity has successfully moved through the chain.
-​F2 (PGI Qty): Specifically tracking quantities that have been "Posted Goods Issue" (finalized), often filtered by specific document types (like '49%' series).
+This cell handles two critical lookups:
+​Status Flags (JEST): Checks the system status for specific "blocks" or "progress markers" (like 'Front Load', 'PO Received'). We filter this by the OBJNR (Object Number) from the Sales Orders in our scope.
+​Inventory Snapshot (MARD): Fetches current stock levels (LABST) for the material at the specific plant/storage location.
+​Optimization: We implement a "Calculated Join Key" for the Storage Location (LGORT) to handle the complex business rule (swapping '0010' to '0030' for Plant '3000') efficiently without slowing down the join.
 
 
 
 
-# --- PREPARE DATASETS ---
 
-# Table A: Flow starting from the Sales Order (Already filtered in Cell 2)
-# SAP Filter: STUFE='00' AND VBTYP_N IN ('T','J') (T=Returns, J=Delivery)
-df_vbfa_a = df_vbfa.filter(
-    (F.col("stufe") == "00") & 
-    (F.col("vbtyp_n").isin("T", "J"))
-).alias("a")
+# --- 1. JEST STATUS LOGIC ---
+# Filter JEST to only relevant Object Numbers from our Sales Order Header (VBAK)
+# This prevents scanning the entire billion-row JEST table
+target_objnrs = df_vbak.select("objnr").distinct()
 
-# Table B: Flow starting from the Delivery (Subsequent steps)
-# We need to read VBFA again without the Sales Order Range filter
-# Optimization: Filter for relevant child types to reduce scan size
-df_vbfa_b = spark.read.table(S_VBFA).filter(
-    F.col("vbtyp_n").isin("R", "h") # R=Invoice/PGI, h=Returns
-).alias("b")
-
-# --- BUILD THE JOIN ---
-# Join A (Order->Dlv) to B (Dlv->PGI)
-# SAP Join: a.VBELN (Delivery) = b.VBELV (Preceding Doc of PGI)
-#           a.POSNN (Dlv Item) = b.POSNV (Preceding Item of PGI)
-df_flow_joined = df_vbfa_a.join(
-    df_vbfa_b,
-    (F.col("a.vbeln") == F.col("b.vbelv")) & 
-    (F.col("a.posnn") == F.col("b.posnv"))
+ds_jest = df_jest.alias("j").join(
+    target_objnrs, "objnr" # Inner join acts as a filter
+).join(
+    df_tj30t.alias("t"), 
+    F.col("j.stat") == F.col("t.estat"), 
+    "left"
+).filter(
+    (F.col("j.stat").isin('E0001', 'E0004', 'E0005', 'E0008', 'E0009')) & 
+    (F.col("j.inact") != "X") & 
+    (F.col("t.stsma") == CONST_STATUS_PRF) & # Z0000003
+    (F.col("t.spras") == CONST_LANG_KEY)     # E
+).groupBy("j.objnr").agg(
+    F.max(F.when(F.col("j.stat") == "E0008", "X").otherwise("")).alias("frontload_cd"),
+    F.max(F.when(F.col("j.stat") == "E0009", "X").otherwise("")).alias("poreceived_cd"),
+    # Booking: If status is E0001/4/5, capture the text description
+    F.max(F.when(F.col("j.stat").isin('E0001', 'E0004', 'E0005'), F.col("t.txt04")).otherwise("")).alias("booking_cd")
 )
 
-# --- F1 LOGIC (Delivered Quantity) ---
-ds_f1 = df_flow_joined.groupBy(
-    F.col("a.vbelv").alias("vbelv"), # Original Sales Order
-    F.col("a.posnv").alias("posnv")  # Original Sales Item
-).agg(
-    F.max("a.vbeln").alias("f1_vbeln_cd"), # Latest Delivery Doc
-    
-    # Conditional Sum matching SAP CASE statement
-    F.sum(
-        F.when((F.col("b.vbtyp_n") == "R") & (F.col("b.plmin") == "+"), F.coalesce(F.col("b.rfmng_flo"), F.lit(0)))
-         .when(F.col("b.vbtyp_n") == "h", F.coalesce(F.col("b.rfmng_flo"), F.lit(0)) * -1)
-         .otherwise(0)
-    ).alias("delvd_qty_cd")
+# --- 2. MARD (INVENTORY) LOGIC ---
+# Pre-calculate the "Effective Storage Location" on the VBAP side to enable a fast Equi-Join
+# Rule: If LGORT is empty or '0010' AND Plant is '3000', use '0030'. Else use LGORT (defaulting '0010' if empty).
+df_vbap_calc = df_vbap.withColumn(
+    "calc_lgort",
+    F.when(
+        ((F.coalesce(F.col("lgort"), F.lit("")) == "") | (F.col("lgort") == "0010")) & 
+        (F.col("werks") == "3000"), 
+        "0030"
+    ).when(
+        F.coalesce(F.col("lgort"), F.lit("")) != "", 
+        F.col("lgort")
+    ).otherwise("0010")
 )
 
-# --- F2 LOGIC (PGI Quantity & Last Doc) ---
-# Same join, but extra filter on 'b' (Target Doc starts with 49, e.g., Pro Forma)
-ds_f2 = df_flow_joined.filter(
-    F.col("b.vbeln").like("49%")
-).groupBy(
-    F.col("a.vbelv"), 
-    F.col("a.posnv")
-).agg(
-    F.max("b.vbeln").alias("lastpgidoc_cd"),
-    
-    # Conditional Sum for PGI
-    F.sum(
-        F.when(F.col("b.vbtyp_n") == "R", F.coalesce(F.col("b.rfmng"), F.lit(0)))
-         .when(F.col("b.vbtyp_n") == "h", F.coalesce(F.col("b.rfmng"), F.lit(0)) * -1)
-         .otherwise(0)
-    ).alias("pgiqty_cd")
+# We define this lookup to be joined in the final step
+# We select only needed columns to keep the plan light
+ds_mard = df_mard.select(
+    F.col("matnr"), 
+    F.col("werks"), 
+    F.col("lgort"), 
+    F.col("labst").alias("mard_labst"),
+    F.col("klabs").alias("mard_klabs"),
+    F.col("kinsm").alias("mard_kinsm")
 )
