@@ -1,40 +1,30 @@
-Cell 7 — Manufacturing 5-Year Consumption (MFGCONS5YRS)
+Cell 8 — Spares 5-Year Consumption (SPRSCONS)
 Business purpose
 For each OB Parent → NHA, calculate:
-“How much of this NHA has been consumed in manufacturing in the last 5 years?”
-This measures historical usage from:
-Goods issue movements (261, 262)
-Only manufacturing plants
+“How many of these NHAs were shipped as spares in the last 5 years?”
+This measures after-market demand from:
+Customer shipments
+Only valid order types
+Excluding stock transfers
 Last 5 years only
-This is the OB risk driver.
+This is one of the strongest OB signals.
 
 
 
 
 
 
-mfg_5yrs = (
-    mseg
+
+sprs_5yrs = (
+    spares
     .select(
-        F.col("mblnr").alias("mblnr"),
-        F.col("matnr").alias("b_matnr"),
-        F.col("werks").cast("int").alias("werks"),
-        F.col("bwart").alias("bwart"),
-        F.col("shkzg").alias("shkzg"),
-        F.col("menge").cast("int").alias("menge"),
-        F.col("cpudt_mkpf").alias("cpudt_mkpf")
+        F.col("material").alias("a_material"),
+        F.col("qty_shipped").cast("int").alias("qty_shipped"),
+        F.col("source_doc").alias("source_doc"),
+        F.col("order_type").alias("order_type"),
+        F.to_date("actual_gi", "yyyyMMdd").alias("actual_gi_dt")
     )
-    .alias("b")
-    .join(
-        mkpf
-        .select(
-            F.col("mblnr").alias("d_mblnr"),
-            F.to_date("bldat", "yyyyMMdd").alias("bldat_dt")
-        )
-        .alias("d"),
-        F.col("b.mblnr") == F.col("d.d_mblnr"),
-        "inner"
-    )
+    .alias("a")
     .join(
         mknha
         .select(
@@ -42,26 +32,22 @@ mfg_5yrs = (
             F.col("nha").alias("m_nha")
         )
         .alias("m"),
-        F.col("b.b_matnr") == F.col("m.m_nha"),
+        F.col("a.a_material") == F.col("m.m_nha"),
         "inner"
     )
     .where(
-        F.col("b.bwart").isin("261", "262") &
-        (F.col("d.bldat_dt") > F.date_sub(F.current_date(), 365 * 5)) &
-        (F.col("d.bldat_dt") < F.current_date()) &
-        ((F.col("b.werks") < 2001) | (F.col("b.werks") == 3120)) &
-        (F.to_date("b.cpudt_mkpf", "yyyyMMdd") > F.date_sub(F.current_date(), 365 * 5))
+        (F.col("a.source_doc") != "STO") &
+        F.col("a.order_type").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP") &
+        (F.col("a.actual_gi_dt") > F.date_sub(F.current_date(), 365 * 5))
     )
     .groupBy(
         F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("b.b_matnr").alias("nha")
+        F.col("a.a_material").alias("nha")
     )
     .agg(
-        F.sum(
-            F.when(F.col("b.shkzg") == "S", -F.col("b.menge"))
-             .otherwise(F.col("b.menge"))
-        ).cast("int").alias("mfg_5yrs_consumption")
+        F.sum("a.qty_shipped").cast("int").alias("sprs_5yrs_consumption")
     )
+    .filter(F.col("sprs_5yrs_consumption") > 0)
 )
 
-mfg_5yrs.cache()
+sprs_5yrs.cache()
