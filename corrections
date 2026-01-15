@@ -1,60 +1,40 @@
----------------------------------------------------------------------------
-Py4JJavaError                             Traceback (most recent call last)
-Cell In[133], line 12
-      9 # Optional: Enable AQE Skew Join optimization specifically for this session
-     10 spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
----> 12 spark.sql(f"""
-     13 MERGE INTO {T_SO_STATUS} AS target
-     14 USING source_updates AS source
-     15 ON target.VBELN = source.VBELN 
-     16    AND target.POSNR = source.POSNR 
-     17    AND target.ETENR = source.ETENR
-     18 
-     19 WHEN MATCHED THEN
-     20   UPDATE SET *
-     21 
-     22 WHEN NOT MATCHED THEN
-     23   INSERT *
-     24 """)
-     26 print(f"Merge completed successfully into {T_SO_STATUS}")
+# --- CELL 9: ROBUST MERGE WITH DEDUPLICATION ---
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1631, in SparkSession.sql(self, sqlQuery, args, **kwargs)
-   1627         assert self._jvm is not None
-   1628         litArgs = self._jvm.PythonUtils.toArray(
-   1629             [_to_java_column(lit(v)) for v in (args or [])]
-   1630         )
--> 1631     return DataFrame(self._jsparkSession.sql(sqlQuery, litArgs), self)
-   1632 finally:
-   1633     if len(kwargs) > 0:
+# 1. Enforce Uniqueness (Crucial Fix)
+# We drop duplicates on the Primary Key. 
+# If a join caused an explosion, this arbitrarily picks one (safe for status updates).
+final_df_clean = final_df.dropDuplicates(["VBELN", "POSNR", "ETENR"])
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
+# 2. Filter Null Keys (Safety Net)
+# Delta will fail if the Join Keys are Null.
+final_df_clean = final_df_clean.filter(
+    F.col("VBELN").isNotNull() & 
+    F.col("POSNR").isNotNull() & 
+    F.col("ETENR").isNotNull()
+)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:179, in capture_sql_exception.<locals>.deco(*a, **kw)
-    177 def deco(*a: Any, **kw: Any) -> Any:
-    178     try:
---> 179         return f(*a, **kw)
-    180     except Py4JJavaError as e:
-    181         converted = convert_exception(e.java_exception)
+# 3. Repartition for Write Stability
+# We keep the repartitioning to prevent the Skew error you saw earlier.
+final_df_safe = final_df_clean.repartition(200, "VBELN")
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/protocol.py:326, in get_return_value(answer, gateway_client, target_id, name)
-    324 value = OUTPUT_CONVERTER[type](answer[2:], gateway_client)
-    325 if answer[1] == REFERENCE_TYPE:
---> 326     raise Py4JJavaError(
-    327         "An error occurred while calling {0}{1}{2}.\n".
-    328         format(target_id, ".", name), value)
-    329 else:
-    330     raise Py4JError(
-    331         "An error occurred while calling {0}{1}{2}. Trace:\n{3}\n".
-    332         format(target_id, ".", name, value))
+# 4. Register View
+final_df_safe.createOrReplaceTempView("source_updates")
 
-Py4JJavaError: An error occurred while calling o407.sql.
-: org.apache.spark.SparkException: Job aborted due to stage failure: Task 0 in stage 438.0 failed 4 times, most recent failure: Lost task 0.3 in stage 438.0 (TID 4207) (vm-d4e63621 executor 5): org.apache.spark.SparkException: [TASK_WRITE_FAILED] Task failed while writing rows to abfss://1d087dee-28bf-4ed5-9d53-1138f15f786f@onelake.dfs.fabric.microsoft.com/d562810f-a154-4f8d-9788-f57b96d02df4/Tables/eng_test/sales_order.
+print("Starting Merge...")
+
+# 5. Execute Merge
+spark.sql(f"""
+MERGE INTO {T_SO_STATUS} AS target
+USING source_updates AS source
+ON target.VBELN = source.VBELN 
+   AND target.POSNR = source.POSNR 
+   AND target.ETENR = source.ETENR
+
+WHEN MATCHED THEN
+  UPDATE SET *
+
+WHEN NOT MATCHED THEN
+  INSERT *
+""")
+
+print(f"Merge completed successfully into {T_SO_STATUS}")
