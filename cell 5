@@ -1,71 +1,45 @@
-root
- |-- vbeln: string (nullable = true)
- |-- posnr: string (nullable = true)
- |-- etenr: string (nullable = true)
- |-- booking: string (nullable = true)
- |-- carrier: string (nullable = true)
- |-- carrier_name: string (nullable = true)
- |-- dlvstatus: string (nullable = true)
- |-- f1_vbeln: string (nullable = true)
- |-- frontload: string (nullable = true)
- |-- lastpgidoc: string (nullable = true)
- |-- opendlvdoc: string (nullable = true)
- |-- order_status: string (nullable = true)
- |-- poreceived: string (nullable = true)
- |-- shipto: string (nullable = true)
- |-- shiptoname: string (nullable = true)
- |-- vbak_auart: string (nullable = true)
- |-- vbak_aufnr: string (nullable = true)
- |-- vbak_autlf: string (nullable = true)
- |-- vbak_bstnk: string (nullable = true)
- |-- vbak_ernam: string (nullable = true)
- |-- vbak_faksk: string (nullable = true)
- |-- vbak_ihrez: string (nullable = true)
- |-- vbak_kunnr: string (nullable = true)
- |-- vbak_lifsk: string (nullable = true)
- |-- vbak_objnr: string (nullable = true)
- |-- vbak_vkorg: string (nullable = true)
- |-- vbak_vsnmr_v: string (nullable = true)
- |-- vbak_waerk: string (nullable = true)
- |-- vbap_abgru: string (nullable = true)
- |-- vbap_arktx: string (nullable = true)
- |-- vbap_charg: string (nullable = true)
- |-- vbap_ernam: string (nullable = true)
- |-- vbap_erzet: string (nullable = true)
- |-- vbap_faksp: string (nullable = true)
- |-- vbap_grkor: string (nullable = true)
- |-- vbap_kdmat: string (nullable = true)
- |-- vbap_lgort: string (nullable = true)
- |-- vbap_lprio: string (nullable = true)
- |-- vbap_matnr: string (nullable = true)
- |-- vbap_posex: string (nullable = true)
- |-- vbap_prodh: string (nullable = true)
- |-- vbap_vstel: string (nullable = true)
- |-- vbap_werks: string (nullable = true)
- |-- vbep_lifsp: string (nullable = true)
- |-- vbuk_lfgsk: string (nullable = true)
- |-- vbuk_wbstk: string (nullable = true)
- |-- vbup_lfsta: string (nullable = true)
- |-- last_changed: timestamp (nullable = true)
- |-- pgidate: string (nullable = true)
- |-- vbak_erdat: string (nullable = true)
- |-- vbap_aedat: string (nullable = true)
- |-- vbap_erdat: string (nullable = true)
- |-- vbep_edatu: string (nullable = true)
- |-- vbep_h_edatu: string (nullable = true)
- |-- vbep_mbdat: string (nullable = true)
- |-- delvd_qty: double (nullable = true)
- |-- expectedqtycumulative: decimal(13,3) (nullable = true)
- |-- mard_kinsm: decimal(13,3) (nullable = true)
- |-- mard_klabs: decimal(13,3) (nullable = true)
- |-- mard_labst: decimal(13,3) (nullable = true)
- |-- opendlvqty: decimal(13,3) (nullable = true)
- |-- pgiqty: decimal(15,3) (nullable = true)
- |-- qtyshippedttline: decimal(13,3) (nullable = true)
- |-- vbak_netwr: decimal(15,2) (nullable = true)
- |-- vbap_kwmeng: decimal(15,3) (nullable = true)
- |-- vbap_netpr: decimal(11,2) (nullable = true)
- |-- vbep_bmeng: decimal(13,3) (nullable = true)
- |-- mard_lgort: string (nullable = true)
- |-- mard_matnr: string (nullable = true)
- |-- mard_werks: string (nullable = true)
+Cell 9 — Spares 26-Week Demand (SAP-faithful, Fabric-safe)
+Business meaning
+“How much open spares demand exists for each NHA in the next 26 weeks?”
+
+
+
+
+
+
+sprs_dmd26wk = (
+    so2
+    .select(
+        F.col("vbap_matnr").alias("s_matnr"),
+        F.col("opendlvqty").cast("int").alias("openqty"),
+        F.to_date("vbep_edatu", "yyyyMMdd").alias("deliverydue_dt"),
+        F.col("vbak_auart").alias("ordertype"),
+        F.col("order_status").alias("order_status")
+    )
+    .alias("s")
+    .join(
+        mknha
+        .select(
+            F.col("cmpprtno").alias("m_cmpprtno"),
+            F.col("nha").alias("m_nha")
+        )
+        .alias("m"),
+        F.col("s.s_matnr") == F.col("m.m_nha"),
+        "inner"
+    )
+    .where(
+        (F.lower(F.col("s.order_status")) != "closed") &
+        (F.col("s.deliverydue_dt") >= dt1wk) &
+        (F.col("s.deliverydue_dt") <= dt26wk) &
+        F.col("s.ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")
+    )
+    .groupBy(
+        F.col("m.m_cmpprtno").alias("cmpprtno"),
+        F.col("s.s_matnr").alias("nha")
+    )
+    .agg(
+        F.sum("s.openqty").cast("int").alias("sprs_dmd")
+    )
+)
+
+sprs_dmd26wk.cache()
