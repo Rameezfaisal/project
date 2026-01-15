@@ -1,83 +1,80 @@
-
-
-spark.conf.set("spark.sql.legacy.timeParserPolicy", "CORRECTED")
-
-
-
-
-
-from pyspark.sql import functions as F
-from pyspark.sql.types import *
-
-# --- 1. TABLE PATH PARAMETERS ---
-# The Base Fact Table (Silver Layer) we just created
-S_FACT_STATUS = "your_lakehouse.zt_m_sales_order_status_v2"
-
-# Master Data / Dimensions (Bronze/Silver Layers)
-S_KNA1  = "your_lakehouse.ecc_kna1"    # Customer
-S_MARA  = "your_lakehouse.ecc_mara"    # Material Master
-S_MARC  = "your_lakehouse.ecc_marc"    # Plant Data
-S_MBEW  = "your_lakehouse.ecc_mbew"    # Material Valuation (Cost)
-S_T024X = "your_lakehouse.ecc_t024x"   # Lab/Office
-S_QMEL  = "your_lakehouse.ecc_qmel"    # Service Notification
-S_AFKO  = "your_lakehouse.ecc_afko"    # Order Header (Service)
-S_AFVC  = "your_lakehouse.ecc_afvc"    # Operation (Service)
-S_VEKP  = "your_lakehouse.ecc_vekp"    # Handling Units (Tracking)
-S_VBKD  = "your_lakehouse.ecc_vbkd"    # Sales Business Data (Incoterms)
-S_PART  = "your_lakehouse.cv_part"     # Custom Part Attributes
-
-# Target Gold Table
-T_GOLD_ANALYSIS = "your_lakehouse.gold_sales_analysis"
-
-# --- 2. BUSINESS LOGIC CONSTANTS ---
-RETENTION_DAYS = 732  # Keep 2 Years of History + All Open Orders
-CONST_LANG_KEY = 'E'
-
-# --- 3. UTILITY ---
-# (Columns are already lowercase in your env, so we just read)
-
-# --- CONFIGURATION (Crucial for SAP Dates) ---
-spark.conf.set("spark.sql.parquet.datetimeRebaseModeInWrite", "LEGACY")
-spark.conf.set("spark.sql.parquet.int96RebaseModeInWrite", "LEGACY")
-spark.conf.set("spark.sql.avro.datetimeRebaseModeInWrite", "LEGACY")
-
-
-
-
-
-
-
-
-
-Cell 2: Load Base Fact & Apply Scoping
+Cell 3: Prepare Dimension & Lookup Tables
 ​Business Context:
-Here we load the "Silver" table we just populated. We immediately filter it to reduce the data volume for the subsequent joins.
-​Filter 1 (Exclusions): Remove Order Types ZVC and ZR07 (as per SAP logic).
-​Filter 2 (Time Scope): We keep a record if:
-​It is an 'Open' order (regardless of age).
-​OR the Line Item Creation Date (VBAP_ERDAT) is within the last 2 years (732 days).
+We load and pre-process the "Reference Data". This includes:
+​Costs (MBEW): We specifically look for standard prices in Plant 2000 and 3120.
+​Tracking (VEKP): We aggregate Handling Units to find the latest tracking number (EXIDV2).
+​Incoterms (VBKD): We split this into "Header Level" (applies to whole order) and "Item Level" (specific to one line).
+​Service Activities (AFKO/AFVC): Logic to find the "Activity Type" (LARNT) for service orders.
 
 
 
 
 
 
-# --- LOAD BASE FACT ---
-df_status = spark.read.table(S_FACT_STATUS)
+# --- 1. SIMPLE DIMENSIONS ---
+df_kna1 = spark.read.table(S_KNA1).select("kunnr", "name1")
+df_mara = spark.read.table(S_MARA).select("matnr", "matkl", "labor", "mstae")
+df_marc = spark.read.table(S_MARC).select("matnr", "werks", "dispo", "ekgrp")
+df_part = spark.read.table(S_PART).select(F.col("Part").alias("part_matnr"), "Consumable")
+df_t024x = spark.read.table(S_T024X).filter(F.col("spras") == CONST_LANG_KEY).select("labor", "lbtxt")
+df_qmel = spark.read.table(S_QMEL).select(F.col("aufnr").alias("qmel_aufnr"), F.col("qmnum"))
 
-# --- APPLY SCOPE FILTERS ---
-# SAP Logic: WHERE PRST.VBAK_AUART NOT IN ('ZVC','ZR07')
-#            AND (PRST.VBAP_ERDAT >= ADD_DAYS(CURRENT_DATE,-732) OR PRST.ORDER_STATUS = 'Open')
+# --- 2. COST LOGIC (MBEW) ---
+# We need Standard Price (STPRS) for two specific Valuation Areas (Plants)
+df_mbew_raw = spark.read.table(S_MBEW).select("matnr", "bwkey", "stprs")
 
-df_base = df_status.filter(
-    (~F.col("VBAK_AUART").isin("ZVC", "ZR07")) & 
-    (
-        (F.col("ORDER_STATUS") == "Open") | 
-        (F.col("VBAP_ERDAT") >= F.date_sub(F.current_date(), RETENTION_DAYS))
-    )
+ds_mbew_2000 = df_mbew_raw.filter(F.col("bwkey") == "2000").select(
+    F.col("matnr").alias("mbew2_matnr"), 
+    F.col("stprs").alias("stprs_2000")
 )
 
-# Optimization: Since this is the foundation for all subsequent joins,
-# we can hint to Spark that this is our main driving table.
-# count = df_base.count() 
-# print(f"Base records to enrich: {count}")
+ds_mbew_3120 = df_mbew_raw.filter(F.col("bwkey") == "3120").select(
+    F.col("matnr").alias("mbew3_matnr"), 
+    F.col("stprs").alias("stprs_3120")
+)
+
+# --- 3. TRACKING LOGIC (VEKP) ---
+# SAP: MAX(EXIDV2) GROUP BY VPOBJKEY
+ds_vekp = spark.read.table(S_VEKP).groupBy("vpobjkey").agg(
+    F.max("exidv2").alias("exidv2")
+)
+
+# --- 4. INCOTERMS LOGIC (VBKD) ---
+df_vbkd = spark.read.table(S_VBKD).select("vbeln", "posnr", "inco1", "kursk", "prsdt", "ihrez", "zterm")
+
+# Header Level (POSNR = 000000)
+ds_vbkd_h = df_vbkd.filter(F.col("posnr") == "000000").select(
+    F.col("vbeln").alias("h_vbeln"),
+    F.col("inco1").alias("h_inco1"),
+    F.col("kursk").alias("h_kursk"),
+    F.col("prsdt").alias("h_prsdt")
+)
+
+# Item Level (All POSNR)
+ds_vbkd_i = df_vbkd.select(
+    F.col("vbeln").alias("i_vbeln"),
+    F.col("posnr").alias("i_posnr"),
+    F.col("inco1").alias("i_inco1"),
+    F.col("ihrez").alias("i_ihrez"),
+    F.col("zterm").alias("i_zterm")
+)
+
+# --- 5. ACTIVITY TYPE LOGIC (AFKO/AFVC) ---
+# Complex Logic: Get Activity Type (LARNT) from the "First Operation" (MIN VORNR) of a Service Order
+df_afko = spark.read.table(S_AFKO).select("aufnr", "aufpl")
+df_afvc = spark.read.table(S_AFVC).select("aufpl", "vornr", "larnt")
+
+# Step A: Find the first operation (VORNR) for each Plan (AUFPL)
+ds_first_op = df_afvc.groupBy("aufpl").agg(F.min("vornr").alias("min_vornr"))
+
+# Step B: Join back to get LARNT, then Join to AFKO to get AUFNR
+ds_act = ds_first_op.join(
+    df_afvc,
+    (ds_first_op.aufpl == df_afvc.aufpl) & (ds_first_op.min_vornr == df_afvc.vornr)
+).join(
+    df_afko, "aufpl"
+).select(
+    F.col("aufnr").alias("act_aufnr"),
+    F.col("larnt").alias("act_larnt")
+)
+
