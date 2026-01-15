@@ -1,46 +1,38 @@
-Cell 4: Delivery & PGI Status Logic (LIKP/LIPS)
+Cell 5: VBEP Cumulative Logic & First Schedule Line
 ​Business Context:
-This cell analyzes the Deliveries associated with the Sales Orders. It calculates:
-​Open Delivery Quantity: The quantity currently processing in deliveries.
-​Shipped Quantity: The quantity that has actually been PGI'd (Post Goods Issue).
-​Delivery Status: Whether the line is 'Created' or 'Shipped'.
-​Technical Note:
-​We replicate the SAP WHERE clause strictness (wadat_ist <> ''), which implies this specific logic block focuses on processed/PGI'd deliveries.
-​We exclude Returns (3%) and Internal/Service Orders (4%) based on the reference document logic.
+This cell handles the "Schedule Lines" (VBEP), which define when and how much quantity is confirmed.
+​Expected Qty Cumulative: Calculates the running total of confirmed quantities (BMENG) for each line item.
+​Optimization: The SAP code used a slow "Self-Join" (t1.ETENR >= t2.ETENR). In Spark, we replace this with a highly efficient Window Function (Running Sum).
+​First Date (H): Captures the EDATU (Schedule Line Date) from the very first schedule line (ETENR = '0001') to establish the baseline date.
 
 
 
 
 
-# --- LIKP_LIPS LOGIC ---
-# Join Delivery Item (s) to Header (k)
-ds_likp_lips = df_lips.alias("s").join(
-    df_likp.alias("k"), 
-    F.col("s.vbeln") == F.col("k.vbeln")
-).filter(
-    (F.col("s.vgbel") != "") & 
-    (~F.col("s.vgbel").like("4%")) & 
-    (~F.col("s.vgbel").like("3%")) &
-    # Replicating SAP Logic: Filter for rows where PGI Date exists
-    # Note: If your Lakehouse converts SAP empty strings to NULL, change to .isNotNull()
-    (F.col("k.wadat_ist") != "") 
-).groupBy(
-    "s.vgbel", "s.vgpos"  # Group by Sales Order Number & Item
-).agg(
-    F.max("s.vbeln").alias("opendlvdoc_cd"),
-    
-    # OpenDlvQty: Sum of Delivery Quantity (LGMNG)
-    F.sum("s.lgmng").alias("opendlvqty_cd"),
-    
-    # QtyShippedTtLine: If PGI Date is present, sum Actual Delivered Qty (LFIMG)
-    # Since we filtered wadat_ist != '' in WHERE, this ELSE condition is the primary path
-    F.when(F.max("k.wadat_ist") == "", 0)
-     .otherwise(F.sum("s.lfimg")).alias("qtyshippedttline_cd"),
-    
-    # PGIDate: Max PGI Date
-    F.max("k.wadat_ist").alias("pgidate_cd"),
-    
-    # DlvStatus: Derived Status
-    F.when(F.max("k.wadat_ist") == "", "Created")
-     .otherwise("Shipped").alias("dlvstatus_cd")
+# --- 1. VBEP CUMULATIVE LOGIC ---
+# Filter VBEP first as per SAP requirements (BMENG > 0)
+df_vbep_filtered = df_vbep.filter(F.col("bmeng") > 0)
+
+# Define Window: Partition by Order/Item, Order by Schedule Line Number (ETENR)
+w_cum = Window.partitionBy("vbeln", "posnr").orderBy("etenr").rowsBetween(Window.unboundedPreceding, Window.currentRow)
+
+ds_vbep_cum = df_vbep_filtered.select(
+    "vbeln", 
+    "posnr", 
+    "etenr", 
+    "bmeng",
+    "edatu",
+    "lifsp",
+    "mbdat"
+).withColumn(
+    "expectedqtycumulative_cd", 
+    F.sum("bmeng").over(w_cum) # Running Sum replacing the SAP Self-Join
+)
+
+# --- 2. H LOGIC (First Schedule Line Date) ---
+# SAP: SELECT ... WHERE ETENR = '0001'
+ds_h = df_vbep.filter(F.col("etenr") == "0001").select(
+    F.col("vbeln").alias("h_vbeln"),
+    F.col("posnr").alias("h_posnr"),
+    F.col("edatu").alias("vbep_h_edatu_cd")
 )
