@@ -1,38 +1,70 @@
-Cell 5: VBEP Cumulative Logic & First Schedule Line
+Cell 6: Document Flow Logic (F1 & F2)
 ​Business Context:
-This cell handles the "Schedule Lines" (VBEP), which define when and how much quantity is confirmed.
-​Expected Qty Cumulative: Calculates the running total of confirmed quantities (BMENG) for each line item.
-​Optimization: The SAP code used a slow "Self-Join" (t1.ETENR >= t2.ETENR). In Spark, we replace this with a highly efficient Window Function (Running Sum).
-​First Date (H): Captures the EDATU (Schedule Line Date) from the very first schedule line (ETENR = '0001') to establish the baseline date.
+This cell reconstructs the "Document Flow" (VBFA) to track the lifecycle of the order. We are looking for a two-step chain:
+​Sales Order \rightarrow Delivery (Table A)
+​Delivery \rightarrow Goods Issue / Invoice (Table B)
+​We calculate:
+​F1 (Delivered Qty): How much quantity has successfully moved through the chain.
+​F2 (PGI Qty): Specifically tracking quantities that have been "Posted Goods Issue" (finalized), often filtered by specific document types (like '49%' series).
 
 
 
 
+# --- PREPARE DATASETS ---
 
-# --- 1. VBEP CUMULATIVE LOGIC ---
-# Filter VBEP first as per SAP requirements (BMENG > 0)
-df_vbep_filtered = df_vbep.filter(F.col("bmeng") > 0)
+# Table A: Flow starting from the Sales Order (Already filtered in Cell 2)
+# SAP Filter: STUFE='00' AND VBTYP_N IN ('T','J') (T=Returns, J=Delivery)
+df_vbfa_a = df_vbfa.filter(
+    (F.col("stufe") == "00") & 
+    (F.col("vbtyp_n").isin("T", "J"))
+).alias("a")
 
-# Define Window: Partition by Order/Item, Order by Schedule Line Number (ETENR)
-w_cum = Window.partitionBy("vbeln", "posnr").orderBy("etenr").rowsBetween(Window.unboundedPreceding, Window.currentRow)
+# Table B: Flow starting from the Delivery (Subsequent steps)
+# We need to read VBFA again without the Sales Order Range filter
+# Optimization: Filter for relevant child types to reduce scan size
+df_vbfa_b = spark.read.table(S_VBFA).filter(
+    F.col("vbtyp_n").isin("R", "h") # R=Invoice/PGI, h=Returns
+).alias("b")
 
-ds_vbep_cum = df_vbep_filtered.select(
-    "vbeln", 
-    "posnr", 
-    "etenr", 
-    "bmeng",
-    "edatu",
-    "lifsp",
-    "mbdat"
-).withColumn(
-    "expectedqtycumulative_cd", 
-    F.sum("bmeng").over(w_cum) # Running Sum replacing the SAP Self-Join
+# --- BUILD THE JOIN ---
+# Join A (Order->Dlv) to B (Dlv->PGI)
+# SAP Join: a.VBELN (Delivery) = b.VBELV (Preceding Doc of PGI)
+#           a.POSNN (Dlv Item) = b.POSNV (Preceding Item of PGI)
+df_flow_joined = df_vbfa_a.join(
+    df_vbfa_b,
+    (F.col("a.vbeln") == F.col("b.vbelv")) & 
+    (F.col("a.posnn") == F.col("b.posnv"))
 )
 
-# --- 2. H LOGIC (First Schedule Line Date) ---
-# SAP: SELECT ... WHERE ETENR = '0001'
-ds_h = df_vbep.filter(F.col("etenr") == "0001").select(
-    F.col("vbeln").alias("h_vbeln"),
-    F.col("posnr").alias("h_posnr"),
-    F.col("edatu").alias("vbep_h_edatu_cd")
+# --- F1 LOGIC (Delivered Quantity) ---
+ds_f1 = df_flow_joined.groupBy(
+    F.col("a.vbelv").alias("vbelv"), # Original Sales Order
+    F.col("a.posnv").alias("posnv")  # Original Sales Item
+).agg(
+    F.max("a.vbeln").alias("f1_vbeln_cd"), # Latest Delivery Doc
+    
+    # Conditional Sum matching SAP CASE statement
+    F.sum(
+        F.when((F.col("b.vbtyp_n") == "R") & (F.col("b.plmin") == "+"), F.coalesce(F.col("b.rfmng_flo"), F.lit(0)))
+         .when(F.col("b.vbtyp_n") == "h", F.coalesce(F.col("b.rfmng_flo"), F.lit(0)) * -1)
+         .otherwise(0)
+    ).alias("delvd_qty_cd")
+)
+
+# --- F2 LOGIC (PGI Quantity & Last Doc) ---
+# Same join, but extra filter on 'b' (Target Doc starts with 49, e.g., Pro Forma)
+ds_f2 = df_flow_joined.filter(
+    F.col("b.vbeln").like("49%")
+).groupBy(
+    F.col("a.vbelv"), 
+    F.col("a.posnv")
+).agg(
+    F.max("b.vbeln").alias("lastpgidoc_cd"),
+    
+    # Conditional Sum for PGI
+    F.sum(
+        F.when(F.col("b.vbtyp_n") == "R", F.coalesce(F.col("b.rfmng"), F.lit(0)))
+         .when(F.col("b.vbtyp_n") == "h", F.coalesce(F.col("b.rfmng"), F.lit(0)) * -1)
+         .otherwise(0)
+    ).alias("pgiqty_cd")
 )
