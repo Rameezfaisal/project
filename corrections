@@ -1,110 +1,43 @@
-PROCEDURE "_SYS_BIC"."prd.gops.GLIS::SP_SO_ORDER_STATUS_INIT" (BATCH_LIMIT INTEGER DEFAULT 1000000,ITERATION_LIMIT INTEGER DEFAULT 10 ) 
-	LANGUAGE SQLSCRIPT
-	SQL SECURITY INVOKER 
-	--DEFAULT SCHEMA <default_schema_name>
---	READS SQL DATA 
-	AS
-BEGIN
-
-/*---------------------------------------------------------------------
-*Program Name : SP_SO_ORDER_STATUS_INIT
-*Project      : CV_SQL_SO OPTIMIZATION 
-*Developer    : DHARANIDHAR MALLURI
-*Requestor    : SANKAR TADINADA
-*Create Date  : 15/12/2019
-*Call By      : NA
-*--------------------------------------------------------------------- 
-*Description  : THIS SP CALLS THE SP_CREATE_SO_ORDER_STATUS_V2 BY PROVIDING THE LIST OF SALES ORDERS.
-*---------------------------------------------------------------------
-* Revision Log:
-* Date       Developer           Description
-* 15/12/2019 MALLUDH             INTIAL VERSION (INCIDENT: INC0462937)
-* 20/01/2020 MALLUDH             MADE A TEMPORARY CHANGE TO CALL THE V2 VERSION OF SP_CREATE_SO_ORDER_STATUS
-*----------------------------------------------------------------------*/ 
-
-DECLARE NO_OF_ROWS INTEGER;
-DECLARE LOOP_VAR INTEGER;
-DECLARE FROM_VBELN NVARCHAR(10);
-DECLARE TO_VBELN NVARCHAR(10);
-DECLARE	PAUSE_TIME TIMESTAMP;
+Cell 1: Environment Setup & Parameterization
+​In this cell, we define the environment configurations. In business terms, we are setting the "addresses" for all our source SAP tables and the target status table. We also define the filter range for the Sales Orders (VBELN), which replaces the manual batching logic from the SAP INIT procedure.
 
 
-  IF  (SELECT COUNT(1) FROM ALEX_CUSTOM.ZT_CONFIG WHERE NAME = 'SO_ORDER_STATUS') = 0 THEN
-    
-       INSERT 
-       INTO   "ALEX_CUSTOM"."ZT_CONFIG" (NAME, COUNTER, SIGN, OPTION, LOW, HIGH)
-       
-	   SELECT 'SO_ORDER_STATUS' AS NAME,ROW_NUMBER ( ) OVER (ORDER BY VBELN_FROM ASC) AS COUNTER
-             ,'I' AS SIGN, 'BT' AS OPTION, VBELN_FROM AS LOW,VBELN_TO AS HIGH
-       FROM  (
-              SELECT  VBELN VBELN_FROM,LEAD(VBELN,1,NULL) OVER (ORDER BY ROW_NUM) AS VBELN_TO, ROW_NUM
-              FROM   (SELECT  VBELN,ROW_NUM
-                      FROM   (SELECT  VBELN,ROW_NUM 
-                                FROM (SELECT VBELN, (ROW_NUMBER() OVER (ORDER BY VBELN,POSNR,ETENR )) AS ROW_NUM
-                                      FROM   ECC_PRD.VBEP 
-                                      ) A
-                               WHERE MOD(ROW_NUM,:BATCH_LIMIT) = 1
 
-                               UNION
 
-                               SELECT MAX(VBELN),99999999 ROW_NUM
-                               FROM   ECC_PRD.VBEP
-                             ) 
-                      ORDER BY ROW_NUM
-                     )
-             )WHERE VBELN_TO IS NOT NULL;
-	
-END IF;
 
- RANGE_FEED_TBL = SELECT TOP :ITERATION_LIMIT COUNTER, LOW, HIGH 
-                  FROM   ALEX_CUSTOM.ZT_CONFIG
-                  WHERE  NAME = 'SO_ORDER_STATUS'
-                  AND    SIGN = 'I'
-                  ORDER BY LOW ASC;
-  
-  IF  ::ROWCOUNT = 0 THEN
-      SELECT 'ALL ROWS FROM ZT_CONFIG TABLE ARE PROCESSED' FROM DUMMY;
-  END IF;
-                  
-  UPDATE A
-  SET A.SIGN = 'E'
-  FROM ALEX_CUSTOM.ZT_CONFIG A
-  INNER JOIN :RANGE_FEED_TBL TMP
-  ON    A.LOW  = TMP.LOW
-  AND   A.HIGH = TMP.HIGH
-  WHERE A.NAME = 'SO_ORDER_STATUS';
- 
- SELECT MIN(COUNTER) 
- INTO   LOOP_VAR
- FROM  :RANGE_FEED_TBL;
-             
- ITERATION_LIMIT := ITERATION_LIMIT + LOOP_VAR;
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from pyspark.sql.types import *
 
- 
- WHILE LOOP_VAR < ITERATION_LIMIT --NO_OF_ROWS
- DO
- 
- 	SELECT LOW INTO FROM_VBELN 
- 	  FROM :RANGE_FEED_TBL
- 	 WHERE COUNTER = :LOOP_VAR;
- 	 
- 	 
- 	SELECT HIGH INTO TO_VBELN 
- 	  FROM :RANGE_FEED_TBL
- 	 WHERE COUNTER = :LOOP_VAR;
- 	 
+# --- 1. TABLE PATH PARAMETERS ---
+# Source SAP Tables (Assuming they reside in your Lakehouse)
+# Replace 'your_lakehouse' with the actual name or use relative paths
+S_VBEP  = "your_lakehouse.ecc_vbp"
+S_VBAK  = "your_lakehouse.ecc_vbak"
+S_VBAP  = "your_lakehouse.ecc_vbap"
+S_VBUK  = "your_lakehouse.ecc_vbuk"
+S_VBUP  = "your_lakehouse.ecc_vbup"
+S_VBFA  = "your_lakehouse.ecc_vbfa"
+S_LIKP  = "your_lakehouse.ecc_likp"
+S_LIPS  = "your_lakehouse.ecc_lips"
+S_VBPA  = "your_lakehouse.ecc_vbpa"
+S_KNA1  = "your_lakehouse.ecc_kna1"
+S_JEST  = "your_lakehouse.ecc_jest"
+S_TJ30T = "your_lakehouse.ecc_tj30t"
+S_MARD  = "your_lakehouse.ecc_mard"
+S_CSBG  = "your_lakehouse.cvns_csbg_spares_deliveries_new"
 
-	I_TAB_VBELN = SELECT DISTINCT VBELN
-                FROM ECC_PRD.VBEP
-               WHERE VBELN >= :FROM_VBELN
-                 AND VBELN <= :TO_VBELN;
-                 
- 
-    CALL "_SYS_BIC"."prd.gops.GLIS::SP_CREATE_SO_ORDER_STATUS_V2"(:I_TAB_VBELN);    
-   
-   	LOOP_VAR = LOOP_VAR + 1;
-   
- END WHILE;
+# Target Delta Table
+T_SO_STATUS = "your_lakehouse.zt_m_sales_order_status_v2"
 
- 
-END;
+# --- 2. EXECUTION PARAMETERS ---
+# Range filter to replace the SAP BATCH_LIMIT/ITERATION_LIMIT logic
+# For a full run, these can be set to wide ranges or handled via a control table
+PARAM_LOW_VBELN  = "0000000000"
+PARAM_HIGH_VBELN = "9999999999"
+
+# --- 3. UTILITY FUNCTIONS ---
+def read_and_lower(table_path):
+    """Reads a table and ensures all column names are lowercase immediately."""
+    df = spark.read.table(table_path)
+    return df.select([F.col(c).alias(c.lower()) for c in df.columns])
