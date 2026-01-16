@@ -1,21 +1,13 @@
-# Cell 7: Final Validation (Sanity Check)
+⚠️ WARNING: Found 500173 duplicate keys. Investigate immediately.
++----------+------+------------+-----+
+|     order|  line|scheduleline|count|
++----------+------+------------+-----+
+|0005147005|000010|        0001|    2|
+|0005135812|000010|        0001|    2|
+|0005143459|000010|        0001|    2|
+|0005210092|000010|        0001|    4|
+|0005208450|000010|        0001|    4|
++----------+------+------------+-----+
+only showing top 5 rows
 
-# 1. Check for duplicates on the Primary Key
-# The natural key should likely be Order + Line + Schedule Line
-duplicates_df = spark.read.table(paths["target"]) \
-    .groupBy("order", "line", "scheduleline") \
-    .count() \
-    .filter("count > 1")
-
-dup_count = duplicates_df.count()
-
-if dup_count == 0:
-    print(f"✅ DATA INTEGRITY PASS: No duplicates found for Order/Line/ScheduleLine.")
-else:
-    print(f"⚠️ WARNING: Found {dup_count} duplicate keys. Investigate immediately.")
-    duplicates_df.show(5)
-
-# 2. Financial Total Check
-# Compare total value to ensure no massive explosion
-total_value = spark.read.table(paths["target"]).agg(F.sum("grosssopriceusd")).collect()[0][0]
-print(f"💰 Total Gross Value (USD) in Target: ${total_value:,.2f}")
+💰 Total Gross Value (USD) in Target: $333,489,258,671.63
