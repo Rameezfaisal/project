@@ -1,16 +1,24 @@
-# --- CELL 5: WRITE & OPTIMIZE (FINAL) ---
+# --- CELL 5: WRITE, CONFIGURE & OPTIMIZE ---
 
-# 1. Update Table Properties (CRITICAL FOR 107 COLUMNS)
-# We set the limit to 200 so Spark indexes ALL your columns, not just the first 32.
-# This ensures filters on 'Region', 'Part', or 'Flag' are fast in Power BI.
+# 1. WRITE THE TABLE FIRST (Creates it if missing)
+print(f"Writing Gold Table to: {T_GOLD_ANALYSIS} ...")
+
+df_gold.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .option("overwriteSchema", "true") \
+    .saveAsTable(T_GOLD_ANALYSIS)
+
+print("Write completed. Now configuring optimizations...")
+
+# 2. Update Table Properties
+# Now that the table definitely exists, we can modify its properties.
 spark.sql(f"""
     ALTER TABLE {T_GOLD_ANALYSIS} 
     SET TBLPROPERTIES ('delta.dataSkippingNumIndexedCols' = '200')
 """)
 
-# 2. Run Optimize
-# Now that the property is set, Z-ORDER will successfully cluster your data.
-# This might take 5-10 minutes but is worth it for user query speed.
+# 3. Run Optimize
 print(f"Starting Z-Order Optimization on {T_GOLD_ANALYSIS}...")
 spark.sql(f"OPTIMIZE {T_GOLD_ANALYSIS} ZORDER BY (Order, Part, CreationDate)")
 
