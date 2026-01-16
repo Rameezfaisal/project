@@ -1,3 +1,78 @@
+# --- 1. SIMPLE DIMENSIONS ---
+df_kna1 = spark.read.table(S_KNA1).select("kunnr", "name1")
+df_mara = spark.read.table(S_MARA).select("matnr", "matkl", "labor", "mstae")
+df_marc = spark.read.table(S_MARC).select("matnr", "werks", "dispo", "ekgrp")
+df_part = spark.read.table(S_PART).select(F.col("Part").alias("part_matnr"), "Consumable")
+df_t024x = spark.read.table(S_T024X).filter(F.col("spras") == CONST_LANG_KEY).select("labor", "lbtxt")
+df_qmel = spark.read.table(S_QMEL).select(F.col("aufnr").alias("qmel_aufnr"), F.col("qmnum"))
+
+# --- 2. COST LOGIC (MBEW) ---
+# We need Standard Price (STPRS) for two specific Valuation Areas (Plants)
+df_mbew_raw = spark.read.table(S_MBEW).select("matnr", "bwkey", "stprs")
+
+ds_mbew_2000 = df_mbew_raw.filter(F.col("bwkey") == "2000").select(
+    F.col("matnr").alias("mbew2_matnr"), 
+    F.col("stprs").alias("stprs_2000")
+)
+
+ds_mbew_3120 = df_mbew_raw.filter(F.col("bwkey") == "3120").select(
+    F.col("matnr").alias("mbew3_matnr"), 
+    F.col("stprs").alias("stprs_3120")
+)
+
+# --- 3. TRACKING LOGIC (VEKP) ---
+# SAP: MAX(EXIDV2) GROUP BY VPOBJKEY
+ds_vekp = spark.read.table(S_VEKP).groupBy("vpobjkey").agg(
+    F.max("exidv2").alias("exidv2")
+)
+
+# --- 4. INCOTERMS LOGIC (VBKD) ---
+df_vbkd = spark.read.table(S_VBKD).select("vbeln", "posnr", "inco1", "kursk", "prsdt", "ihrez", "zterm")
+
+# Header Level (POSNR = 000000)
+ds_vbkd_h = df_vbkd.filter(F.col("posnr") == "000000").select(
+    F.col("vbeln").alias("h_vbeln"),
+    F.col("inco1").alias("h_inco1"),
+    F.col("kursk").alias("h_kursk"),
+    F.col("prsdt").alias("h_prsdt")
+)
+
+# Item Level (All POSNR)
+ds_vbkd_i = df_vbkd.select(
+    F.col("vbeln").alias("i_vbeln"),
+    F.col("posnr").alias("i_posnr"),
+    F.col("inco1").alias("i_inco1"),
+    F.col("ihrez").alias("i_ihrez"),
+    F.col("zterm").alias("i_zterm")
+)
+
+# --- 5. ACTIVITY TYPE LOGIC (AFKO/AFVC) ---
+# Complex Logic: Get Activity Type (LARNT) from the "First Operation" (MIN VORNR) of a Service Order
+df_afko = spark.read.table(S_AFKO).select("aufnr", "aufpl")
+df_afvc = spark.read.table(S_AFVC).select("aufpl", "vornr", "larnt")
+
+# Step A: Find the first operation (VORNR) for each Plan (AUFPL)
+ds_first_op = df_afvc.groupBy("aufpl").agg(F.min("vornr").alias("min_vornr"))
+
+# Step B: Join back to get LARNT, then Join to AFKO to get AUFNR
+ds_act = ds_first_op.join(
+    df_afvc,
+    (ds_first_op.aufpl == df_afvc.aufpl) & (ds_first_op.min_vornr == df_afvc.vornr)
+).join(
+    df_afko, "aufpl"
+).select(
+    F.col("aufnr").alias("act_aufnr"),
+    F.col("larnt").alias("act_larnt")
+)
+
+
+
+
+
+
+
+
+
 AnalysisException                         Traceback (most recent call last)
 Cell In[85], line 12
       1 # --- CELL 4: LOGIC & FINAL SELECT ---
