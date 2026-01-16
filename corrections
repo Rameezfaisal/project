@@ -1,144 +1,75 @@
-​# Cell 1: Imports, Config, and Helper Functions
-
-from pyspark.sql import functions as F
-from pyspark.sql import types as T
-from pyspark.sql.window import Window
-
-# 1. Strict Compliance: Enable ANSI mode to match SAP/SQL behavior
-spark.conf.set("spark.sql.ansi.enabled", "true")
-
-# 2. Optimization: Increase Broadcast Join threshold (100MB)
-#    This speeds up joins with smaller lookup tables by keeping them in memory.
-spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "104857600")
-
-# 3. Helper Function: Read Table safely
-def read_table(path):
-    """
-    Reads a Delta table (or Lakehouse path).
-    Returns an empty DataFrame if the table does not exist, preventing notebook failure.
-    """
-    try:
-        # Check if it's a direct table name (has dot, no slashes) or a file path
-        if "." in path and "/" not in path:
-            return spark.read.table(path)
-        else:
-            return spark.read.format("delta").load(path)
-            
-    except Exception as e:
-        print(f"Warning: Could not read {path}. Returning empty DataFrame to prevent failure.")
-        # Return empty DF with no schema if table missing (safer than crashing)
-        return spark.createDataFrame([], T.StructType([]))
-
-print("Environment setup complete. Helper function ready.")
-
-
-
-
-# Cell 1: Imports, Config, and Helper Functions
-
-from pyspark.sql import functions as F
-from pyspark.sql import types as T
-from pyspark.sql.window import Window
-
-# 1. Strict Compliance: Enable ANSI mode to match SAP/SQL behavior for nulls/errors
-spark.conf.set("spark.sql.ansi.enabled", "true")
-
-# 2. Optimization: Increase Broadcast Join threshold (100MB) 
-#    This speeds up joins with smaller lookup tables (like T024X, MARA) by keeping them in memory.
-spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "104857600")
-
-# 3. Helper Function: Read & Normalize
-def read_clean(path):
-    """
-    Reads a Delta table (or Lakehouse path) and immediately converts 
-    all column names to LOWERCASE to meet the project's coding standard.
-    """
-    try:
-        # Check if it's a direct table name or a file path
-        if "." in path and "/" not in path:
-            df = spark.read.table(path)
-        else:
-            df = spark.read.format("delta").load(path)
-            
-        # Normalize columns to lowercase
-        for col_name in df.columns:
-            df = df.withColumnRenamed(col_name, col_name.lower())
-        return df
-    except Exception as e:
-        print(f"Warning: Could not read {path}. Returning empty DataFrame to prevent failure.")
-        # Return empty DF with no schema if table missing (safer than crashing)
-        return spark.createDataFrame([], T.StructType([]))
-
-print("Environment setup complete. Helper functions ready.")
-
-
-
-
-
-
-
-
-
-​Cell 2: Configuration, Parameters & Paths
+​Cell 3: Core Data Ingestion & Optimization Layer
 ​Business Context:
-This cell acts as the "Control Panel" for the entire process. It defines:
-​Spark Compatibility: Forces "Legacy" mode for dates to ensure compatibility with older SAP timestamps.
-​Control Parameters: mimic the input parameters of the SAP Stored Procedure (Date ranges, Pruning Flags, Sales Orgs).
-​Table Inventory: A central dictionary of all table paths. You must update the values in paths to match your actual Lakehouse table names.
+This cell reads the main Sales Order table (PRST). Instead of reading the entire history (14M+ rows), it applies the "Pruning Logic" immediately.
+​Input Parsing: Converts the comma-separated Sales Org and Order Type parameters into lists (replacing the SAP PARSE_20 function).
+​Base Filtering: Removes technical order types (ZVC, ZR07) and old closed orders (keep only Open orders or those created in the last 2 years).
+​Dynamic Date Logic: Applies the specific date filter requested by the user (e.g., Filter by Creation Date vs. PGI Date) based on the IP_DATE_FLAG.
+​Result: Creates a smaller, optimized DataFrame (prst_filtered) that drives the rest of the notebook.
 
 
 
 
 
-# Cell 2: Configurations and Parameters
-
-# --- 1. Spark Legacy Date Handling (Critical for SAP Data) ---
-# Ensures compatibility for dates written before the switch to the Gregorian calendar (1582)
-# and prevents errors when writing data back to Parquet/Delta.
-spark.conf.set("spark.sql.parquet.datetimeRebaseModeInWrite", "LEGACY")
-spark.conf.set("spark.sql.parquet.int96RebaseModeInWrite", "LEGACY")
-spark.conf.set("spark.sql.avro.datetimeRebaseModeInWrite", "LEGACY")
-
-# --- 2. Input Parameters (Mimicking SAP Stored Procedure Inputs) ---
-params = {
-    # Flag to toggle secondary table joins (Y=Include, N=Exclude)
-    # Positions: 1:MARC, 2:MBEW, 3:VEKP, 4:VBKD, 5:AFVC, 6:QMEL, 7:T024X
-    "IP_DATA_PRUNING_FLAG": "YYYYYYY", 
-    
-    # Comma-separated lists for filtering (replaces PARSE_20)
-    "IP_SALES_ORG": "1000,2000,3000,9000", 
-    "IP_ORDER_TYPE": "OR,ZSO,ZFD",         
-    
-    # Date Filtering Logic
-    "IP_DATE_FLAG": "L",       # Options: L, P, R, C, F, A, N
-    "IP_ERDAT_FROM": "2022-01-01",
-    "IP_ERDAT_TO": "2025-12-31"
-}
-
-# --- 3. Table Paths (UPDATE THESE TO MATCH YOUR LAKEHOUSE) ---
-# Do not hardcode table names in the logic below; use this dictionary.
-paths = {
-    # Main Transaction Table
-    "prst": "Lakehouse.zt_m_sales_order_status_v2", 
-    
-    # Master Data / Lookups
-    "kna1":  "Lakehouse.cv_kna1",
-    "mara":  "Lakehouse.cv_mara",
-    "marc":  "Lakehouse.cv_marc",
-    "mbew":  "Lakehouse.cv_mbew",
-    "vekp":  "Lakehouse.cv_vekp",
-    "afko":  "Lakehouse.cv_afko",
-    "afvc":  "Lakehouse.cv_afvc",
-    "vbkd":  "Lakehouse.cvns_vbkd",
-    "qmel":  "Lakehouse.cvns_qmel",
-    "t024x": "Lakehouse.cv_t024x",
-    "part":  "Lakehouse.cv_part",
-    
-    # Target Table
-    "target": "Lakehouse.so_optimized_final" 
-}
-
-print("Configuration loaded. Parameters set.")
 
 
+# Cell 3: Main Source Reading and Optimization Logic
 
+# 1. Parse Input Parameters (Simulating SAP PARSE_20)
+input_sales_org = [x.strip() for x in params["IP_SALES_ORG"].split(",")]
+input_order_type = [x.strip() for x in params["IP_ORDER_TYPE"].split(",")]
+
+# 2. Read the Main Driving Table
+prst_df = read_table(paths["prst"])
+
+# 3. Define Base Filter (Always Active)
+#    Exclude specific types and limit history to ~2 years unless the order is still 'Open'
+base_filter = (
+    (~F.col("vbak_auart").isin("ZVC", "ZR07")) & 
+    (
+        (F.col("vbap_erdat") >= F.date_add(F.current_date(), -732)) | 
+        (F.col("order_status") == "Open")
+    )
+)
+
+# 4. Define Dynamic Date Logic based on IP_DATE_FLAG
+date_flag = params["IP_DATE_FLAG"]
+from_date = params["IP_ERDAT_FROM"]
+to_date = params["IP_ERDAT_TO"]
+
+if date_flag == 'L':    # Line Creation Date
+    date_cond = F.col("vbap_erdat").between(from_date, to_date)
+elif date_flag == 'P':  # PGI Date
+    date_cond = F.col("pgidate").between(from_date, to_date)
+elif date_flag == 'R':  # Schedule Line Date
+    date_cond = F.col("vbep_h_edatu").between(from_date, to_date)
+elif date_flag == 'C':  # Header Creation Date
+    date_cond = F.col("vbak_erdat").between(from_date, to_date)
+elif date_flag == 'F':  # Material Availability Date
+    date_cond = F.col("vbep_mbdat").between(from_date, to_date)
+elif date_flag == 'A':  # Line Change Date
+    date_cond = F.col("vbap_aedat").between(from_date, to_date)
+else:                   # 'N' = No Date Filter
+    date_cond = F.lit(True)
+
+# 5. Define Organization & Type Filters
+#    If 'ALL' is present in the input, ignore the filter (allow all).
+if 'ALL' in input_sales_org:
+    org_cond = F.lit(True)
+else:
+    org_cond = F.col("vbak_vkorg").isin(input_sales_org)
+
+if 'ALL' in input_order_type:
+    type_cond = F.lit(True)
+else:
+    type_cond = F.col("vbak_auart").isin(input_order_type)
+
+# 6. Apply All Filters
+prst_filtered = prst_df.filter(base_filter & date_cond & org_cond & type_cond)
+
+# 7. Cache the result
+#    We cache this because this filtered dataset is used repeatedly 
+#    to filter the secondary tables (MARC, MBEW, etc.) in the next step.
+prst_filtered.cache()
+
+# Verification
+print(f"Base Table Loaded. Filtered Row Count: {prst_filtered.count()}")
