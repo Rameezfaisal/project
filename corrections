@@ -1,25 +1,153 @@
-# --- CELL 5: WRITE, CONFIGURE & OPTIMIZE ---
+import pyspark.sql.functions as F
+from pyspark.sql.window import Window
+from pyspark.sql.types import *
 
-# 1. WRITE THE TABLE FIRST (Creates it if missing)
-print(f"Writing Gold Table to: {T_GOLD_ANALYSIS} ...")
+# -------------------------------------------------------------------------
+# CONFIGURATION & PATHS
+# -------------------------------------------------------------------------
+# Main Source Table (The "Fact" table with 14M records)
+PATH_PRST = "Lakehouse.zt_m_sales_order_status_v2" 
 
-df_gold.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .option("overwriteSchema", "true") \
-    .saveAsTable(T_GOLD_ANALYSIS)
+# Lookup Tables ("Dimension" tables)
+PATH_MARC  = "Lakehouse.cv_marc"
+PATH_MBEW  = "Lakehouse.cv_mbew"
+PATH_AFKO  = "Lakehouse.cv_afko"
+PATH_AFVC  = "Lakehouse.cv_afvc"
+PATH_VEKP  = "Lakehouse.cv_vekp"
+PATH_VBKD  = "Lakehouse.cvns_vbkd"
+PATH_PART  = "Lakehouse.cv_part"
+PATH_KNA1  = "Lakehouse.cv_kna1"
+PATH_MARA  = "Lakehouse.cv_mara"
+PATH_T024X = "Lakehouse.cv_t024x"
+PATH_QMEL  = "Lakehouse.cvns_qmel"
 
-print("Write completed. Now configuring optimizations...")
+# Final Destination Table
+PATH_TARGET = "Lakehouse.zt_m_sales_order_optimized"
 
-# 2. Update Table Properties
-# Now that the table definitely exists, we can modify its properties.
-spark.sql(f"""
-    ALTER TABLE {T_GOLD_ANALYSIS} 
-    SET TBLPROPERTIES ('delta.dataSkippingNumIndexedCols' = '200')
-""")
+# Ensure strict data type checks (Fabric Default)
+spark.conf.set("spark.sql.ansi.enabled", "true")
 
-# 3. Run Optimize
-print(f"Starting Z-Order Optimization on {T_GOLD_ANALYSIS}...")
-spark.sql(f"OPTIMIZE {T_GOLD_ANALYSIS} ZORDER BY (Order, Part, CreationDate)")
 
-print("Optimization completed. Table is ready for Power BI.")
+
+
+
+
+
+
+
+Cell 2: Parameters & Input Processing
+​Business Logic:
+This cell captures the User's "Ask." It simulates the input parameters (like IP_SALES_ORG) that were previously passed to the HANA Stored Procedure.
+Instead of the complex PARSE_20 SQL function, we use one line of Python to split comma-separated inputs (e.g., '1000, 2000') into a list that Spark can understand.
+
+
+
+
+
+
+# -------------------------------------------------------------------------
+# PARAMETERS (Simulating SAP Input Parameters)
+# -------------------------------------------------------------------------
+IP_SALES_ORG = "ALL"         # Input: "1000, 2000" or "ALL"
+IP_ORDER_TYPE = "ALL"        # Input: "OR, ZSO" or "ALL"
+IP_DATA_PRUNING_FLAG = "YYYYYYY" # Controls which extra tables we join
+IP_DATE_FLAG = "N"           # Date Filter Mode: L, P, R, C, F, A, N
+IP_ERDAT_FROM = "2018-01-01" 
+IP_ERDAT_TO   = "2025-12-31"
+
+# -------------------------------------------------------------------------
+# INPUT PARSING (Replaces SAP PARSE_20)
+# -------------------------------------------------------------------------
+# 1. Clean quotes, 2. Split by comma, 3. Handle "ALL"
+# If input is 'ALL' or empty, we keep the list empty to signal "No Filter"
+
+sales_org_list = []
+if IP_SALES_ORG and IP_SALES_ORG.strip().upper() != 'ALL':
+    sales_org_list = [x.strip() for x in IP_SALES_ORG.replace("'", "").split(',')]
+
+order_type_list = []
+if IP_ORDER_TYPE and IP_ORDER_TYPE.strip().upper() != 'ALL':
+    order_type_list = [x.strip() for x in IP_ORDER_TYPE.replace("'", "").split(',')]
+
+print(f"Sales Orgs to fetch: {sales_org_list if sales_org_list else 'ALL'}")
+print(f"Order Types to fetch: {order_type_list if order_type_list else 'ALL'}")
+
+
+
+
+
+
+
+
+
+Cell 3: Read Main Table & Apply Business Filters
+​Business Logic:
+This is the "Funnel." We read the massive 14M record table and immediately rename columns to lowercase (Fabric standard). Then, we apply three layers of filters to reduce data volume before doing any expensive joins:
+​Exclusion: Remove invalid order types (ZVC, ZR07).
+​Retention: Keep only orders created in the last 2 years (732 days) OR orders that are still 'Open'.
+​User Filters: Apply the specific Date Range logic (IP_DATE_FLAG) and the Sales Org/Order Type requested in Cell 2.
+
+
+
+
+
+
+
+# Read Main Table
+df_prst = spark.read.table(PATH_PRST)
+
+# -------------------------------------------------------------------------
+# 1. RENAME COLUMNS TO LOWERCASE (Fabric Standard)
+# -------------------------------------------------------------------------
+# Renaming keys early avoids "Ambiguous Column" errors later
+df_prst = df_prst \
+    .withColumnRenamed("VBAP_MATNR", "prst_matnr") \
+    .withColumnRenamed("VBAP_WERKS", "prst_werks") \
+    .withColumnRenamed("VBELN", "prst_vbeln") \
+    .withColumnRenamed("POSNR", "prst_posnr") \
+    .withColumnRenamed("VBAK_AUFNR", "prst_aufnr") \
+    .withColumnRenamed("F1_VBELN", "prst_f1_vbeln") \
+    .withColumnRenamed("VBAK_VKORG", "prst_vkorg") \
+    .withColumnRenamed("VBAK_AUART", "prst_auart") \
+    .withColumnRenamed("VBAP_ERDAT", "prst_vbap_erdat") \
+    .withColumnRenamed("VBAK_ERDAT", "prst_vbak_erdat") \
+    .withColumnRenamed("PGIDate", "prst_pgidate") \
+    .withColumnRenamed("VBEP_H_EDATU", "prst_vbep_h_edatu") \
+    .withColumnRenamed("VBEP_MBDAT", "prst_vbep_mbdat") \
+    .withColumnRenamed("VBAP_AEDAT", "prst_vbap_aedat") \
+    .withColumnRenamed("ORDER_STATUS", "prst_order_status")
+
+# -------------------------------------------------------------------------
+# 2. APPLY FILTERS (Reduce Data Volume)
+# -------------------------------------------------------------------------
+
+# A. Fixed Business Rules: Remove ZVC/ZR07
+df_prst = df_prst.filter(~F.col("prst_auart").isin(['ZVC','ZR07']))
+
+# B. Retention Rule: Last 732 Days OR Open Orders
+cond_retention = (F.col("prst_vbap_erdat") >= F.date_add(F.current_date(), -732)) | \
+                 (F.col("prst_order_status") == 'Open')
+df_prst = df_prst.filter(cond_retention)
+
+# C. Variable Date Logic (Based on IP_DATE_FLAG: L, P, R, C, F, A, N)
+date_filter = (
+    ((F.lit(IP_DATE_FLAG) == 'L') & F.col("prst_vbap_erdat").between(IP_ERDAT_FROM, IP_ERDAT_TO)) |
+    ((F.lit(IP_DATE_FLAG) == 'P') & F.col("prst_pgidate").between(IP_ERDAT_FROM, IP_ERDAT_TO)) |
+    ((F.lit(IP_DATE_FLAG) == 'R') & F.col("prst_vbep_h_edatu").between(IP_ERDAT_FROM, IP_ERDAT_TO)) |
+    ((F.lit(IP_DATE_FLAG) == 'C') & F.col("prst_vbak_erdat").between(IP_ERDAT_FROM, IP_ERDAT_TO)) |
+    ((F.lit(IP_DATE_FLAG) == 'F') & F.col("prst_vbep_mbdat").between(IP_ERDAT_FROM, IP_ERDAT_TO)) |
+    ((F.lit(IP_DATE_FLAG) == 'A') & F.col("prst_vbap_aedat").between(IP_ERDAT_FROM, IP_ERDAT_TO)) |
+    (F.lit(IP_DATE_FLAG) == 'N') # 'N' means No Date Filter
+)
+df_prst = df_prst.filter(date_filter)
+
+# D. Apply User Input Lists (Sales Org & Order Type)
+if sales_org_list:
+    df_prst = df_prst.filter(F.col("prst_vkorg").isin(sales_org_list))
+
+if order_type_list:
+    df_prst = df_prst.filter(F.col("prst_auart").isin(order_type_list))
+
+# Cache this result - it is the foundation for all subsequent joins
+df_prst.cache()
+print(f"Active Records after Filtering: {df_prst.count()}")
