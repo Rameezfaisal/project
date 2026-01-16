@@ -1,10 +1,37 @@
-​Cell 3: Core Data Ingestion & Optimization Layer
+​Updated Cell 1: Environment Setup
 ​Business Context:
-This cell reads the main Sales Order table (PRST). Instead of reading the entire history (14M+ rows), it applies the "Pruning Logic" immediately.
-​Input Parsing: Converts the comma-separated Sales Org and Order Type parameters into lists (replacing the SAP PARSE_20 function).
-​Base Filtering: Removes technical order types (ZVC, ZR07) and old closed orders (keep only Open orders or those created in the last 2 years).
-​Dynamic Date Logic: Applies the specific date filter requested by the user (e.g., Filter by Creation Date vs. PGI Date) based on the IP_DATE_FLAG.
-​Result: Creates a smaller, optimized DataFrame (prst_filtered) that drives the rest of the notebook.
+Initializes the Spark environment. We enable ANSI mode for strict SQL compliance and optimize the Broadcast Join Threshold to speed up joins with smaller lookup tables.
+
+
+
+
+
+# Cell 1: Imports and Environment Configuration
+
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+from pyspark.sql.window import Window
+
+# 1. Strict Compliance: Enable ANSI mode to match SAP/SQL behavior
+spark.conf.set("spark.sql.ansi.enabled", "true")
+
+# 2. Optimization: Increase Broadcast Join threshold (100MB)
+spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "104857600")
+
+print("Environment setup complete.")
+
+
+
+
+
+
+
+
+
+Updated Cell 3: Core Data Ingestion & Optimization Layer
+​Business Context:
+Reads the main Sales Order table (PRST) directly. It applies the "Pruning Logic" immediately to filter out irrelevant data (old closed orders, technical types) before any heavy processing begins.
+
 
 
 
@@ -14,12 +41,13 @@ This cell reads the main Sales Order table (PRST). Instead of reading the entire
 
 # Cell 3: Main Source Reading and Optimization Logic
 
-# 1. Parse Input Parameters (Simulating SAP PARSE_20)
+# 1. Parse Input Parameters
 input_sales_org = [x.strip() for x in params["IP_SALES_ORG"].split(",")]
 input_order_type = [x.strip() for x in params["IP_ORDER_TYPE"].split(",")]
 
-# 2. Read the Main Driving Table
-prst_df = read_table(paths["prst"])
+# 2. Read the Main Driving Table (Standard Read)
+#    Assumes paths["prst"] is a valid table name (e.g., 'Lakehouse.table_name')
+prst_df = spark.read.table(paths["prst"])
 
 # 3. Define Base Filter (Always Active)
 #    Exclude specific types and limit history to ~2 years unless the order is still 'Open'
@@ -67,8 +95,6 @@ else:
 prst_filtered = prst_df.filter(base_filter & date_cond & org_cond & type_cond)
 
 # 7. Cache the result
-#    We cache this because this filtered dataset is used repeatedly 
-#    to filter the secondary tables (MARC, MBEW, etc.) in the next step.
 prst_filtered.cache()
 
 # Verification
