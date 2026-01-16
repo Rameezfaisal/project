@@ -1,38 +1,13 @@
-# Cell 8: Root Cause Analysis (Debug)
+--- Investigating Order 0005147005 ---
+Material: 716-013344-001 | Plant: 2120 | Customer: 0000000403
+Matches in PART table: 1 (Should be 1)
+Matches in MBEW (2000/3120): 2 (Should be 1 or 0 per plant)
++---------+-----+--------------+-----+-----+-----+-----+-----+-----+------+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+------+--------+-----+--------+--------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+------+------+--------+--------+--------+------+------+------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------------+------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+------+-----+-----+-----+-----+--------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-------+----------------------+--------------------+
+|hvr_rowid|mandt|         matnr|bwkey|bwtar|lvorm|lbkum|salk3|vprsv| verpr| stprs|peinh|bklas|salkv|vmkum|vmsal|vmvpr|vmver| vmstp|vmpei|vmbkl|vmsav|vjkum|vjsal|vjvpr|vjver| vjstp|vjpei|vjbkl|vjsav|lfgja|lfmon|bwtty| stprv|   laepr|zkprs|   zkdat|     timestamp|bwprs|bwprh|vjbws|vjbwh|vvjsl|vvjlb|vvmlb|vvsal|zplpr| zplp1| zplp2| zplp3|   zpld1|   zpld2|   zpld3| pperz| pperl| pperv|kalkz|kalkl|kalkv|kalsc|xlifo|mypol|bwph1|bwps1|abwkz|pstat|       kaln1|       kalnr|bwva1|bwva2|bwva3|vers1|vers2|vers3|hrkft|kosgr|pprdz|pprdl|pprdv|pdatz|pdatl|pdatv|ekalr| vplpr|mlmaa|mlast| lplpr|vksal|hkmat|sperw|kziwl|   wlinl|abciw|bwspa|lplpx|vplpx|fplpx|lbwst|vbwst|fbwst|eklas|qklas|mtuse|mtorg|ownpr|xbewm|bwpei|mbrue|oklas|oippinv|hvr_last_modified_date|     src_commit_date|
++---------+-----+--------------+-----+-----+-----+-----+-----+-----+------+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+------+--------+-----+--------+--------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+------+------+--------+--------+--------+------+------+------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------------+------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+------+-----+-----+-----+-----+--------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-------+----------------------+--------------------+
+|445976497|  250|716-013344-001| 2000|     |     |0.000| 0.00|    S|330.19|372.31|    1| 7902| 0.00|0.000| 0.00|    S| 0.00|372.31|    1| 7902| 0.00|0.000| 0.00|    S| 0.00|372.31|    1| 7902| 0.00| 2024|   07|     |351.24|20230313| 0.00|00000000|20240108202911| 0.00| 0.00| 0.00| 1.00| 0.00|0.000|0.000| 0.00| 0.00|330.21|369.84|369.84|20230313|20241012|20241012|000000|000000|000000|     |    X|    X|     |     |     | 0.00| 0.00|   00|   BG|000103632634|000103632635|     |  Z01|  Z01|   00|   01|   01| ZSH1|     |  000|  009|  005| 0000| 2023| 2022|    X|351.24|     |     |372.31| 0.00|    X|     |     |00000000|     | 0.00| 0.00| 0.00| 0.00|     |     |     |     |     |     |     |     |     |    0|    X|     |       |  2025-10-11 20:47:...|2025-10-11 20:47:...|
+|387957697|  250|716-013344-001| 3120|     |     |0.000| 0.00|    S|612.65|372.31|    1| 7902| 0.00|0.000| 0.00|    S| 0.00|351.24|    1| 7902| 0.00|0.000| 0.00|    S| 0.00|351.24|    1| 7902| 0.00| 2023|   09|     |351.24|20230313| 0.00|00000000|20230313223649| 0.00| 0.00| 0.00| 1.00| 0.00|0.000|0.000| 0.00| 0.00|330.21|330.21|330.21|20230313|20230318|20230318|000000|000000|000000|     |    X|    X|     |     |     | 0.00| 0.00|   00|   BG|000103698482|000103698483|     |  Z01|  Z01|   00|   01|   01| ZSH1|     |  000|  009|  005| 0000| 2023| 2022|    X|351.24|     |     |372.31| 0.00|    X|     |     |00000000|     | 0.00| 0.00| 0.00| 0.00|     |     |     |     |     |     |     |     |     |    0|     |     |       |  2025-10-11 20:47:...|2025-10-11 20:47:...|
++---------+-----+--------------+-----+-----+-----+-----+-----+-----+------+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+------+--------+-----+--------+--------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+------+------+--------+--------+--------+------+------+------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------------+------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+------+-----+-----+-----+-----+--------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-------+----------------------+--------------------+
 
-# 1. Pick a specific duplicate order to investigate
-test_order = "0005147005" 
-
-print(f"--- Investigating Order {test_order} ---")
-
-# Get the Material and Plant for this order from the main filtered table
-details = prst_filtered.filter(F.col("vbeln") == test_order).select("vbap_matnr", "vbap_werks", "vbak_kunnr").first()
-matnr = details['vbap_matnr']
-werks = details['vbap_werks']
-kunnr = details['vbak_kunnr']
-
-print(f"Material: {matnr} | Plant: {werks} | Customer: {kunnr}")
-
-# --- Check Potential Duplicates in Master Data ---
-
-# Check PART Table
-part_count = spark.read.table(paths["part"]).filter(F.col("part") == matnr).select("part", "consumable").distinct().count()
-print(f"Matches in PART table: {part_count} (Should be 1)")
-if part_count > 1:
-    spark.read.table(paths["part"]).filter(F.col("part") == matnr).distinct().show()
-
-# Check MBEW (Valuation) - Common Culprit for Split Valuation
-mbew_count = spark.read.table(paths["mbew"]).filter((F.col("matnr") == matnr) & (F.col("bwkey").isin("2000", "3120"))).count()
-print(f"Matches in MBEW (2000/3120): {mbew_count} (Should be 1 or 0 per plant)")
-if mbew_count > 1:
-    spark.read.table(paths["mbew"]).filter((F.col("matnr") == matnr) & (F.col("bwkey").isin("2000", "3120"))).show()
-
-# Check MARC (Plant Data)
-marc_count = spark.read.table(paths["marc"]).filter((F.col("matnr") == matnr) & (F.col("werks") == werks)).count()
-print(f"Matches in MARC: {marc_count} (Should be 1)")
-if marc_count > 1:
-    spark.read.table(paths["marc"]).filter((F.col("matnr") == matnr) & (F.col("werks") == werks)).show()
-
-# Check KNA1 (Customer)
-kna_count = spark.read.table(paths["kna1"]).filter(F.col("kunnr") == kunnr).count()
-print(f"Matches in KNA1: {kna_count} (Should be 1)")
+Matches in MARC: 1 (Should be 1)
+Matches in KNA1: 1 (Should be 1)
