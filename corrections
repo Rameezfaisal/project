@@ -1,66 +1,114 @@
-# Cell 3: Main Source Reading and Optimization Logic (Fixed for NULL Dates)
+​Cell 4: Lookup Data Preparation (The "Fan-out" Fix)
+​Business Context:
+This cell reads the secondary tables (like Plant Data, Pricing, Notifications).
+Crucially, it solves the "Row Explosion" issue you faced earlier (14M \to 56M) by pre-aggregating data that has a "Many-to-One" relationship with Sales Orders.
+​VEKP (Handling Units): We group by Order and take the latest tracking number.
+​QMEL (Notifications): We group by Order and take the latest notification number.
+​AFKO (Production): We select the primary activity type per order, ensuring unique keys.
+​Pruning: If you set the IP_DATA_PRUNING_FLAG to 'N', these tables are skipped entirely to save time.
 
-# 1. Parse Input Parameters
-input_sales_org = [x.strip() for x in params["IP_SALES_ORG"].split(",")]
-input_order_type = [x.strip() for x in params["IP_ORDER_TYPE"].split(",")]
 
-# 2. Read the Main Driving Table
-prst_df = spark.read.table(paths["prst"])
 
-# 3. Define Base Filter
-#    Exclude specific technical types.
-#    Note: We removed the hard date check here to handle it more gracefully below.
-base_filter = (~F.col("vbak_auart").isin("ZVC", "ZR07"))
 
-# 4. Define Dynamic Date Logic with NULL Handling
-date_flag = params["IP_DATE_FLAG"]
-from_date = params["IP_ERDAT_FROM"]
-to_date = params["IP_ERDAT_TO"]
 
-# Helper: Define which column to check based on the flag
-if date_flag == 'L':    # Line Creation Date
-    # FIX: If vbap_erdat is NULL, fallback to vbak_erdat (Header Date)
-    target_col = F.coalesce(F.col("vbap_erdat"), F.col("vbak_erdat"))
-elif date_flag == 'P':  # PGI Date
-    target_col = F.col("pgidate")
-elif date_flag == 'R':  # Schedule Line Date
-    target_col = F.col("vbep_h_edatu")
-elif date_flag == 'C':  # Header Creation Date
-    target_col = F.col("vbak_erdat")
-elif date_flag == 'F':  # Material Availability Date
-    target_col = F.col("vbep_mbdat")
-elif date_flag == 'A':  # Line Change Date
-    target_col = F.col("vbap_aedat")
+
+# Cell 4: Lookup Data Preparation & Aggregation
+
+flags = params["IP_DATA_PRUNING_FLAG"]
+# Flag Positions: 1:MARC, 2:MBEW, 3:VEKP, 4:VBKD, 5:AFVC, 6:QMEL, 7:T024X
+
+# --- 1. MARC (Plant Data) ---
+if flags[0] == 'Y':
+    marc_raw = spark.read.table(paths["marc"])
+    # Optimization: Only fetch MARC records for Materials/Plants actually in our filtered Sales Order list
+    # This acts as a "Semi-Join" filter to reduce MARC volume significantly.
+    marc_df = marc_raw.join(prst_filtered, 
+                            (marc_raw.matnr == prst_filtered.vbap_matnr) & 
+                            (marc_raw.werks == prst_filtered.vbap_werks), "semi") \
+                      .select("matnr", "werks", "dispo", "ekgrp") \
+                      .withColumnRenamed("dispo", "marc_dispo") \
+                      .withColumnRenamed("ekgrp", "marc_ekgrp")
 else:
-    target_col = None
+    marc_df = None
 
-# Construct the Date Condition
-# Logic: (Date is within Range) OR (Order is Open) OR (Date Flag is 'N')
-# This guarantees 'Open' orders survive even if their dates are NULL.
-if date_flag == 'N' or target_col is None:
-    date_cond = F.lit(True)
+# --- 2. MBEW (Valuation/Costing) ---
+if flags[1] == 'Y':
+    mbew_raw = spark.read.table(paths["mbew"])
+    
+    # Filter for Plant 2000
+    mbew_2000 = mbew_raw.filter(F.col("bwkey") == '2000') \
+                        .select(F.col("matnr"), F.col("stprs").alias("stprs_2000"))
+    
+    # Filter for Plant 3120
+    mbew_3120 = mbew_raw.filter(F.col("bwkey") == '3120') \
+                        .select(F.col("matnr"), F.col("stprs").alias("stprs_3120"))
 else:
-    date_cond = (
-        (target_col.between(from_date, to_date)) | 
-        (F.col("order_status") == "Open")
-    )
+    mbew_2000 = None
+    mbew_3120 = None
 
-# 5. Define Organization & Type Filters
-if 'ALL' in input_sales_org:
-    org_cond = F.lit(True)
+# --- 3. VEKP (Handling Units) - [FIX: FAN-OUT PREVENTION] ---
+if flags[2] == 'Y':
+    vekp_raw = spark.read.table(paths["vekp"])
+    # SAP Logic was: Group By VPOBJKEY, Max EXIDV2. 
+    # This guarantees 1 row per Order, preventing duplication.
+    vekp_df = vekp_raw.groupBy("vpobjkey").agg(F.max("exidv2").alias("vekp_track"))
 else:
-    org_cond = F.col("vbak_vkorg").isin(input_sales_org)
+    vekp_df = None
 
-if 'ALL' in input_order_type:
-    type_cond = F.lit(True)
+# --- 5. AFKO/ACT (Production Data) - [FIX: FAN-OUT PREVENTION] ---
+if flags[4] == 'Y':
+    afko_raw = spark.read.table(paths["afko"])
+    afvc_raw = spark.read.table(paths["afvc"])
+    
+    # Step A: Get Distinct Header (Min Operation Number per Order)
+    afvc_header = afvc_raw.groupBy("aufpl").agg(F.min("vornr").alias("vornr"))
+    
+    # Step B: Join back to get Activity Type (LARNT)
+    act_df = afvc_header.join(afvc_raw, ["aufpl", "vornr"], "inner") \
+                        .select("aufpl", F.col("larnt").alias("activitytype"))
+                        
+    # Step C: Join with AFKO
+    afko_final = afko_raw.join(act_df, "aufpl", "inner") \
+                         .select("aufnr", "activitytype")
 else:
-    type_cond = F.col("vbak_auart").isin(input_order_type)
+    afko_final = None
 
-# 6. Apply All Filters
-prst_filtered = prst_df.filter(base_filter & date_cond & org_cond & type_cond)
+# --- 6. QMEL (Notifications) - [FIX: FAN-OUT PREVENTION] ---
+if flags[5] == 'Y':
+    qmel_raw = spark.read.table(paths["qmel"])
+    # RISK: A single Order can have multiple notifications. 
+    # FIX: Take the latest notification (Max QMNUM) per Order (AUFNR).
+    qmel_df = qmel_raw.groupBy("aufnr").agg(F.max("qmnum").alias("srvcnotif"))
+else:
+    qmel_df = None
 
-# 7. Cache the result
-prst_filtered.cache()
+# --- 4. VBKD (Incoterms) ---
+if flags[3] == 'Y':
+    vbkd_raw = spark.read.table(paths["vbkd"])
+    
+    # Header Incoterm (POSNR = '000000') - Unique by Order
+    hd_inco = vbkd_raw.filter(F.col("posnr") == '000000') \
+                      .select("vbeln", "inco1", "kursk", "prsdt") \
+                      .withColumnRenamed("inco1", "hd_inco1")
+    
+    # Line Incoterm - Unique by Order + Item
+    ln_inco = vbkd_raw.select("vbeln", "posnr", "ihrez", "inco1", "zterm") \
+                      .withColumnRenamed("inco1", "ln_inco1") \
+                      .withColumnRenamed("ihrez", "ln_ihrez") \
+                      .withColumnRenamed("zterm", "ln_zterm")
+else:
+    hd_inco = None
+    ln_inco = None
 
-# Verification
-print(f"Base Table Loaded. Filtered Row Count: {prst_filtered.count()}")
+# --- 7. T024X (Lab Office) & Common Masters ---
+# These are small tables, so we read them regardless of flags
+lab_df = spark.read.table(paths["t024x"]).filter(F.col("spras") == 'E') \
+                   .select("labor", F.col("lbtxt").alias("laboffice"))
+
+kna1_df = spark.read.table(paths["kna1"]).select("kunnr", F.col("name1").alias("soldtoname"))
+
+mara_df = spark.read.table(paths["mara"]).select("matnr", "matkl", "mstae", "labor")
+
+part_df = spark.read.table(paths["part"]).select("part", F.col("consumable").alias("part_consumable")).distinct()
+
+print("Lookup tables prepared and aggregated.")
