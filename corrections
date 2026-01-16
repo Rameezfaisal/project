@@ -1,30 +1,63 @@
-# Cell 3.1: DEBUG - Inspect Source Data
+--- 1. Raw Table Check ---
+Total Rows in Source Table (No Filters): 14157680
 
-print("--- 1. Raw Table Check ---")
-raw_count = prst_df.count()
-print(f"Total Rows in Source Table (No Filters): {raw_count}")
+--- 2. Data Sample (First 5 Rows) ---
++----------+----------+----------+------------+
+|vbak_vkorg|vbak_auart|vbap_erdat|order_status|
++----------+----------+----------+------------+
+|      9000|        TA|      NULL|        Open|
+|      3300|      ZCON|      NULL|        Open|
+|      2200|       ZSO|      NULL|        Open|
+|      3100|      ZO12|      NULL|        Open|
+|      2500|       ZSO|      NULL|        Open|
++----------+----------+----------+------------+
+only showing top 5 rows
 
-if raw_count > 0:
-    print("\n--- 2. Data Sample (First 5 Rows) ---")
-    prst_df.select("vbak_vkorg", "vbak_auart", "vbap_erdat", "order_status").show(5)
 
-    print("\n--- 3. Distinct Values in Data (Check for Mismatches) ---")
-    # Check Sales Orgs present in data
-    print("Top 10 Sales Orgs in Data:")
-    prst_df.select("vbak_vkorg").distinct().show(10)
+--- 3. Distinct Values in Data (Check for Mismatches) ---
+Top 10 Sales Orgs in Data:
++----------+
+|vbak_vkorg|
++----------+
+|      3200|
+|      2200|
+|      2100|
+|      2000|
+|      3300|
+|      3600|
+|      2300|
+|      2330|
+|      3000|
+|      1000|
++----------+
+only showing top 10 rows
 
-    # Check Order Types present in data
-    print("Top 10 Order Types in Data:")
-    prst_df.select("vbak_auart").distinct().show(10)
-    
-    # Check Date Range
-    print("Date Range in Data (vbap_erdat):")
-    prst_df.select(F.min("vbap_erdat"), F.max("vbap_erdat")).show()
-    
-    print("\n--- 4. Parameter Check ---")
-    print(f"Input Sales Orgs: {input_sales_org}")
-    print(f"Input Order Types: {input_order_type}")
-    print(f"Input Date Range: {from_date} to {to_date} (Flag: {date_flag})")
+Top 10 Order Types in Data:
++----------+
+|vbak_auart|
++----------+
+|      ZUPC|
+|      ZR05|
+|       ZAS|
+|      ZQ01|
+|       ZSA|
+|       ZSO|
+|       ZUP|
+|      ZR4B|
+|      ZUPR|
+|      ZFOC|
++----------+
+only showing top 10 rows
 
-else:
-    print("CRITICAL: The source table 'prst' is completely empty.")
+Date Range in Data (vbap_erdat):
++---------------+---------------+
+|min(vbap_erdat)|max(vbap_erdat)|
++---------------+---------------+
+|           NULL|           NULL|
++---------------+---------------+
+
+
+--- 4. Parameter Check ---
+Input Sales Orgs: ['1000', '2000', '3000', '9000']
+Input Order Types: ['OR', 'ZSO', 'ZFD']
+Input Date Range: 2022-01-01 to 2025-12-31 (Flag: L)
