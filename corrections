@@ -1,11 +1,10 @@
-​Cell 5: The Main Join Strategy
+​Cell 6: Business Logic, Transformations & Final Write
 ​Business Context:
-This cell reconstructs the central data model. We start with your optimized Sales Order list (613k rows) and attach the master data (Customer names, Material details, Costs, Statuses).
-​Critical Logic for Stability:
-​Join Types: We strictly follow the SAP logic:
-​Inner Joins for KNA1 (Customer), MARA (Material), and PART (Part List). Note: If a Customer or Material is missing in master data, that Sales Order will be dropped (standard SAP behavior).
-​Left Joins for everything else (MARC, MBEW, VEKP, QMEL). This ensures that missing optional data (like a tracking number) does not cause the whole Sales Order to disappear.
-​Explosion Prevention: Because we pre-aggregated tables like VEKP and QMEL in Cell 4, these joins are now mathematically guaranteed not to multiply your row count.
+This cell is the "Calculation Engine". It:
+​Standardizes Prices: Converts Asian currencies (JPY, TWD, KRW) which are often stored without decimals in SAP.
+​Calculates Metrics: Computes OpenQty, PGIQty, and GrossSOPriceUSD using the intricate logic from the SAP script.
+​Applies Business Flags: Derived columns like HighDollarFlag and ShipmentDueFlag.
+​Final Write: Saves the clean, enriched dataset to your target Delta table.
 
 
 
@@ -14,67 +13,132 @@ This cell reconstructs the central data model. We start with your optimized Sale
 
 
 
+# Cell 6: Business Logic and Final Write
 
+# --- 1. Define Helper Expressions for Complex Logic ---
 
-# Cell 5: The Main Join Execution
+# Currency Helper: SAP stores JPY/TWD/KRW without decimals, so we multiply by 100 for reporting
+is_asian_curr = F.col("p.vbak_waerk").isin("JPY", "TWD", "KRW")
 
-# Start with the optimized Sales Order table, aliased as 'p' for readability
-df = prst_filtered.alias("p")
+# Exchange Rate Helper: Use 1.0 if Exchange Rate (KURSK) is missing or Currency is already USD
+kursk_calc = F.when((F.col("kursk").isNull()) | (F.col("kursk") == 0) | (F.col("p.vbak_waerk") == 'USD'), F.lit(1.0)) \
+              .otherwise(F.col("kursk"))
 
-# --- Standard Inner Joins (Mandatory Master Data) ---
-# Note: Rows with missing Customer or Material master data will be excluded here.
+# --- 2. Apply Intermediate Calculations (Pre-calculation for dependencies) ---
+# We calculate these first because other columns (like HighDollarFlag) depend on them.
 
-# 1. Join Customer Master (KNA1)
-df = df.join(kna1_df, F.col("p.vbak_kunnr") == kna1_df.kunnr, "inner")
+df_calc = df.withColumn("calc_gross_so_price_usd", 
+    F.col("p.vbak_netwr") * F.when(is_asian_curr, kursk_calc * 100).otherwise(kursk_calc)
+).withColumn("calc_pgi_qty",
+    F.when(F.coalesce(F.col("p.delvd_qty"),F.lit(0)) >= F.coalesce(F.col("p.expectedqtycumulative"),F.lit(0)), 
+           F.coalesce(F.col("p.vbep_bmeng"),F.lit(0)))
+    .when(F.coalesce(F.col("p.delvd_qty"),F.lit(0)) < F.coalesce(F.col("p.expectedqtycumulative"),F.lit(0)), 
+           F.greatest(F.coalesce(F.col("p.vbep_bmeng"),F.lit(0)) - (F.coalesce(F.col("p.expectedqtycumulative"),F.lit(0)) - F.coalesce(F.col("p.delvd_qty"),F.lit(0))), F.lit(0)))
+    .otherwise(0)
+)
 
-# 2. Join Material Master (MARA)
-df = df.join(mara_df, F.col("p.vbap_matnr") == mara_df.matnr, "inner")
+# --- 3. Final Selection & Renaming ---
+final_df = df_calc.select(
+    # --- Identifiers ---
+    F.col("p.vbeln").alias("order"),
+    F.expr("ltrim('0', p.vbeln)").alias("orderwz"),
+    F.col("p.posnr").alias("line"),
+    F.expr("ltrim('0', p.posnr)").alias("linewz"),
+    F.col("p.etenr").alias("scheduleline"),
+    F.col("p.order_status").alias("orderstatus"),
+    
+    # --- Grouping Logic ---
+    F.when(F.col("p.vbak_auart").isin("ZAS","ZAV","ZFD","ZO11","ZSA","ZSB","ZSR","RK","ZCR1","ZDR1"), "OTH")
+     .when(F.col("p.vbak_auart").isin("AG","ZQ01","ZQ03","ZQ04","ZQFO","ZQIS","ZQUP","ZQUX","ZUQT"), "QT")
+     .when(F.col("p.vbak_auart").isin("ZO03","ZRA1","ZSO1"), "RPO")
+     .when(F.col("p.vbak_auart").isin("ZR11","ZR03","ZR04","ZR05","ZR08","ZR4B","ZUPC","ZUPR","ZFOC"), "RTN")
+     .when(F.col("p.vbak_auart").isin("ZO09","ZO12","ZSD","TA","ZCON","ZFO","ZSO","ZUP","ZUPX","ZO04"), "SO")
+     .otherwise("SO").alias("ordergroup"),
+     
+    F.col("p.vbak_auart").alias("ordertype"),
 
-# 3. Join Part List (PART)
-df = df.join(part_df, F.col("p.vbap_matnr") == part_df.part, "inner")
+    # --- Dates ---
+    F.col("p.vbak_erdat").alias("creationdate"),
+    F.col("p.vbap_erdat").alias("lineitemcreationdate"),
+    F.col("p.vbep_h_edatu").alias("requestdate"),
+    F.col("p.vbep_edatu").alias("deliveryduedate"),
+    F.col("p.vbep_mbdat").alias("firmcommitdate"),
+    F.col("pgidate").alias("pgidate"),
 
-# --- Conditional Left Joins (Optional Data) ---
+    # --- Blocks & Status ---
+    F.col("p.vbak_lifsk").alias("headerdlvblk"),
+    F.col("p.vbep_lifsp").alias("itemdlvblk"),
+    F.when(F.coalesce(F.col("p.vbak_faksk"), F.lit('')) != '', F.concat(F.lit("BLK(H) "), F.col("p.vbak_faksk")))
+     .when(F.coalesce(F.col("p.vbap_faksp"), F.lit('')) != '', F.concat(F.lit("BLK(L) "), F.col("p.vbap_faksp")))
+     .otherwise("").alias("billingblk"),
+    
+    F.when(F.col("p.vbap_abgru") != '', "True").otherwise("False").alias("solinerejectionflag"),
 
-# 4. Join Plant Data (MARC) - Only if flag was Y
-if marc_df:
-    df = df.join(marc_df, 
-                 (F.col("p.vbap_werks") == marc_df.werks) & 
-                 (F.col("p.vbap_matnr") == marc_df.matnr), "left")
+    # --- Quantities ---
+    F.col("p.vbap_kwmeng").alias("orderlineqty"),
+    F.col("p.vbep_bmeng").alias("committedqty"),
+    F.col("calc_pgi_qty").alias("pgiqty"),
+    
+    # Open Qty (Simplified for readability, implementing SAP logic)
+    F.when(
+        (F.coalesce(F.col("p.vbuk_wbstk"), F.lit('')) != 'C') &
+        (F.col("p.vbap_abgru") == '') &
+        (F.col("p.vbep_bmeng") > 0),
+        # If expected - delvd <= committed, use difference, else committed
+        F.greatest(
+             F.least(
+                 F.coalesce(F.col("p.expectedqtycumulative"),F.lit(0)) - F.coalesce(F.col("p.delvd_qty"),F.lit(0)),
+                 F.coalesce(F.col("p.vbep_bmeng"),F.lit(0))
+             ), 
+             F.lit(0)
+        )
+    ).otherwise(0).alias("openqty"),
 
-# 5. Join Valuation Data (MBEW)
-if mbew_2000:
-    df = df.join(mbew_2000, F.col("p.vbap_matnr") == mbew_2000.matnr, "left")
+    # Inventory
+    (F.coalesce(F.col("p.mard_labst"),F.lit(0)) + F.coalesce(F.col("p.mard_kinsm"),F.lit(0))).alias("onhandqty"),
+    
+    # --- Partners ---
+    F.col("soldtoname").alias("soldtoname"),
+    F.col("p.shipto").alias("shipto"),
+    F.col("p.vbap_werks").alias("vendorplant"),
+    
+    # --- Material ---
+    F.col("p.vbap_matnr").alias("part"),
+    F.col("p.vbap_arktx").alias("partdescription"),
+    F.col("part_consumable").alias("consumableflag"),
+    F.col("matkl").alias("matgrp"),
+    
+    # --- Financials ---
+    F.col("p.vbak_waerk").alias("doccurrency"),
+    F.col("calc_gross_so_price_usd").alias("grosssopriceusd"),
+    F.when(F.col("calc_gross_so_price_usd") > 50000, "True").otherwise("False").alias("highdollarflag"),
+    
+    # Unit Price USD
+    ((F.when(is_asian_curr, F.col("p.vbap_netpr") * 100).otherwise(F.col("p.vbap_netpr"))) * kursk_calc).alias("unitpriceusd"),
 
-if mbew_3120:
-    df = df.join(mbew_3120, F.col("p.vbap_matnr") == mbew_3120.matnr, "left")
+    # Costs (Coalesce 2000 and 3120)
+    F.coalesce(F.col("stprs_2000"), F.col("stprs_3120"), F.lit(0)).alias("stdcost"),
 
-# 6. Join Handling Units (VEKP)
-if vekp_df:
-    df = df.join(vekp_df, F.col("p.f1_vbeln") == vekp_df.vpobjkey, "left")
+    # --- Lookups ---
+    F.col("vekp_track").alias("track"),
+    F.col("srvcnotif").alias("srvcnotif"),
+    F.col("activitytype").alias("activitytype"),
+    F.col("laboffice").alias("laboffice"),
+    
+    # --- Logic Flags ---
+    F.when((F.current_date() >= F.col("p.vbep_edatu")) & (F.col("p.poreceived") == 'X'), "True").otherwise("False").alias("shipmentdueflag"),
+    F.when(F.current_date() >= F.col("p.vbep_edatu"), "True").otherwise("False").alias("deliverydueflag")
+)
 
-# 7. Join Production Data (AFKO)
-if afko_final:
-    df = df.join(afko_final, F.col("p.vbak_aufnr") == afko_final.aufnr, "left")
+# --- 4. Final Write to Delta ---
+# Overwrite mode replaces the table content with the new calculation.
+# mergeSchema=true ensures if we added new columns, the table updates automatically.
 
-# 8. Join Notifications (QMEL)
-if qmel_df:
-    df = df.join(qmel_df, F.col("p.vbeln") == qmel_df.aufnr, "left")
+print("Starting Write Operation...")
+final_df.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .option("mergeSchema", "true") \
+    .saveAsTable(paths["target"])
 
-# 9. Join Header Incoterms (VBKD)
-if hd_inco:
-    df = df.join(hd_inco, F.col("p.vbeln") == hd_inco.vbeln, "left")
-
-# 10. Join Line Incoterms (VBKD)
-if ln_inco:
-    df = df.join(ln_inco, 
-                 (F.col("p.vbeln") == ln_inco.vbeln) & 
-                 (F.col("p.posnr") == ln_inco.posnr), "left")
-
-# 11. Join Lab Office (T024X) - Always joined via MARA
-df = df.join(lab_df, mara_df.labor == lab_df.labor, "left")
-
-# Verification
-# The count should be close to 613,852 (or slightly lower if Master Data is missing).
-# It should DEFINITELY NOT be millions higher.
-print("Join Complete.")
-print(f"Post-Join Row Count: {df.count()}")
+print(f"SUCCESS: Data successfully written to {paths['target']}")
