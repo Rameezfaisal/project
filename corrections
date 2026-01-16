@@ -1,5 +1,261 @@
-df_vbak = read_union_distinct("vbak").alias("vbak")
-df_vbap = read_union_distinct("vbap").alias("vbap")
-df_vbep = read_union_distinct("vbep").alias("vbep")
-df_vbuk = read_union_distinct("vbuk").alias("vbuk")
-df_vbup = read_union_distinct("vbup").alias("vbup")
+# Cell 2: Configurations, Parameters, and Source Initialization
+
+# --- 1. Spark Legacy Date Handling (Critical for SAP Data) ---
+spark.conf.set("spark.sql.parquet.datetimeRebaseModeInWrite", "LEGACY")
+spark.conf.set("spark.sql.parquet.int96RebaseModeInWrite", "LEGACY")
+spark.conf.set("spark.sql.avro.datetimeRebaseModeInWrite", "LEGACY")
+
+# --- 2. Input Parameters ---
+params = {
+    "IP_DATA_PRUNING_FLAG": "YYYYYYY", 
+    "IP_SALES_ORG": "1000,2000,3000,9000", 
+    "IP_ORDER_TYPE": "OR,ZSO,ZFD",         
+    "IP_DATE_FLAG": "L",
+    "IP_ERDAT_FROM": "2022-01-01",
+    "IP_ERDAT_TO": "2025-12-31"
+}
+
+# --- 3. Table Paths ---
+# UPDATE these values to match your exact Lakehouse table names
+paths = {
+    "prst":  "Lakehouse.zt_m_sales_order_status_v2",
+    "kna1":  "Lakehouse.cv_kna1",
+    "mara":  "Lakehouse.cv_mara",
+    "marc":  "Lakehouse.cv_marc",
+    "mbew":  "Lakehouse.cv_mbew",
+    "vekp":  "Lakehouse.cv_vekp",
+    "afko":  "Lakehouse.cv_afko",
+    "afvc":  "Lakehouse.cv_afvc",
+    "vbkd":  "Lakehouse.cvns_vbkd",
+    "qmel":  "Lakehouse.cvns_qmel",
+    "t024x": "Lakehouse.cv_t024x",
+    "part":  "Lakehouse.cv_part",
+    "target":"Lakehouse.so_optimized_final"
+}
+
+# --- 4. Initialize DataFrames (Lazy Read) ---
+# We define them here so they are available globally in the notebook.
+try:
+    print("Initializing Source DataFrames...")
+    
+    df_prst  = spark.read.table(paths["prst"])
+    df_kna1  = spark.read.table(paths["kna1"])
+    df_mara  = spark.read.table(paths["mara"])
+    df_marc  = spark.read.table(paths["marc"])
+    df_mbew  = spark.read.table(paths["mbew"])
+    df_vekp  = spark.read.table(paths["vekp"])
+    df_afko  = spark.read.table(paths["afko"])
+    df_afvc  = spark.read.table(paths["afvc"])
+    df_vbkd  = spark.read.table(paths["vbkd"])
+    df_qmel  = spark.read.table(paths["qmel"])
+    df_t024x = spark.read.table(paths["t024x"])
+    df_part  = spark.read.table(paths["part"])
+    
+    print("✅ All source tables initialized successfully.")
+    
+except Exception as e:
+    print(f"❌ CRITICAL ERROR: Could not find one of the tables. Check paths dictionary.\n{e}")
+
+
+
+
+
+
+
+
+
+
+​Cell 3: Core Data Ingestion & Optimization Layer
+​Business Context:
+This cell takes the main Sales Order DataFrame (df_prst from Cell 2) and applies the "Pruning Logic" immediately. It filters out irrelevant data (old closed orders, technical types) and handles the Date Logic, ensuring "Open" orders are never dropped even if dates are missing.
+
+
+
+
+
+
+# Cell 3: Main Source Reading and Optimization Logic
+
+# 1. Parse Input Parameters
+input_sales_org = [x.strip() for x in params["IP_SALES_ORG"].split(",")]
+input_order_type = [x.strip() for x in params["IP_ORDER_TYPE"].split(",")]
+
+# 2. Use the Main Driving Table (Initialized in Cell 2)
+prst_df = df_prst
+
+# 3. Define Base Filter (Always Active)
+#    Exclude specific technical types.
+base_filter = (~F.col("vbak_auart").isin("ZVC", "ZR07"))
+
+# 4. Define Dynamic Date Logic with NULL Handling
+date_flag = params["IP_DATE_FLAG"]
+from_date = params["IP_ERDAT_FROM"]
+to_date = params["IP_ERDAT_TO"]
+
+# Helper: Define which column to check based on the flag
+if date_flag == 'L':    # Line Creation Date
+    # Fallback to vbak_erdat if vbap_erdat is NULL
+    target_col = F.coalesce(F.col("vbap_erdat"), F.col("vbak_erdat"))
+elif date_flag == 'P':  # PGI Date
+    target_col = F.col("pgidate")
+elif date_flag == 'R':  # Schedule Line Date
+    target_col = F.col("vbep_h_edatu")
+elif date_flag == 'C':  # Header Creation Date
+    target_col = F.col("vbak_erdat")
+elif date_flag == 'F':  # Material Availability Date
+    target_col = F.col("vbep_mbdat")
+elif date_flag == 'A':  # Line Change Date
+    target_col = F.col("vbap_aedat")
+else:
+    target_col = None
+
+# Construct the Date Condition
+# Logic: (Date is within Range) OR (Order is Open) OR (Date Flag is 'N')
+if date_flag == 'N' or target_col is None:
+    date_cond = F.lit(True)
+else:
+    date_cond = (
+        (target_col.between(from_date, to_date)) | 
+        (F.col("order_status") == "Open")
+    )
+
+# 5. Define Organization & Type Filters
+if 'ALL' in input_sales_org:
+    org_cond = F.lit(True)
+else:
+    org_cond = F.col("vbak_vkorg").isin(input_sales_org)
+
+if 'ALL' in input_order_type:
+    type_cond = F.lit(True)
+else:
+    type_cond = F.col("vbak_auart").isin(input_order_type)
+
+# 6. Apply All Filters
+prst_filtered = prst_df.filter(base_filter & date_cond & org_cond & type_cond)
+
+# 7. Cache the result for performance
+prst_filtered.cache()
+
+# Verification
+print(f"Base Table Filtered. Row Count: {prst_filtered.count()}")
+
+
+
+
+
+
+
+
+
+Cell 4: Lookup Data Preparation (Fan-out Fix)
+​Business Context:
+This cell prepares the secondary tables using the DataFrames from Cell 2 (df_marc, df_mbew, etc.).
+Crucially, it retains the .dropDuplicates() logic we added earlier to ensure strict 1-to-1 joins and prevent the row explosion issue.
+
+
+
+
+
+
+
+# Cell 4: Lookup Data Preparation with STRICT Deduplication
+
+flags = params["IP_DATA_PRUNING_FLAG"]
+
+# --- 1. MARC (Plant Data) ---
+if flags[0] == 'Y':
+    marc_raw = df_marc
+    marc_df = marc_raw.join(prst_filtered, 
+                            (marc_raw.matnr == prst_filtered.vbap_matnr) & 
+                            (marc_raw.werks == prst_filtered.vbap_werks), "semi") \
+                      .select("matnr", "werks", "dispo", "ekgrp") \
+                      .withColumnRenamed("dispo", "marc_dispo") \
+                      .withColumnRenamed("ekgrp", "marc_ekgrp") \
+                      .dropDuplicates(["matnr", "werks"])
+else:
+    marc_df = None
+
+# --- 2. MBEW (Valuation) ---
+if flags[1] == 'Y':
+    mbew_raw = df_mbew
+    
+    # Filter for 2000 & Deduplicate
+    mbew_2000 = mbew_raw.filter(F.col("bwkey") == '2000') \
+                        .select(F.col("matnr"), F.col("stprs").alias("stprs_2000")) \
+                        .dropDuplicates(["matnr"])
+    
+    # Filter for 3120 & Deduplicate
+    mbew_3120 = mbew_raw.filter(F.col("bwkey") == '3120') \
+                        .select(F.col("matnr"), F.col("stprs").alias("stprs_3120")) \
+                        .dropDuplicates(["matnr"])
+else:
+    mbew_2000 = None
+    mbew_3120 = None
+
+# --- 3. VEKP (Handling Units) ---
+if flags[2] == 'Y':
+    vekp_raw = df_vekp
+    vekp_df = vekp_raw.groupBy("vpobjkey").agg(F.max("exidv2").alias("vekp_track"))
+else:
+    vekp_df = None
+
+# --- 5. AFKO (Production) ---
+if flags[4] == 'Y':
+    afko_raw = df_afko
+    afvc_raw = df_afvc
+    
+    afvc_header = afvc_raw.groupBy("aufpl").agg(F.min("vornr").alias("vornr"))
+    
+    act_df = afvc_header.join(afvc_raw, ["aufpl", "vornr"], "inner") \
+                        .select("aufpl", F.col("larnt").alias("activitytype")) \
+                        .dropDuplicates(["aufpl"])
+                        
+    afko_final = afko_raw.join(act_df, "aufpl", "inner") \
+                         .select("aufnr", "activitytype") \
+                         .dropDuplicates(["aufnr"])
+else:
+    afko_final = None
+
+# --- 6. QMEL (Notifications) ---
+if flags[5] == 'Y':
+    qmel_raw = df_qmel
+    qmel_df = qmel_raw.groupBy("aufnr").agg(F.max("qmnum").alias("srvcnotif"))
+else:
+    qmel_df = None
+
+# --- 4. VBKD (Incoterms) ---
+if flags[3] == 'Y':
+    vbkd_raw = df_vbkd
+    
+    hd_inco = vbkd_raw.filter(F.col("posnr") == '000000') \
+                      .select("vbeln", "inco1", "kursk", "prsdt") \
+                      .withColumnRenamed("inco1", "hd_inco1") \
+                      .dropDuplicates(["vbeln"])
+    
+    ln_inco = vbkd_raw.select("vbeln", "posnr", "ihrez", "inco1", "zterm") \
+                      .withColumnRenamed("inco1", "ln_inco1") \
+                      .withColumnRenamed("ihrez", "ln_ihrez") \
+                      .withColumnRenamed("zterm", "ln_zterm") \
+                      .dropDuplicates(["vbeln", "posnr"])
+else:
+    hd_inco = None
+    ln_inco = None
+
+# --- 7. T024X & Masters ---
+lab_df = df_t024x.filter(F.col("spras") == 'E') \
+                 .select("labor", F.col("lbtxt").alias("laboffice")) \
+                 .dropDuplicates(["labor"])
+
+kna1_df = df_kna1.select("kunnr", F.col("name1").alias("soldtoname")) \
+                 .dropDuplicates(["kunnr"])
+
+mara_df = df_mara.select("matnr", "matkl", "mstae", "labor") \
+                 .dropDuplicates(["matnr"])
+
+part_df = df_part.select("part", F.col("consumable").alias("part_consumable")) \
+                 .dropDuplicates(["part"])
+
+print("Lookup tables prepared.")
+
+
+
