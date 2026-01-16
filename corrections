@@ -1,13 +1,98 @@
---- Investigating Order 0005147005 ---
-Material: 716-013344-001 | Plant: 2120 | Customer: 0000000403
-Matches in PART table: 1 (Should be 1)
-Matches in MBEW (2000/3120): 2 (Should be 1 or 0 per plant)
-+---------+-----+--------------+-----+-----+-----+-----+-----+-----+------+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+------+--------+-----+--------+--------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+------+------+--------+--------+--------+------+------+------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------------+------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+------+-----+-----+-----+-----+--------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-------+----------------------+--------------------+
-|hvr_rowid|mandt|         matnr|bwkey|bwtar|lvorm|lbkum|salk3|vprsv| verpr| stprs|peinh|bklas|salkv|vmkum|vmsal|vmvpr|vmver| vmstp|vmpei|vmbkl|vmsav|vjkum|vjsal|vjvpr|vjver| vjstp|vjpei|vjbkl|vjsav|lfgja|lfmon|bwtty| stprv|   laepr|zkprs|   zkdat|     timestamp|bwprs|bwprh|vjbws|vjbwh|vvjsl|vvjlb|vvmlb|vvsal|zplpr| zplp1| zplp2| zplp3|   zpld1|   zpld2|   zpld3| pperz| pperl| pperv|kalkz|kalkl|kalkv|kalsc|xlifo|mypol|bwph1|bwps1|abwkz|pstat|       kaln1|       kalnr|bwva1|bwva2|bwva3|vers1|vers2|vers3|hrkft|kosgr|pprdz|pprdl|pprdv|pdatz|pdatl|pdatv|ekalr| vplpr|mlmaa|mlast| lplpr|vksal|hkmat|sperw|kziwl|   wlinl|abciw|bwspa|lplpx|vplpx|fplpx|lbwst|vbwst|fbwst|eklas|qklas|mtuse|mtorg|ownpr|xbewm|bwpei|mbrue|oklas|oippinv|hvr_last_modified_date|     src_commit_date|
-+---------+-----+--------------+-----+-----+-----+-----+-----+-----+------+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+------+--------+-----+--------+--------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+------+------+--------+--------+--------+------+------+------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------------+------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+------+-----+-----+-----+-----+--------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-------+----------------------+--------------------+
-|445976497|  250|716-013344-001| 2000|     |     |0.000| 0.00|    S|330.19|372.31|    1| 7902| 0.00|0.000| 0.00|    S| 0.00|372.31|    1| 7902| 0.00|0.000| 0.00|    S| 0.00|372.31|    1| 7902| 0.00| 2024|   07|     |351.24|20230313| 0.00|00000000|20240108202911| 0.00| 0.00| 0.00| 1.00| 0.00|0.000|0.000| 0.00| 0.00|330.21|369.84|369.84|20230313|20241012|20241012|000000|000000|000000|     |    X|    X|     |     |     | 0.00| 0.00|   00|   BG|000103632634|000103632635|     |  Z01|  Z01|   00|   01|   01| ZSH1|     |  000|  009|  005| 0000| 2023| 2022|    X|351.24|     |     |372.31| 0.00|    X|     |     |00000000|     | 0.00| 0.00| 0.00| 0.00|     |     |     |     |     |     |     |     |     |    0|    X|     |       |  2025-10-11 20:47:...|2025-10-11 20:47:...|
-|387957697|  250|716-013344-001| 3120|     |     |0.000| 0.00|    S|612.65|372.31|    1| 7902| 0.00|0.000| 0.00|    S| 0.00|351.24|    1| 7902| 0.00|0.000| 0.00|    S| 0.00|351.24|    1| 7902| 0.00| 2023|   09|     |351.24|20230313| 0.00|00000000|20230313223649| 0.00| 0.00| 0.00| 1.00| 0.00|0.000|0.000| 0.00| 0.00|330.21|330.21|330.21|20230313|20230318|20230318|000000|000000|000000|     |    X|    X|     |     |     | 0.00| 0.00|   00|   BG|000103698482|000103698483|     |  Z01|  Z01|   00|   01|   01| ZSH1|     |  000|  009|  005| 0000| 2023| 2022|    X|351.24|     |     |372.31| 0.00|    X|     |     |00000000|     | 0.00| 0.00| 0.00| 0.00|     |     |     |     |     |     |     |     |     |    0|     |     |       |  2025-10-11 20:47:...|2025-10-11 20:47:...|
-+---------+-----+--------------+-----+-----+-----+-----+-----+-----+------+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+-----+-----+-----+-----+------+--------+-----+--------+--------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+------+------+--------+--------+--------+------+------+------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------------+------------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+------+-----+-----+------+-----+-----+-----+-----+--------+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-------+----------------------+--------------------+
+# Cell 4 (Updated): Lookup Data Preparation with STRICT Deduplication
 
-Matches in MARC: 1 (Should be 1)
-Matches in KNA1: 1 (Should be 1)
+flags = params["IP_DATA_PRUNING_FLAG"]
+
+# --- 1. MARC (Plant Data) ---
+if flags[0] == 'Y':
+    marc_raw = spark.read.table(paths["marc"])
+    marc_df = marc_raw.join(prst_filtered, 
+                            (marc_raw.matnr == prst_filtered.vbap_matnr) & 
+                            (marc_raw.werks == prst_filtered.vbap_werks), "semi") \
+                      .select("matnr", "werks", "dispo", "ekgrp") \
+                      .withColumnRenamed("dispo", "marc_dispo") \
+                      .withColumnRenamed("ekgrp", "marc_ekgrp") \
+                      .dropDuplicates(["matnr", "werks"]) # <--- FIX
+else:
+    marc_df = None
+
+# --- 2. MBEW (Valuation) ---
+if flags[1] == 'Y':
+    mbew_raw = spark.read.table(paths["mbew"])
+    
+    # Filter for 2000 & Deduplicate by Material
+    mbew_2000 = mbew_raw.filter(F.col("bwkey") == '2000') \
+                        .select(F.col("matnr"), F.col("stprs").alias("stprs_2000")) \
+                        .dropDuplicates(["matnr"]) # <--- FIX: Handles Split Valuation
+    
+    # Filter for 3120 & Deduplicate by Material
+    mbew_3120 = mbew_raw.filter(F.col("bwkey") == '3120') \
+                        .select(F.col("matnr"), F.col("stprs").alias("stprs_3120")) \
+                        .dropDuplicates(["matnr"]) # <--- FIX
+else:
+    mbew_2000 = None
+    mbew_3120 = None
+
+# --- 3. VEKP (Handling Units) ---
+if flags[2] == 'Y':
+    vekp_raw = spark.read.table(paths["vekp"])
+    vekp_df = vekp_raw.groupBy("vpobjkey").agg(F.max("exidv2").alias("vekp_track"))
+else:
+    vekp_df = None
+
+# --- 5. AFKO (Production) ---
+if flags[4] == 'Y':
+    afko_raw = spark.read.table(paths["afko"])
+    afvc_raw = spark.read.table(paths["afvc"])
+    
+    afvc_header = afvc_raw.groupBy("aufpl").agg(F.min("vornr").alias("vornr"))
+    
+    act_df = afvc_header.join(afvc_raw, ["aufpl", "vornr"], "inner") \
+                        .select("aufpl", F.col("larnt").alias("activitytype")) \
+                        .dropDuplicates(["aufpl"]) # <--- FIX
+                        
+    afko_final = afko_raw.join(act_df, "aufpl", "inner") \
+                         .select("aufnr", "activitytype") \
+                         .dropDuplicates(["aufnr"]) # <--- FIX
+else:
+    afko_final = None
+
+# --- 6. QMEL (Notifications) ---
+if flags[5] == 'Y':
+    qmel_raw = spark.read.table(paths["qmel"])
+    qmel_df = qmel_raw.groupBy("aufnr").agg(F.max("qmnum").alias("srvcnotif"))
+else:
+    qmel_df = None
+
+# --- 4. VBKD (Incoterms) ---
+if flags[3] == 'Y':
+    vbkd_raw = spark.read.table(paths["vbkd"])
+    
+    hd_inco = vbkd_raw.filter(F.col("posnr") == '000000') \
+                      .select("vbeln", "inco1", "kursk", "prsdt") \
+                      .withColumnRenamed("inco1", "hd_inco1") \
+                      .dropDuplicates(["vbeln"]) # <--- FIX
+    
+    ln_inco = vbkd_raw.select("vbeln", "posnr", "ihrez", "inco1", "zterm") \
+                      .withColumnRenamed("inco1", "ln_inco1") \
+                      .withColumnRenamed("ihrez", "ln_ihrez") \
+                      .withColumnRenamed("zterm", "ln_zterm") \
+                      .dropDuplicates(["vbeln", "posnr"]) # <--- FIX
+else:
+    hd_inco = None
+    ln_inco = None
+
+# --- 7. T024X & Masters ---
+lab_df = spark.read.table(paths["t024x"]).filter(F.col("spras") == 'E') \
+                   .select("labor", F.col("lbtxt").alias("laboffice")) \
+                   .dropDuplicates(["labor"]) # <--- FIX
+
+kna1_df = spark.read.table(paths["kna1"]).select("kunnr", F.col("name1").alias("soldtoname")) \
+                .dropDuplicates(["kunnr"]) # <--- FIX
+
+mara_df = spark.read.table(paths["mara"]).select("matnr", "matkl", "mstae", "labor") \
+                .dropDuplicates(["matnr"]) # <--- FIX
+
+part_df = spark.read.table(paths["part"]).select("part", F.col("consumable").alias("part_consumable")) \
+                .dropDuplicates(["part"]) # <--- FIX
+
+print("Lookup tables prepared with Strict Deduplication.")
