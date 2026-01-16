@@ -1,42 +1,1166 @@
-# --- CELL 3 UPDATE: AGGREGATE QMEL ---
-
-# ... (Previous code for KNA1, MARA, MBEW remains the same) ...
-
-# FIX: Deduplicate QMEL (Service Notifications)
-# SAP allows multiple Notifications per Order. We picked the "Max" QMNUM to keep it 1:1.
-# If you need ALL of them, we would use collect_list(), but that keeps the count at 15M.
-df_qmel = spark.read.table(S_QMEL).groupBy("aufnr").agg(
-    F.max("qmnum").alias("qmnum") 
-).withColumnRenamed("aufnr", "qmel_aufnr")
-
-# ... (Rest of Cell 3 logic for VEKP, VBKD, AFKO remains the same) ...
-
-
-
-
-
-
-
-
-
-
-# --- CELL 4 UPDATE: ADD MISSING COLUMNS ---
-
-# ... (Join Logic remains the same - now safe because QMEL is 1:1) ...
-
-df_gold = df_final_logic.select(
-    # ... (Keep the previous 74 columns I gave you: OrderStatus, Order, Line, etc.) ...
-    
-    # --- ADD MISSING COLUMNS HERE ---
-    # Look at your SAP View output and add the fields I missed.
-    # Examples might include:
-    # F.col("k.ort01").alias("City"),
-    # F.col("k.land1").alias("Country"),
-    # F.col("m.brgew").alias("GrossWeight"),
-    # F.col("f.VBAK_BSTNK").alias("PO_Number"),
-    
-    # ... (Continue until you hit 107 columns) ...
-    
-    # Audit
-    F.current_timestamp().alias("LastRefreshed")
-)
+<?xml version="1.0" encoding="UTF-8"?>
+<View:ColumnView xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:Param="http://www.sap.com/ndb/ViewModelParameter.ecore" xmlns:Type="http://www.sap.com/ndb/DataModelType.ecore" xmlns:View="http://www.sap.com/ndb/ViewModelView.ecore" schemaVersion="2.3" name="CV_SQL_SO_2" dataCategory="CUBE" hierarchiesSQLEnabled="false" defaultNode="#//Script_View" clientDependent="true" scriptParametersCaseSensitive="true" applyPrivilegeType="ANALYTIC_PRIVILEGE" translationRelevant="true">
+  <endUserTexts label="CV_SQL_SO"/>
+  <origin/>
+  <parameter xsi:type="Param:Variable" name="VAR_OrderStatus" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="OrderStatus"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/OrderStatus</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/OrderStatus</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_VendorPlant" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="VendorPlant"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/VendorPlant</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/VendorPlant</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_ShippingPoint" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="ShippingPoint"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/ShippingPoint</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/ShippingPoint</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_DPrio" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="DPrio"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/DPrio</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/DPrio</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_ShipTo" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="ShipTo"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/ShipToWZ</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/ShipToWZ</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_Part" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="Part"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/Part</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/Part</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_CreationDate" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="CreationDate"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/CreationDate</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/CreationDate</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_SoldTo" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="SoldTo"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/SoldToWZ</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/SoldToWZ</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_Region" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="Region"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/Region</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/Region</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_BillingBlock" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="BillingBlock"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/BillingBlk</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/BillingBlk</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_LastDlvStatus" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="LastDlvStatus"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/LastDlvStatus</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/LastDlvStatus</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_LineItemCreationDate" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="VAR_LineItemCreationDate"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/LineItemCreationDate</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/LineItemCreationDate</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_RecevingPlant" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="VAR_RecevingPlant"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/ReceivingPlant</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/ReceivingPlant</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_PGIDate" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="VAR_PGIDate"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/PGIDate</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/PGIDate</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_HighDollarFlag" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="VAR_HighDollarFlag"/>
+    <inlineType name="VARCHAR" primitiveType="VARCHAR"/>
+    <typeOfElement>#//Script_View/HighDollarFlag</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/HighDollarFlag</assignedElement>
+  </parameter>
+  <parameter xsi:type="Param:Variable" name="VAR_RejectionCodeLine" mandatory="false" multipleSelections="true" selectionType="RANGE">
+    <endUserTexts label="VAR_RejectionCodeLine"/>
+    <inlineType name="CHAR" primitiveType="CHAR"/>
+    <typeOfElement>#//Script_View/RejectionCodeLine</typeOfElement>
+    <defaultValue xsi:nil="true"/>
+    <assignedElement>#//Script_View/RejectionCodeLine</assignedElement>
+  </parameter>
+  <parameter name="IP_DATA_PRUNING_FLAG" mandatory="true" multipleSelections="false">
+    <endUserTexts label="MARC-MBEW-VEKP-VBKD-AFVC-QMEL-T024X"/>
+    <inlineType name="NVARCHAR" primitiveType="NVARCHAR" length="7"/>
+    <defaultValue>NNNNNNN</defaultValue>
+    <defaultRange lowValue="NNNNNNN"/>
+  </parameter>
+  <parameter name="IP_SALES_ORG" mandatory="true" multipleSelections="false">
+    <endUserTexts label="IP_SALES_ORG"/>
+    <inlineType name="NVARCHAR" primitiveType="NVARCHAR" length="1000"/>
+    <defaultValue>ALL</defaultValue>
+    <defaultRange lowValue="ALL"/>
+  </parameter>
+  <parameter name="IP_ORDER_TYPE" mandatory="true" multipleSelections="false">
+    <endUserTexts label="IP_ORDER_TYPE"/>
+    <inlineType name="NVARCHAR" primitiveType="NVARCHAR" length="100"/>
+    <defaultValue>ALL</defaultValue>
+    <defaultRange lowValue="ALL"/>
+  </parameter>
+  <parameter name="IP_ERDAT_FROM" mandatory="true" multipleSelections="false">
+    <endUserTexts label="LineItemCreationDate_From"/>
+    <inlineType name="DATE" primitiveType="DATE" semanticType="date"/>
+    <defaultValue xsi:nil="true"/>
+    <defaultExpression language="COLUMN_ENGINE">
+      <formula>Format(adddays(now(),-14),'yyyy-mm-dd')</formula>
+    </defaultExpression>
+    <defaultRange lowValue="Format(adddays(now(),-14),'yyyy-mm-dd')" lowExpression="true"/>
+  </parameter>
+  <parameter name="IP_ERDAT_TO" mandatory="true" multipleSelections="false">
+    <endUserTexts label="LineItemCreationDate_TO"/>
+    <inlineType name="DATE" primitiveType="DATE" semanticType="date"/>
+    <defaultValue xsi:nil="true"/>
+    <defaultExpression language="COLUMN_ENGINE">
+      <formula>Format(now(),'yyyy-mm-dd')</formula>
+    </defaultExpression>
+    <defaultRange lowValue="Format(now(),'yyyy-mm-dd')" lowExpression="true"/>
+  </parameter>
+  <parameter name="IP_DATE_FLAG" mandatory="true" multipleSelections="false">
+    <endUserTexts label="IP_DATE_FLAG"/>
+    <inlineType name="VARCHAR" primitiveType="VARCHAR" length="1">
+      <valueRange>
+        <value>R</value>
+        <endUserTexts label="REQUEST DATE"/>
+      </valueRange>
+      <valueRange>
+        <value>P</value>
+        <endUserTexts label="PGI DATE"/>
+      </valueRange>
+      <valueRange>
+        <value>D</value>
+        <endUserTexts label="DELIVERY DUEDATE"/>
+      </valueRange>
+      <valueRange>
+        <value>C</value>
+        <endUserTexts label="CREATION DATE"/>
+      </valueRange>
+      <valueRange>
+        <value>L</value>
+        <endUserTexts label="LINE ITEM CREATION DATE"/>
+      </valueRange>
+      <valueRange>
+        <value>F</value>
+        <endUserTexts label="FIRM COMMIT DATE"/>
+      </valueRange>
+      <valueRange>
+        <value>A</value>
+        <endUserTexts label="LINE PREV CHANGE DATE"/>
+      </valueRange>
+    </inlineType>
+    <defaultValue>L</defaultValue>
+    <defaultRange lowValue="L"/>
+  </parameter>
+  <executionHints runWithInvokerPrivileges="false"/>
+  <viewNode xsi:type="View:Script" name="Script_View" language="SQLSCRIPT">
+    <endUserTexts label=" "/>
+    <element name="OrderStatus" aggregationBehavior="NONE">
+      <endUserTexts label="OrderStatus"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/OrderStatus/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="10"/>
+    </element>
+    <element name="OrderGroup" aggregationBehavior="NONE">
+      <endUserTexts label="OrderGroup"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/OrderGroup/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="5"/>
+    </element>
+    <element name="Order" aggregationBehavior="NONE">
+      <endUserTexts label="Order"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/Order/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="OrderWZ" aggregationBehavior="NONE">
+      <endUserTexts label="OrderWZ"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/OrderWZ/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="Line" aggregationBehavior="NONE">
+      <endUserTexts label="Line"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/Line/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="6"/>
+    </element>
+    <element name="LineWZ" aggregationBehavior="NONE">
+      <endUserTexts label="LineWZ"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/LineWZ/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="6"/>
+    </element>
+    <element name="ScheduleLine" aggregationBehavior="NONE">
+      <endUserTexts label="ScheduleLine"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ScheduleLine/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="4"/>
+    </element>
+    <element name="ScheduleLineWZ" aggregationBehavior="NONE">
+      <endUserTexts label="ScheduleLineWZ"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ScheduleLineWZ/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="6"/>
+    </element>
+    <element name="OrderType" aggregationBehavior="NONE">
+      <endUserTexts label="OrderType"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/OrderType/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="4"/>
+    </element>
+    <element name="RejectionCodeLine" aggregationBehavior="NONE">
+      <endUserTexts label="RejectionCodeLine"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/RejectionCodeLine/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="2"/>
+    </element>
+    <element name="CreationDate" aggregationBehavior="NONE">
+      <endUserTexts label="CreationDate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CreationDate/@inlineType</type>
+      <inlineType name="DATE" primitiveType="DATE"/>
+    </element>
+    <element name="LineItemCreationDate" aggregationBehavior="NONE">
+      <endUserTexts label="LineItemCreationDate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/LineItemCreationDate/@inlineType</type>
+      <inlineType name="DATE" primitiveType="DATE"/>
+    </element>
+    <element name="LineItemCreationTime" aggregationBehavior="MIN" engineAggregation="MIN">
+      <endUserTexts label="LineItemCreationTime"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/LineItemCreationTime/@inlineType</type>
+      <inlineType name="TIME" primitiveType="TIME"/>
+    </element>
+    <element name="RequestDate" aggregationBehavior="NONE">
+      <endUserTexts label="RequestDate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/RequestDate/@inlineType</type>
+      <inlineType name="DATE" primitiveType="DATE"/>
+    </element>
+    <element name="DeliveryDueDate" aggregationBehavior="NONE">
+      <endUserTexts label="DeliveryDueDate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/DeliveryDueDate/@inlineType</type>
+      <inlineType name="DATE" primitiveType="DATE"/>
+    </element>
+    <element name="StatRelvDate" aggregationBehavior="NONE">
+      <endUserTexts label="StatRelvDate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/StatRelvDate/@inlineType</type>
+      <inlineType name="DATE" primitiveType="DATE"/>
+    </element>
+    <element name="ItemDeliveryDate" aggregationBehavior="NONE">
+      <endUserTexts label="ItemDeliveryDate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ItemDeliveryDate/@inlineType</type>
+      <inlineType name="DATE" primitiveType="DATE"/>
+    </element>
+    <element name="HeaderDlvBlk" aggregationBehavior="NONE">
+      <endUserTexts label="HeaderDlvBlk"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/HeaderDlvBlk/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="20"/>
+    </element>
+    <element name="ItemDlvBlk" aggregationBehavior="NONE">
+      <endUserTexts label="ItemDlvBlk"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ItemDlvBlk/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="20"/>
+    </element>
+    <element name="BillingBlk" aggregationBehavior="NONE">
+      <endUserTexts label="BillingBlk"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/BillingBlk/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="20"/>
+    </element>
+    <element name="OrderLineQty" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="OrderLineQty"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/OrderLineQty/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="15" scale="3"/>
+    </element>
+    <element name="CommittedQty" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="CommittedQty"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CommittedQty/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="13" scale="3"/>
+    </element>
+    <element name="PGIQty" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="PGIQty"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/PGIQty/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="15" scale="3"/>
+    </element>
+    <element name="Intransit" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="Intransit"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/Intransit/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="13" scale="3"/>
+    </element>
+    <element name="GRQty" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="GRQty"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/GRQty/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="13" scale="3"/>
+    </element>
+    <element name="OpenQty" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="OpenQty"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/OpenQty/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="13" scale="3"/>
+    </element>
+    <element name="OnHandQty" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="OnHandQty"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/OnHandQty/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="13" scale="3"/>
+    </element>
+    <element name="VendorOwned" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="VendorOwned"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/VendorOwned/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="13" scale="3"/>
+    </element>
+    <element name="AvailToShip" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="AvailToShip"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/AvailToShip/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="13" scale="3"/>
+    </element>
+    <element name="LastDlvDoc" aggregationBehavior="NONE">
+      <endUserTexts label="OpenDlvDoc"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/LastDlvDoc/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="LastDlvQty" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="OpenDlvQty"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/LastDlvQty/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="13" scale="3"/>
+    </element>
+    <element name="QtyShippedTtLine" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="QtyShippedTtlLine"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/QtyShippedTtLine/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="13"/>
+    </element>
+    <element name="QtyNetReceivedLine" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="QtyNetReceivedLine"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/QtyNetReceivedLine/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="13"/>
+    </element>
+    <element name="LastDlvStatus" aggregationBehavior="NONE">
+      <endUserTexts label="DlvStatus"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/LastDlvStatus/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="20"/>
+    </element>
+    <element name="PurchaseOrg" aggregationBehavior="NONE">
+      <endUserTexts label="PurchaseOrg"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/PurchaseOrg/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="4"/>
+    </element>
+    <element name="SalesOrg" aggregationBehavior="NONE">
+      <endUserTexts label="SalesOrg"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/SalesOrg/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="4"/>
+    </element>
+    <element name="SoldTo" aggregationBehavior="NONE">
+      <endUserTexts label="SoldTo"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/SoldTo/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="SoldToWZ" aggregationBehavior="NONE">
+      <endUserTexts label="SoldToWz"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/SoldToWZ/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="SoldToName" aggregationBehavior="NONE">
+      <endUserTexts label="SoldToName"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/SoldToName/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="35"/>
+    </element>
+    <element name="ShipTo" aggregationBehavior="NONE">
+      <endUserTexts label="ShipTo"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ShipTo/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="ShipToWZ" aggregationBehavior="NONE">
+      <endUserTexts label="ShipToWZ"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ShipToWZ/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="ShipToName" aggregationBehavior="NONE">
+      <endUserTexts label="ShipToName"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ShipToName/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="35"/>
+    </element>
+    <element name="VendorPlant" aggregationBehavior="NONE">
+      <endUserTexts label="VendorPlant"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/VendorPlant/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="4"/>
+    </element>
+    <element name="VendorSloc" aggregationBehavior="NONE">
+      <endUserTexts label="VendorSloc"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/VendorSloc/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="4"/>
+    </element>
+    <element name="ShippingPoint" aggregationBehavior="NONE">
+      <endUserTexts label="ShippingPoint"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ShippingPoint/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="4"/>
+    </element>
+    <element name="ReceivingPlant" aggregationBehavior="NONE">
+      <endUserTexts label="ReceivingPlant"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ReceivingPlant/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="4"/>
+    </element>
+    <element name="ReceivingSloc" aggregationBehavior="NONE">
+      <endUserTexts label="ReceivingSloc"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ReceivingSloc/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="4"/>
+    </element>
+    <element name="Part" aggregationBehavior="NONE">
+      <endUserTexts label="Part"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/Part/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="18"/>
+    </element>
+    <element name="PartDescription" aggregationBehavior="NONE">
+      <endUserTexts label="PartDescription"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/PartDescription/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="40"/>
+    </element>
+    <element name="ConsumableFlag" aggregationBehavior="NONE">
+      <endUserTexts label="ConsumableFlag"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ConsumableFlag/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="4"/>
+    </element>
+    <element name="Track" aggregationBehavior="NONE">
+      <endUserTexts label="Track"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/Track/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="40"/>
+    </element>
+    <element name="FirmCommitDate" aggregationBehavior="NONE">
+      <endUserTexts label="FirmCommitDate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/FirmCommitDate/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="12"/>
+    </element>
+    <element name="CompDlv" aggregationBehavior="NONE">
+      <endUserTexts label="CompDlv"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CompDlv/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="1"/>
+    </element>
+    <element name="MatGrp" aggregationBehavior="NONE">
+      <endUserTexts label="MatGrp"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/MatGrp/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="9"/>
+    </element>
+    <element name="CSRep" aggregationBehavior="NONE">
+      <endUserTexts label="CSRep"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CSRep/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="12"/>
+    </element>
+    <element name="CustomerPO" aggregationBehavior="NONE">
+      <endUserTexts label="CustomerPO"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CustomerPO/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="UnitPriceLocalCurr" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="UnitPriceLocalCurr"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/UnitPriceLocalCurr/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="15" scale="2"/>
+    </element>
+    <element name="ExtPriceLocalCurr" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="ExtPriceLocalCurr"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ExtPriceLocalCurr/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="15" scale="2"/>
+    </element>
+    <element name="DocCurrency" aggregationBehavior="NONE">
+      <endUserTexts label="DocCurrency"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/DocCurrency/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="3"/>
+    </element>
+    <element name="UnitPriceUSD" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="UnitPriceUSD"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/UnitPriceUSD/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="15" scale="2"/>
+    </element>
+    <element name="ExtPriceUSD" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="ExtPriceUSD"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ExtPriceUSD/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="15" scale="2"/>
+    </element>
+    <element name="StdCost" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="StdCost"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/StdCost/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="11" scale="2"/>
+    </element>
+    <element name="ExtCost" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="ExtCost"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ExtCost/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="15" scale="2"/>
+    </element>
+    <element name="StdCurrency" aggregationBehavior="NONE">
+      <endUserTexts label="StdCurrency"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/StdCurrency/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="3"/>
+    </element>
+    <element name="DPrio" aggregationBehavior="NONE">
+      <endUserTexts label="DPrio"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/DPrio/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="2"/>
+    </element>
+    <element name="BatchNo" aggregationBehavior="NONE">
+      <endUserTexts label="BatchNo"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/BatchNo/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="PGIDoc" aggregationBehavior="NONE">
+      <endUserTexts label="PGIDoc"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/PGIDoc/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="PGIDate" aggregationBehavior="NONE">
+      <endUserTexts label="PGIDate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/PGIDate/@inlineType</type>
+      <inlineType name="DATE" primitiveType="DATE"/>
+    </element>
+    <element name="NCUPhase2" aggregationBehavior="NONE">
+      <endUserTexts label="NCUPhase2"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/NCUPhase2/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="FCID_SlsDocVersion" aggregationBehavior="NONE">
+      <endUserTexts label="FCID_SlsDocVersion"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/FCID_SlsDocVersion/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="LabOffice" aggregationBehavior="NONE">
+      <endUserTexts label="LabOffice"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/LabOffice/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="MRPV" aggregationBehavior="NONE">
+      <endUserTexts label="MRPV"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/MRPV/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="3"/>
+    </element>
+    <element name="MRPC" aggregationBehavior="NONE">
+      <endUserTexts label="MRPC"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/MRPC/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="3"/>
+    </element>
+    <element name="DlvGrp" aggregationBehavior="NONE">
+      <endUserTexts label="DeliveryGroup"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/DlvGrp/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="3"/>
+    </element>
+    <element name="DlvCreationDate" aggregationBehavior="NONE">
+      <endUserTexts label="DlvCreationDate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/DlvCreationDate/@inlineType</type>
+      <inlineType name="DATE" primitiveType="DATE"/>
+    </element>
+    <element name="SrvcNotif" aggregationBehavior="NONE">
+      <endUserTexts label="SrvcNotif"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/SrvcNotif/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="FrontLoad" aggregationBehavior="NONE">
+      <endUserTexts label="FrontLoad"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/FrontLoad/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="POReceived" aggregationBehavior="NONE">
+      <endUserTexts label="POReceived"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/POReceived/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="Booking" aggregationBehavior="NONE">
+      <endUserTexts label="Booking"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/Booking/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="ProdHier" aggregationBehavior="NONE">
+      <endUserTexts label="ProdHier"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ProdHier/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="30"/>
+    </element>
+    <element name="STOItemText" aggregationBehavior="NONE">
+      <endUserTexts label="STOItemText"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/STOItemText/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="40"/>
+    </element>
+    <element name="MaterialMemo" aggregationBehavior="NONE">
+      <endUserTexts label="MaterialMemo"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/MaterialMemo/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="200"/>
+    </element>
+    <element name="PurchaseGrp" aggregationBehavior="NONE">
+      <endUserTexts label="Material Group"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/PurchaseGrp/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="3"/>
+    </element>
+    <element name="XPlantStatus" aggregationBehavior="NONE">
+      <endUserTexts label="XPlantStatus"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/XPlantStatus/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="2"/>
+    </element>
+    <element name="CustomerMaterial" aggregationBehavior="NONE">
+      <endUserTexts label="CustomerMaterial"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CustomerMaterial/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="200"/>
+    </element>
+    <element name="LineChangedBy" aggregationBehavior="NONE">
+      <endUserTexts label="LineChangedBy"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/LineChangedBy/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="50"/>
+    </element>
+    <element name="Incoterms" aggregationBehavior="NONE">
+      <endUserTexts label="Incoterms"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/Incoterms/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="3"/>
+    </element>
+    <element name="CsOwner" aggregationBehavior="NONE">
+      <endUserTexts label="CsOwner"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CsOwner/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="20"/>
+    </element>
+    <element name="CreatedBy" aggregationBehavior="NONE">
+      <endUserTexts label="CreatedBy"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CreatedBy/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="20"/>
+    </element>
+    <element name="AssocServOrd" aggregationBehavior="NONE">
+      <endUserTexts label="AssocServOrd"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/AssocServOrd/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="20"/>
+    </element>
+    <element name="LinePrevChangeDate" aggregationBehavior="NONE">
+      <endUserTexts label="LinePrevChangeDate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/LinePrevChangeDate/@inlineType</type>
+      <inlineType name="DATE" primitiveType="DATE"/>
+    </element>
+    <element name="ExchangeRate" aggregationBehavior="NONE">
+      <endUserTexts label="ExchangeRate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ExchangeRate/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="15" scale="5"/>
+    </element>
+    <element name="PricingDate" aggregationBehavior="NONE">
+      <endUserTexts label="PricingDate"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/PricingDate/@inlineType</type>
+      <inlineType name="DATE" primitiveType="DATE"/>
+    </element>
+    <element name="Region" aggregationBehavior="NONE">
+      <endUserTexts label="Region"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/Region/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="12"/>
+    </element>
+    <element name="ToolType" aggregationBehavior="NONE">
+      <endUserTexts label="ToolType"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ToolType/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="20"/>
+    </element>
+    <element name="ShipmentDueFlag" aggregationBehavior="NONE">
+      <endUserTexts label="ShipmentDueFlag"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ShipmentDueFlag/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="10"/>
+    </element>
+    <element name="GrossSOPriceUSD" aggregationBehavior="SUM" engineAggregation="SUM">
+      <endUserTexts label="GrossSOPriceUSD"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/GrossSOPriceUSD/@inlineType</type>
+      <inlineType name="DECIMAL" primitiveType="DECIMAL" length="15" scale="2"/>
+    </element>
+    <element name="DeliveryDueFlag" aggregationBehavior="NONE">
+      <endUserTexts label="DeliveryDueFlag"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/DeliveryDueFlag/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="10"/>
+    </element>
+    <element name="CustomerPoLine" aggregationBehavior="NONE">
+      <endUserTexts label="CustomerPoLine"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CustomerPoLine/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="20"/>
+    </element>
+    <element name="Cancellation" aggregationBehavior="NONE">
+      <endUserTexts label="Cancellation"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/Cancellation/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="2"/>
+    </element>
+    <element name="CancellationIndicatorFlag" aggregationBehavior="NONE">
+      <endUserTexts label="CancellationIndicatorFlag"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CancellationIndicatorFlag/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="2"/>
+    </element>
+    <element name="Carrier" aggregationBehavior="NONE">
+      <endUserTexts label="CARRIER"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/Carrier/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="200"/>
+    </element>
+    <element name="CarrierName" aggregationBehavior="NONE">
+      <endUserTexts label="CARRIER_NAME"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CarrierName/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="200"/>
+    </element>
+    <element name="CreditCheckBlock" aggregationBehavior="NONE">
+      <endUserTexts label="CreditCheckBlock"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/CreditCheckBlock/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="4"/>
+    </element>
+    <element name="SOLineRejectionFlag" aggregationBehavior="NONE">
+      <endUserTexts label="SOLineRejectionFlag"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/SOLineRejectionFlag/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="5"/>
+    </element>
+    <element name="ActivityType" aggregationBehavior="NONE">
+      <endUserTexts label="ActivityType"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/ActivityType/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="6"/>
+    </element>
+    <element name="HighDollarFlag" aggregationBehavior="NONE">
+      <endUserTexts label="HighDollarFlag"/>
+      <type xsi:type="Type:SimpleType">#//Script_View/HighDollarFlag/@inlineType</type>
+      <inlineType name="VARCHAR" primitiveType="VARCHAR" length="10"/>
+    </element>
+    <layout xCoordinate="40" yCoordinate="85"/>
+    <definition>/*---------------------------------------------------------------------&#xD;
+*Program Name : CV_SQL_SO_OPTIMIZED&#xD;
+*Project      : CV_SQL_SO OPTIMIZATION &#xD;
+*Developer    : DHARANIDHAR MALLURI&#xD;
+*Requestor    : SANKAR TADINADA&#xD;
+*Create Date  : 15/12/2019&#xD;
+*Call By      : USER QUERIES&#xD;
+*--------------------------------------------------------------------- &#xD;
+*Description  : TO IMPROVE THE PERFORMANCE OF THE VIEW CV_SQL_SO, WE ARE PRE-CALCULATING&#xD;
+*               RESOURCE INTENSIVE PARTS AND PERSISTING THOSE RESULTS IN THE TABLE ZT_M_SALES_ORDER_STATUS.&#xD;
+*---------------------------------------------------------------------&#xD;
+* Revision Log:&#xD;
+* Date       Developer           Description TEST COMPILE&#xD;
+* 15/12/2019 MALLUDH             INTIAL VERSION (INCIDENT: INC0462937)&#xD;
+* 26/03/2020 MALLUDH             MODIFIED THE LOGIC TO SHIFT THE DATE FILTER TO EITHER ERDAT &#xD;
+*                                OR PGIDATE BASE ON THE IP_DATE_FLAG&#xD;
+*                                A VALUE OF 'P' FILTERS ON PGIDATE COLUMN &#xD;
+*                                AND A VALUE OF 'E' FILTERS ON ERDATE COLUMN&#xD;
+*                                AND A VALUE OF 'N' WILL NOT HAVE A DATE FILTER&#xD;
+* 23/07/2021 VADLANA             Invalid decimal digits: beyond precision for column &quot;ExtCost&quot;&#xD;
+* 23/09/2021 VADLANA             REMOVED THE CONTDITION VBAP_WERKS >= '1900' TO GET ZSB ORDERS &#xD;
+*----------------------------------------------------------------------*/ &#xD;
+/************* Begin Procedure Script **************/ &#xD;
+ BEGIN &#xD;
+ &#xD;
+ DECLARE MARC_DATA_FLAG NVARCHAR(1);  &#xD;
+ DECLARE MBEW_DATA_FLAG NVARCHAR(1);&#xD;
+ DECLARE VEKP_DATA_FLAG NVARCHAR(1);&#xD;
+ DECLARE VBKD_DATA_FLAG NVARCHAR(1);&#xD;
+ DECLARE AFVC_DATA_FLAG NVARCHAR(1);&#xD;
+ DECLARE QMEL_DATA_FLAG NVARCHAR(1);&#xD;
+ DECLARE T024X_DATA_FLAG NVARCHAR(1);&#xD;
+ &#xD;
+   MARC_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,1,1);&#xD;
+   MBEW_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,2,1);&#xD;
+   VEKP_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,3,1);&#xD;
+   VBKD_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,4,1);&#xD;
+   AFVC_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,5,1);&#xD;
+   QMEL_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,6,1);&#xD;
+   T024X_DATA_FLAG = SUBSTRING(IP_DATA_PRUNING_FLAG,7,1);&#xD;
+  &#xD;
+   INPUT_SALES_ORG = &#xD;
+ 		SELECT object AS &quot;VKORG&quot;&#xD;
+ 		FROM   &quot;_SYS_BIC&quot;.&quot;prd.ev::PARSE_20&quot; (:IP_SALES_ORG); &#xD;
+ 		&#xD;
+   INPUT_ORDER_TYPE = &#xD;
+        SELECT object AS &quot;AUART&quot;&#xD;
+        FROM   &quot;_SYS_BIC&quot;.&quot;prd.ev::PARSE_20&quot; (:IP_ORDER_TYPE);&#xD;
+ &#xD;
+&#xD;
+   MARC = SELECT  MARC.&quot;MATNR&quot;,MARC.&quot;WERKS&quot;,MARC.&quot;DISPO&quot;,MARC.&quot;EKGRP&quot;&#xD;
+          FROM    &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CV_MARC&quot; MARC&#xD;
+          JOIN    (SELECT DISTINCT VBAP_MATNR,VBAP_WERKS FROM &quot;ALEX_CUSTOM&quot;.&quot;ZT_M_SALES_ORDER_STATUS_V2&quot;) PRST &#xD;
+          ON      PRST.VBAP_WERKS = MARC.&quot;WERKS&quot; &#xD;
+          AND     PRST.VBAP_MATNR = MARC.&quot;MATNR&quot;&#xD;
+          AND    :MARC_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER MARC DATA IS RETREIVED OR NOT&#xD;
+        &#xD;
+   MBEW_2000 = SELECT  &quot;MATNR&quot;, &quot;STPRS&quot; AS STPRS_2000&#xD;
+          FROM    &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CV_MBEW&quot; MBEW&#xD;
+          JOIN    (SELECT DISTINCT VBAP_MATNR FROM &quot;ALEX_CUSTOM&quot;.&quot;ZT_M_SALES_ORDER_STATUS_V2&quot;) PRST &#xD;
+          ON      PRST.VBAP_MATNR = MBEW.&quot;MATNR&quot;&#xD;
+          WHERE   &quot;BWKEY&quot; = 2000&#xD;
+          AND    :MBEW_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER MBEW DATA IS RETREIVED OR NOT;&#xD;
+&#xD;
+   MBEW_3120 = SELECT  &quot;MATNR&quot;, &quot;STPRS&quot; AS STPRS_3120&#xD;
+          FROM    &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CV_MBEW&quot; MBEW&#xD;
+          JOIN    (SELECT DISTINCT VBAP_MATNR FROM &quot;ALEX_CUSTOM&quot;.&quot;ZT_M_SALES_ORDER_STATUS_V2&quot;) PRST &#xD;
+          ON      PRST.VBAP_MATNR = MBEW.&quot;MATNR&quot;&#xD;
+          WHERE   &quot;BWKEY&quot; = 3120&#xD;
+          AND    :MBEW_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER MBEW DATA IS RETREIVED OR NOT;   &#xD;
+        &#xD;
+   AFKO = SELECT AFKO.AUFNR,AFKO.AUFPL&#xD;
+          FROM    &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CV_AFKO&quot; AFKO&#xD;
+          JOIN   (SELECT DISTINCT VBAK_AUFNR FROM &quot;ALEX_CUSTOM&quot;.&quot;ZT_M_SALES_ORDER_STATUS_V2&quot; ) PRST&#xD;
+          ON     PRST.VBAK_AUFNR = AFKO.&quot;AUFNR&quot;&#xD;
+          WHERE :AFVC_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER AFVC DATA IS RETREIVED OR NOT;&#xD;
+        &#xD;
+   ACT = SELECT  ACT.&quot;AUFPL&quot;&#xD;
+                ,ACT.&quot;LARNT&quot;&#xD;
+       	 FROM   (SELECT  AFVCHeader.&quot;AUFPL&quot;&#xD;
+	                    ,AFVC.&quot;LARNT&quot;&#xD;
+	             FROM   (SELECT  &quot;AUFPL&quot;&#xD;
+		                        ,MIN(&quot;VORNR&quot;) &quot;VORNR&quot;&#xD;
+		                 FROM   &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CV_AFVC&quot;&#xD;
+		                 GROUP BY &quot;AUFPL&quot;&#xD;
+	                    ) AFVCHeader&#xD;
+	             LEFT JOIN &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CV_AFVC&quot; AFVC&#xD;
+	             ON AFVCHeader.&quot;AUFPL&quot; = AFVC.&quot;AUFPL&quot; AND AFVCHeader.&quot;VORNR&quot; = AFVC.&quot;VORNR&quot;&#xD;
+                 ) ACT&#xD;
+         JOIN  :AFKO AFKO&#xD;
+         ON    AFKO.&quot;AUFPL&quot; = ACT.&quot;AUFPL&quot;&#xD;
+         WHERE :AFVC_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER AFVC DATA IS RETREIVED OR NOT;&#xD;
+       &#xD;
+   VEKP =  SELECT  VEKP.&quot;VPOBJKEY&quot;,VEKP.&quot;EXIDV2&quot;        &#xD;
+           FROM   (SELECT  v.&quot;VPOBJKEY&quot;&#xD;
+ 				          ,MAX(v.&quot;EXIDV2&quot;) AS &quot;EXIDV2&quot; &#xD;
+ 		           FROM     &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CV_VEKP&quot; v&#xD;
+		           GROUP BY &quot;VPOBJKEY&quot; ) VEKP&#xD;
+		   JOIN   (SELECT DISTINCT F1_VBELN FROM &quot;ALEX_CUSTOM&quot;.&quot;ZT_M_SALES_ORDER_STATUS_V2&quot;) PRST&#xD;
+           ON      PRST.F1_VBELN  = VEKP.&quot;VPOBJKEY&quot; &#xD;
+           WHERE  :VEKP_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER VEKP DATA IS RETREIVED OR NOT; &#xD;
+ &#xD;
+ 	 &#xD;
+ HD_INCOTERM =  SELECT  VBKD.&quot;VBELN&quot;, VBKD.&quot;INCO1&quot;,VBKD.&quot;KURSK&quot;, VBKD.&quot;PRSDT&quot;&#xD;
+	            FROM    (SELECT &quot;VBELN&quot;,&quot;INCO1&quot;,&quot;KURSK&quot;,&quot;PRSDT&quot; &#xD;
+	                     FROM   &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CVNS_VBKD&quot;&#xD;
+	                     WHERE  &quot;POSNR&quot; = '000000') VBKD&#xD;
+	            JOIN    (SELECT DISTINCT VBELN FROM &quot;ALEX_CUSTOM&quot;.&quot;ZT_M_SALES_ORDER_STATUS_V2&quot;) PRST&#xD;
+	            ON      PRST.&quot;VBELN&quot; = VBKD.&quot;VBELN&quot;&#xD;
+	            WHERE  :VBKD_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER VBKD DATA IS RETREIVED OR NOT;&#xD;
+	           &#xD;
+ LN_INCOTERM =  SELECT  LN_INCOTERM.&quot;VBELN&quot;,LN_INCOTERM.&quot;POSNR&quot;,LN_INCOTERM.&quot;IHREZ&quot;,LN_INCOTERM.&quot;INCO1&quot;,LN_INCOTERM.&quot;ZTERM&quot;&#xD;
+                FROM    &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CVNS_VBKD&quot; LN_INCOTERM &#xD;
+                JOIN    (SELECT DISTINCT VBELN,POSNR FROM &quot;ALEX_CUSTOM&quot;.&quot;ZT_M_SALES_ORDER_STATUS_V2&quot;) PRST&#xD;
+                ON      PRST.&quot;VBELN&quot; = LN_INCOTERM.&quot;VBELN&quot; AND PRST.&quot;POSNR&quot; = LN_INCOTERM.&quot;POSNR&quot;&#xD;
+                WHERE  :VBKD_DATA_FLAG = 'Y'; --------------- FLAG THAT DETERMINES WHETHER VBKD DATA IS RETREIVED OR NOT; &#xD;
+                &#xD;
+  PART = SELECT DISTINCT &quot;Part&quot;,&quot;Consumable&quot;&#xD;
+         FROM   &quot;_SYS_BIC&quot;.&quot;prd.gops.GLIS/CV_PART&quot; PART&#xD;
+         JOIN   (SELECT DISTINCT VBAP_MATNR FROM &quot;ALEX_CUSTOM&quot;.&quot;ZT_M_SALES_ORDER_STATUS_V2&quot;) PRST&#xD;
+         ON     PART.&quot;Part&quot; = PRST.VBAP_MATNR ;&#xD;
+ 	 &#xD;
+ 	 var_out =   &#xD;
+ 	 &#xD;
+ 	 select xyzz.*,&#xD;
+ &#xD;
+ 	 CASE WHEN xyzz.&quot;GrossSOPriceUSD&quot; > 50000 THEN 'True' ELSE 'False' END AS &quot;HighDollarFlag&quot;&#xD;
+ 	  from&#xD;
+ 	 (SELECT&#xD;
+ &#xD;
+PRST.ORDER_STATUS AS &quot;OrderStatus&quot;&#xD;
+,case when PRST.&quot;VBAK_AUART&quot; in ('ZAS','ZAV','ZFD','ZO11','ZSA','ZSB','ZSR','RK','ZCR1','ZDR1') THEN 'OTH'&#xD;
+     when PRST.&quot;VBAK_AUART&quot; in ('AG','ZQ01','ZQ03','ZQ04','ZQFO','ZQIS','ZQUP','ZQUX','ZUQT') THEN 'QT'&#xD;
+     when PRST.&quot;VBAK_AUART&quot; in ('ZO03','ZRA1','ZSO1') THEN 'RPO'&#xD;
+     when PRST.&quot;VBAK_AUART&quot; in ('ZR11','ZR03','ZR04','ZR05','ZR08','ZR4B','ZUPC','ZUPR','ZFOC') THEN 'RTN'&#xD;
+     when PRST.&quot;VBAK_AUART&quot; in ('ZO09','ZO12','ZSD','TA','ZCON','ZFO','ZSO','ZUP','ZUPX','ZO04') THEN 'SO'&#xD;
+     ELSE 'SO' END AS &quot;OrderGroup&quot;&#xD;
+,PRST.&quot;VBELN&quot; AS &quot;Order&quot;&#xD;
+,LTRIM(PRST.&quot;VBELN&quot;,'0') AS &quot;OrderWZ&quot;&#xD;
+,PRST.&quot;POSNR&quot; AS &quot;Line&quot;&#xD;
+,LTRIM(PRST.&quot;POSNR&quot;,'0') AS &quot;LineWZ&quot;&#xD;
+,PRST.&quot;ETENR&quot; AS &quot;ScheduleLine&quot;&#xD;
+,LTRIM(PRST.&quot;ETENR&quot;,'0') AS &quot;ScheduleLineWZ&quot;&#xD;
+,PRST.&quot;VBAK_AUART&quot; AS &quot;OrderType&quot;&#xD;
+,PRST.&quot;VBAP_ABGRU&quot; AS &quot;RejectionCodeLine&quot;&#xD;
+,PRST.&quot;VBAK_ERDAT&quot; AS &quot;CreationDate&quot;&#xD;
+,PRST.&quot;VBAP_ERDAT&quot; AS &quot;LineItemCreationDate&quot;&#xD;
+,PRST.&quot;VBAP_ERZET&quot; AS &quot;LineItemCreationTime&quot;&#xD;
+&#xD;
+,PRST.&quot;VBEP_H_EDATU&quot; AS &quot;RequestDate&quot;&#xD;
+,PRST.&quot;VBEP_EDATU&quot; AS &quot;DeliveryDueDate&quot; --Schedule Line&#xD;
+,Null AS &quot;StatRelvDate&quot;&#xD;
+,Null AS &quot;ItemDeliveryDate&quot;&#xD;
+,PRST.&quot;VBAK_LIFSK&quot; AS &quot;HeaderDlvBlk&quot;  --DeliveryBlockHeader&#xD;
+,PRST.&quot;VBEP_LIFSP&quot; AS &quot;ItemDlvBlk&quot;&#xD;
+,CASE WHEN IFNULL(PRST.&quot;VBAK_FAKSK&quot;,'') &lt;> '' THEN 'BLK(H) ' || PRST.&quot;VBAK_FAKSK&quot;&#xD;
+	  WHEN IFNULL(PRST.&quot;VBAP_FAKSP&quot;,'') &lt;> '' THEN 'BLK(L) ' || PRST.&quot;VBAP_FAKSP&quot;&#xD;
+	  ELSE '' &#xD;
+ END AS &quot;BillingBlk&quot;&#xD;
+,PRST.&quot;VBAP_KWMENG&quot; AS &quot;OrderLineQty&quot;&#xD;
+,PRST.&quot;VBEP_BMENG&quot; AS &quot;CommittedQty&quot;&#xD;
+&#xD;
+ ,CASE WHEN IFNULL(PRST.&quot;delvd_qty&quot;,0) >=  IFNULL(PRST.&quot;ExpectedQtyCumulative&quot;,0) THEN IFNULL(PRST.&quot;VBEP_BMENG&quot;,0)&#xD;
+      WHEN IFNULL(PRST.&quot;delvd_qty&quot;,0) &lt;   IFNULL(PRST.&quot;ExpectedQtyCumulative&quot;,0) THEN GREATEST(IFNULL(PRST.&quot;VBEP_BMENG&quot;,0) - (IFNULL(PRST.&quot;ExpectedQtyCumulative&quot;,0) - IFNULL(PRST.&quot;delvd_qty&quot;,0)),0)&#xD;
+      ELSE 0&#xD;
+ END AS &quot;PGIQty&quot;&#xD;
+&#xD;
+,Null AS &quot;Intransit&quot;&#xD;
+,Null AS &quot;GRQty&quot;&#xD;
+&#xD;
+,CASE WHEN IFNULL(PRST.&quot;VBUK_WBSTK&quot;,'') &lt;> 'C' --Total goods movement status aka not Completed(Open Order)&#xD;
+     	--AND ((a.&quot;AUART&quot; &lt;>'ZSO' AND IFNULL(u.&quot;LFGSK&quot;,'') &lt;> 'C') OR (a.&quot;AUART&quot; = 'ZSO'))&#xD;
+        AND PRST.&quot;VBAP_ABGRU&quot; = '' --items is not rejected &#xD;
+        AND IFNULL(PRST.&quot;VBUP_LFSTA&quot;,'') &lt;> '' --delivery status&#xD;
+        AND IFNULL(PRST.&quot;VBAP_KWMENG&quot;,0) > IFNULL(PRST.&quot;delvd_qty&quot;,0) --Open qtys&#xD;
+        AND IFNULL(PRST.&quot;VBEP_BMENG&quot;,0) > 0 &#xD;
+        AND CASE WHEN IFNULL(PRST.&quot;ExpectedQtyCumulative&quot;,0) &lt;= IFNULL(PRST.&quot;delvd_qty&quot;,0)  THEN 0&#xD;
+                 WHEN IFNULL(PRST.&quot;ExpectedQtyCumulative&quot;,0) -  IFNULL(PRST.&quot;delvd_qty&quot;,0) &lt;= IFNULL(PRST.&quot;VBEP_BMENG&quot;,0) THEN IFNULL(PRST.&quot;ExpectedQtyCumulative&quot;,0) -  IFNULL(PRST.&quot;delvd_qty&quot;,0)&#xD;
+                 ELSE IFNULL(PRST.&quot;VBEP_BMENG&quot;,0)&#xD;
+            END > 0  --Show only scheduled lines that have back orders&#xD;
+            THEN CASE WHEN IFNULL(PRST.&quot;ExpectedQtyCumulative&quot;,0) &lt;= IFNULL(PRST.&quot;delvd_qty&quot;,0)  THEN 0&#xD;
+	                  WHEN IFNULL(PRST.&quot;ExpectedQtyCumulative&quot;,0) -  IFNULL(PRST.&quot;delvd_qty&quot;,0) &lt;= IFNULL(PRST.&quot;VBEP_BMENG&quot;,0) THEN IFNULL(PRST.&quot;ExpectedQtyCumulative&quot;,0) -  IFNULL(PRST.&quot;delvd_qty&quot;,0)&#xD;
+                      ELSE IFNULL(PRST.&quot;VBEP_BMENG&quot;,0)&#xD;
+                 END     &#xD;
+     ELSE 0&#xD;
+ END AS &quot;OpenQty&quot;  &#xD;
+&#xD;
+,IFNULL(PRST.&quot;MARD_LABST&quot;,0) +  IFNULL(PRST.&quot;MARD_KINSM&quot;,0) AS &quot;OnHandQty&quot;&#xD;
+,PRST.&quot;MARD_KLABS&quot; AS &quot;VendorOwned&quot;&#xD;
+,CASE WHEN IFNULL(PRST.&quot;VBEP_BMENG&quot;,0) &lt; IFNULL((IFNULL(&quot;MARD_LABST&quot;,0) + IFNULL(&quot;MARD_KLABS&quot;,0) + IFNULL(&quot;MARD_KINSM&quot;,0)),0) &#xD;
+		   THEN IFNULL(PRST.&quot;VBEP_BMENG&quot;,0)&#xD;
+      ELSE IFNULL((IFNULL(&quot;MARD_LABST&quot;,0) + IFNULL(&quot;MARD_KLABS&quot;,0) + IFNULL(&quot;MARD_KINSM&quot;,0)),0) &#xD;
+ END  AS &quot;AvailToShip&quot;&#xD;
+&#xD;
+,IFNULL(PRST.&quot;OpenDlvDoc&quot;,'')  AS &quot;LastDlvDoc&quot;&#xD;
+,PRST.&quot;OpenDlvQty&quot; AS &quot;LastDlvQty&quot;&#xD;
+,PRST.&quot;QtyShippedTtLine&quot; AS &quot;QtyShippedTtLine&quot;&#xD;
+,NULL AS &quot;QtyNetReceivedLine&quot; &#xD;
+&#xD;
+,IFNULL(PRST.&quot;DlvStatus&quot;,'None') AS &quot;LastDlvStatus&quot;&#xD;
+,Null AS &quot;PurchaseOrg&quot;&#xD;
+,PRST.&quot;VBAK_VKORG&quot; AS &quot;SalesOrg&quot;&#xD;
+,PRST.&quot;VBAK_KUNNR&quot; AS &quot;SoldTo&quot;&#xD;
+,LTRIM(PRST.&quot;VBAK_KUNNR&quot;,'0') AS &quot;SoldToWZ&quot;&#xD;
+&#xD;
+--,'' AS &quot;SoldToName&quot;&#xD;
+,KNA1.&quot;NAME1&quot; AS &quot;SoldToName&quot;&#xD;
+&#xD;
+,PRST.&quot;ShipTo&quot;&#xD;
+,LTRIM(PRST.&quot;ShipTo&quot;,'0') AS &quot;ShipToWZ&quot;&#xD;
+,PRST.&quot;ShipToName&quot;&#xD;
+,PRST.&quot;VBAP_WERKS&quot; AS &quot;VendorPlant&quot;&#xD;
+,CASE WHEN IFNULL(PRST.&quot;VBAP_LGORT&quot;,'') IN ('','0010') AND PRST.&quot;VBAP_WERKS&quot; = '3000' THEN '0030' &#xD;
+      WHEN IFNULL(PRST.&quot;VBAP_LGORT&quot;,'') &lt;> '' THEN PRST.&quot;VBAP_LGORT&quot;&#xD;
+    ELSE '0010' END AS &quot;VendorSloc&quot;&#xD;
+,PRST.&quot;VBAP_VSTEL&quot; AS &quot;ShippingPoint&quot;&#xD;
+,Null AS &quot;ReceivingPlant&quot;&#xD;
+,Null AS &quot;ReceivingSloc&quot;&#xD;
+,PRST.&quot;VBAP_MATNR&quot; AS &quot;Part&quot;&#xD;
+,PRST.&quot;VBAP_ARKTX&quot; AS &quot;PartDescription&quot;&#xD;
+--,'' AS &quot;ConsumableFlag&quot;&#xD;
+,PART.&quot;Consumable&quot; AS &quot;ConsumableFlag&quot;&#xD;
+&#xD;
+--,'' AS &quot;Track&quot;&#xD;
+,VEKP.&quot;EXIDV2&quot; AS &quot;Track&quot;&#xD;
+,PRST.&quot;VBEP_MBDAT&quot; AS &quot;FirmCommitDate&quot;&#xD;
+&#xD;
+,PRST.&quot;VBAK_AUTLF&quot; AS &quot;CompDlv&quot;&#xD;
+--,'' AS &quot;MatGrp&quot;&#xD;
+,MARA.&quot;MATKL&quot; AS &quot;MatGrp&quot;&#xD;
+--,'' AS &quot;CSRep&quot;&#xD;
+,LN_INCOTERM.&quot;IHREZ&quot; AS &quot;CSRep&quot;&#xD;
+,PRST.&quot;VBAK_BSTNK&quot; AS &quot;CustomerPO&quot;&#xD;
+&#xD;
+,CASE WHEN PRST.&quot;VBAK_WAERK&quot; IN ('JPY','TWD','KRW') THEN PRST.&quot;VBAP_NETPR&quot; * 100&#xD;
+      ELSE PRST.&quot;VBAP_NETPR&quot;&#xD;
+ END  AS &quot;UnitPriceLocalCurr&quot; &#xD;
+,CASE WHEN PRST.&quot;VBAK_WAERK&quot; IN ('JPY','TWD','KRW') THEN PRST.&quot;VBAP_NETPR&quot; * 100&#xD;
+      ELSE PRST.&quot;VBAP_NETPR&quot;&#xD;
+ END * PRST.&quot;VBEP_BMENG&quot; AS &quot;ExtPriceLocalCurr&quot;&#xD;
+,PRST.&quot;VBAK_WAERK&quot; AS &quot;DocCurrency&quot;&#xD;
+--,0 AS &quot;UnitPriceUSD&quot;&#xD;
+--,0 AS &quot;ExtPriceUSD&quot;&#xD;
+&#xD;
+,CASE WHEN PRST.&quot;VBAK_WAERK&quot; IN ('JPY','TWD') THEN PRST.&quot;VBAP_NETPR&quot; * 100&#xD;
+      ELSE PRST.&quot;VBAP_NETPR&quot;  &#xD;
+ END * CASE WHEN IFNULL(HD_INCOTERM.&quot;KURSK&quot;,0) = 0 OR PRST.&quot;VBAK_WAERK&quot; = 'USD' THEN 1 ELSE HD_INCOTERM.&quot;KURSK&quot; &#xD;
+END AS &quot;UnitPriceUSD&quot;&#xD;
+&#xD;
+,CASE WHEN PRST.&quot;VBAK_WAERK&quot; IN ('JPY','TWD') THEN PRST.&quot;VBAP_NETPR&quot; * 100&#xD;
+      ELSE PRST.&quot;VBAP_NETPR&quot;  &#xD;
+ END * CASE WHEN IFNULL(HD_INCOTERM.&quot;KURSK&quot;,0) = 0 OR PRST.&quot;VBAK_WAERK&quot; = 'USD' THEN 1 ELSE HD_INCOTERM.&quot;KURSK&quot; END * PRST.&quot;VBEP_BMENG&quot; &#xD;
+AS &quot;ExtPriceUSD&quot;&#xD;
+&#xD;
+--,0 AS &quot;StdCost&quot;&#xD;
+,COALESCE(MBEW_2000.STPRS_2000,MBEW_3120.STPRS_3120,0) AS &quot;StdCost&quot;&#xD;
+--,0 AS &quot;ExtCost&quot;&#xD;
+--,MBEW.&quot;STPRS&quot; * PRST.&quot;VBEP_BMENG&quot; AS &quot;ExtCost&quot;&#xD;
+,(COALESCE(MBEW_2000.STPRS_2000,MBEW_3120.STPRS_3120,0) * PRST.&quot;VBEP_BMENG&quot;) AS &quot;ExtCost&quot;&#xD;
+,'USD' AS &quot;StdCurrency&quot;&#xD;
+,CASE WHEN PRST.&quot;VBAP_LPRIO&quot;= '00' THEN '04'&#xD;
+ 	  ELSE PRST.&quot;VBAP_LPRIO&quot;&#xD;
+ END AS &quot;DPrio&quot;&#xD;
+,PRST.&quot;VBAP_CHARG&quot; AS &quot;BatchNo&quot;&#xD;
+,PRST.&quot;LastPGIDoc&quot; AS &quot;PGIDoc&quot;&#xD;
+&#xD;
+,PRST.&quot;PGIDate&quot; AS &quot;PGIDate&quot;&#xD;
+,PRST.&quot;VBAK_OBJNR&quot; AS  &quot;NCUPhase2&quot;&#xD;
+,PRST.&quot;VBAK_VSNMR_V&quot; AS &quot;FCID_SlsDocVersion&quot;&#xD;
+&#xD;
+,LAB.&quot;LBTXT&quot; AS &quot;LabOffice&quot;   -- LabDescription&#xD;
+--,'' AS &quot;LabOffice&quot;&#xD;
+--,'' AS &quot;MRPV&quot;&#xD;
+,MARC.&quot;DISPO&quot; AS &quot;MRPV&quot;&#xD;
+,Null AS &quot;MRPC&quot;&#xD;
+,PRST.&quot;VBAP_GRKOR&quot; AS &quot;DlvGrp&quot; --DeliveryGroup&#xD;
+,Null AS &quot;DlvCreationDate&quot;&#xD;
+--,'' AS &quot;SrvcNotif&quot;&#xD;
+,q.&quot;QMNUM&quot; AS &quot;SrvcNotif&quot;&#xD;
+&#xD;
+,PRST.&quot;FrontLoad&quot; AS &quot;FrontLoad&quot;&#xD;
+,PRST.&quot;POReceived&quot; AS &quot;POReceived&quot;&#xD;
+,PRST.&quot;Booking&quot; AS &quot;Booking&quot;&#xD;
+,PRST.&quot;VBAP_PRODH&quot; AS &quot;ProdHier&quot;&#xD;
+,Null AS &quot;STOItemText&quot;&#xD;
+,Null AS &quot;MaterialMemo&quot;&#xD;
+--,'' AS &quot;PurchaseGrp&quot;&#xD;
+,MARC.&quot;EKGRP&quot; AS &quot;PurchaseGrp&quot;&#xD;
+--,'' AS &quot;XPlantStatus&quot;&#xD;
+,MARA.&quot;MSTAE&quot; AS &quot;XPlantStatus&quot;&#xD;
+,PRST.&quot;VBAP_KDMAT&quot; AS &quot;CustomerMaterial&quot;&#xD;
+,PRST.&quot;VBAP_ERNAM&quot; AS &quot;LineChangedBy&quot;&#xD;
+--,'' AS &quot;Incoterms&quot;&#xD;
+&#xD;
+,CASE WHEN LN_INCOTERM.&quot;INCO1&quot; IS NULL THEN HD_INCOTERM.&quot;INCO1&quot; &#xD;
+      ELSE LN_INCOTERM.&quot;INCO1&quot; &#xD;
+ END AS &quot;Incoterms&quot;&#xD;
+&#xD;
+,PRST.&quot;VBAK_IHREZ&quot; AS &quot;CsOwner&quot;&#xD;
+,PRST.&quot;VBAK_ERNAM&quot; AS &quot;CreatedBy&quot;&#xD;
+,PRST.&quot;VBAK_AUFNR&quot; AS &quot;AssocServOrd&quot;&#xD;
+,PRST.&quot;VBAP_AEDAT&quot; AS &quot;LinePrevChangeDate&quot;&#xD;
+--,0 AS &quot;ExchangeRate&quot;&#xD;
+&#xD;
+,CASE WHEN PRST.&quot;VBAK_WAERK&quot; = 'KRW' THEN 1 / HD_INCOTERM.&quot;KURSK&quot; * 100&#xD;
+      ELSE 1 / HD_INCOTERM.&quot;KURSK&quot;&#xD;
+ END AS &quot;ExchangeRate&quot;&#xD;
+&#xD;
+--,NULL AS &quot;PricingDate&quot;&#xD;
+,CAST(HD_INCOTERM.&quot;PRSDT&quot; AS VARCHAR) AS &quot;PricingDate&quot;&#xD;
+&#xD;
+,CASE WHEN PRST.&quot;VBAK_VKORG&quot; = '9000' THEN 'NA'&#xD;
+	  WHEN PRST.&quot;VBAK_VKORG&quot; BETWEEN '2000' AND '2900' THEN 'EU'&#xD;
+	  WHEN PRST.&quot;VBAK_VKORG&quot; BETWEEN '3000' AND '3001' THEN 'JP'&#xD;
+	  WHEN PRST.&quot;VBAK_VKORG&quot; = '3100' THEN 'TW'&#xD;
+	  WHEN PRST.&quot;VBAK_VKORG&quot; = '3200' THEN 'KR'&#xD;
+	  WHEN PRST.&quot;VBAK_VKORG&quot; = '3300' OR PRST.&quot;VBAK_VKORG&quot; = '3600'  THEN 'SEA'&#xD;
+	  WHEN PRST.&quot;VBAK_VKORG&quot; = '3400' OR PRST.&quot;VBAK_VKORG&quot; = '3410' OR PRST.&quot;VBAK_VKORG&quot; = '1000' THEN 'CN'&#xD;
+	  ELSE 'NEW'&#xD;
+ END AS &quot;Region&quot;&#xD;
+&#xD;
+--,'' AS &quot;ToolType&quot;&#xD;
+&#xD;
+,CASE WHEN MARA.&quot;LABOR&quot; = '023' THEN 'SPIN' &#xD;
+      WHEN MARA.&quot;LABOR&quot; = '024' THEN 'DEP'&#xD;
+      ELSE 'ETCH+'&#xD;
+END AS &quot;ToolType&quot;&#xD;
+&#xD;
+,CASE WHEN CURRENT_DATE >= PRST.&quot;VBEP_EDATU&quot; AND PRST.&quot;POReceived&quot; = 'X' THEN 'True' &#xD;
+      ELSE 'False' &#xD;
+ END AS &quot;ShipmentDueFlag&quot;&#xD;
+ --,0 AS &quot;GrossSOPriceUSD&quot;&#xD;
+ &#xD;
+ ,PRST.&quot;VBAK_NETWR&quot; *&#xD;
+  CASE WHEN PRST.&quot;VBAK_WAERK&quot; IN ('JPY','TWD') THEN CASE WHEN IFNULL(HD_INCOTERM.&quot;KURSK&quot;,0) = 0 THEN 1 ELSE HD_INCOTERM.&quot;KURSK&quot; END * 100&#xD;
+      ELSE CASE WHEN IFNULL(HD_INCOTERM.&quot;KURSK&quot;,0) = 0 THEN 1 ELSE HD_INCOTERM.&quot;KURSK&quot; END &#xD;
+  END AS &quot;GrossSOPriceUSD&quot;&#xD;
+&#xD;
+ ,CASE WHEN CURRENT_DATE >= PRST.&quot;VBEP_EDATU&quot;&#xD;
+ THEN 'True'ELSE 'False' END AS &quot;DeliveryDueFlag&quot;&#xD;
+ ,PRST.&quot;VBAP_POSEX&quot; AS &quot;CustomerPoLine&quot;&#xD;
+ ,NULL AS &quot;Cancellation&quot;&#xD;
+ ,NULL AS &quot;CancellationIndicatorFlag&quot;&#xD;
+&#xD;
+ ,PRST.&quot;CARRIER&quot; AS &quot;Carrier&quot;&#xD;
+,PRST.&quot;CARRIER_NAME&quot; AS &quot;CarrierName&quot;&#xD;
+--,'' AS &quot;CreditCheckBlock&quot;&#xD;
+,LN_INCOTERM.&quot;ZTERM&quot; AS &quot;CreditCheckBlock&quot;&#xD;
+,CASE WHEN IFNULL(PRST.&quot;VBAP_ABGRU&quot;,'') &lt;> '' THEN 'True' ELSE 'False' END AS &quot;SOLineRejectionFlag&quot;&#xD;
+--,'' AS &quot;ActivityType&quot;&#xD;
+,ACT.&quot;LARNT&quot; AS &quot;ActivityType&quot;&#xD;
+&#xD;
+FROM &quot;ALEX_CUSTOM&quot;.&quot;ZT_M_SALES_ORDER_STATUS_V2&quot; PRST&#xD;
+JOIN &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CV_KNA1&quot; KNA1&#xD;
+ON   PRST.VBAK_KUNNR = KNA1.KUNNR&#xD;
+--JOIN &quot;_SYS_BIC&quot;.&quot;prd.gops.GLIS/CV_PART&quot; PART&#xD;
+--ON   PART.&quot;Part&quot; = PRST.VBAP_MATNR&#xD;
+&#xD;
+JOIN &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CV_MARA&quot; MARA&#xD;
+ON PRST.VBAP_MATNR = MARA.&quot;MATNR&quot; &#xD;
+&#xD;
+JOIN :PART PART&#xD;
+ON   PART.&quot;Part&quot; = PRST.VBAP_MATNR&#xD;
+&#xD;
+&#xD;
+LEFT JOIN :MARC MARC&#xD;
+ON PRST.VBAP_WERKS = MARC.&quot;WERKS&quot; AND PRST.VBAP_MATNR = MARC.&quot;MATNR&quot;&#xD;
+&#xD;
+LEFT JOIN :MBEW_2000 MBEW_2000&#xD;
+ON   PRST.VBAP_MATNR = MBEW_2000.&quot;MATNR&quot;&#xD;
+&#xD;
+LEFT JOIN :MBEW_3120 MBEW_3120&#xD;
+ON   PRST.VBAP_MATNR = MBEW_3120.&quot;MATNR&quot;&#xD;
+&#xD;
+LEFT JOIN  ( SELECT &quot;LABOR&quot; &#xD;
+           			,&quot;LBTXT&quot; --LabOffice&#xD;
+              FROM   &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CV_T024X&quot; &#xD;
+ 		      WHERE  &quot;SPRAS&quot; ='E' &#xD;
+ 		     ) LAB&#xD;
+ ON MARA.&quot;LABOR&quot; = LAB.&quot;LABOR&quot;&#xD;
+ &#xD;
+LEFT JOIN &quot;_SYS_BIC&quot;.&quot;prd.global.ecc/CVNS_QMEL&quot; q&#xD;
+ON PRST.&quot;VBELN&quot; = q.&quot;AUFNR&quot;&#xD;
+&#xD;
+LEFT JOIN :AFKO AFKO&#xD;
+ON PRST.VBAK_AUFNR = AFKO.&quot;AUFNR&quot;&#xD;
+&#xD;
+LEFT JOIN :ACT ACT&#xD;
+ON AFKO.&quot;AUFPL&quot; = ACT.&quot;AUFPL&quot;&#xD;
+&#xD;
+&#xD;
+LEFT JOIN :VEKP VEKP&#xD;
+ON PRST.F1_VBELN  = VEKP.&quot;VPOBJKEY&quot; &#xD;
+&#xD;
+LEFT JOIN :HD_INCOTERM HD_INCOTERM &#xD;
+ON PRST.&quot;VBELN&quot; = HD_INCOTERM.&quot;VBELN&quot;&#xD;
+&#xD;
+LEFT JOIN :LN_INCOTERM LN_INCOTERM&#xD;
+ON PRST.&quot;VBELN&quot; = LN_INCOTERM.&quot;VBELN&quot; AND PRST.&quot;POSNR&quot; = LN_INCOTERM.&quot;POSNR&quot;&#xD;
+&#xD;
+&#xD;
+&#xD;
+--WHERE PRST.VBAP_WERKS >= '1900' AND  -- REMOVED THIS CONTDITION TO GET ZSB ORDERS WITH VENDORPLANT = 1000&#xD;
+WHERE PRST.VBAK_AUART NOT IN ('ZVC','ZR07')&#xD;
+AND ( PRST.VBAP_ERDAT >= ADD_DAYS(CURRENT_DATE,-732)&#xD;
+OR    PRST.ORDER_STATUS = 'Open'  )&#xD;
+/*&#xD;
+AND PRST.&quot;PGIDate&quot; >= :IP_ERDAT_FROM &#xD;
+AND PRST.&quot;PGIDate&quot; &lt;= :IP_ERDAT_TO&#xD;
+*/&#xD;
+AND ((:IP_DATE_FLAG = 'L'&#xD;
+AND PRST.&quot;VBAP_ERDAT&quot; >= :IP_ERDAT_FROM&#xD;
+AND PRST.&quot;VBAP_ERDAT&quot; &lt;= :IP_ERDAT_TO)&#xD;
+OR  (:IP_DATE_FLAG = 'P'&#xD;
+AND PRST.&quot;PGIDate&quot; >= :IP_ERDAT_FROM&#xD;
+AND PRST.&quot;PGIDate&quot; &lt;= :IP_ERDAT_TO )&#xD;
+OR  (:IP_DATE_FLAG = 'R'&#xD;
+AND PRST.&quot;VBEP_H_EDATU&quot; >= :IP_ERDAT_FROM&#xD;
+AND PRST.&quot;VBEP_H_EDATU&quot; &lt;= :IP_ERDAT_TO )&#xD;
+OR  (:IP_DATE_FLAG = 'C'&#xD;
+AND PRST.&quot;VBAK_ERDAT&quot; >= :IP_ERDAT_FROM&#xD;
+AND PRST.&quot;VBAK_ERDAT&quot; &lt;= :IP_ERDAT_TO )&#xD;
+OR  (:IP_DATE_FLAG = 'F'&#xD;
+AND PRST.&quot;VBEP_MBDAT&quot; >= :IP_ERDAT_FROM&#xD;
+AND PRST.&quot;VBEP_MBDAT&quot; &lt;= :IP_ERDAT_TO )&#xD;
+OR  (:IP_DATE_FLAG = 'A'&#xD;
+AND PRST.&quot;VBAP_AEDAT&quot; >= :IP_ERDAT_FROM&#xD;
+AND PRST.&quot;VBAP_AEDAT&quot; &lt;= :IP_ERDAT_TO )&#xD;
+OR (:IP_DATE_FLAG = 'N'))&#xD;
+AND (PRST.&quot;VBAK_VKORG&quot; IN (SELECT VKORG FROM :INPUT_SALES_ORG) OR 'ALL' IN (SELECT VKORG FROM :INPUT_SALES_ORG))&#xD;
+AND (PRST.&quot;VBAK_AUART&quot; IN (SELECT AUART FROM :INPUT_ORDER_TYPE) OR 'ALL' IN (SELECT AUART FROM :INPUT_ORDER_TYPE))&#xD;
+&#xD;
+     )XYZZ;  &#xD;
+&#xD;
+END&#xD;
+&#xD;
+/********* End Procedure Script **********/</definition>
+  </viewNode>
+  <viewLayout relativeWidthScenario="27"/>
+</View:ColumnView>
