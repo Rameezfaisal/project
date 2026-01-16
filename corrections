@@ -1,40 +1,42 @@
-sprs_dmd26wk = (
-    so2
-    .select(
-        F.col("Part").alias("s_part"),
-        F.col("OpenQty").cast("int").alias("openqty"),
-        F.col("OrderGroup").alias("ordergroup"),
-        F.col("OrderStatus").alias("orderstatus"),
-        F.col("DeliveryDueDate").alias("deliveryduedate_dt"),
-        F.col("OrderType").alias("ordertype")
-    )
-    .alias("s")
-    .join(
-        mknha
-        .select(
-            F.col("cmpprtno").alias("m_cmpprtno"),
-            F.col("nha").alias("m_nha")
-        )
-        .alias("m"),
-        F.col("s.s_part") == F.col("m.m_nha"),
-        "inner"
-    )
-    .where(
-        (F.col("s.ordergroup") == "SO") &
-        (F.lower(F.col("s.orderstatus")) != "closed") &
-        (F.col("s.deliveryduedate_dt") >= dt1wk) &
-        (F.col("s.deliveryduedate_dt") <= dt26wk) &
-        F.col("s.ordertype").isin(
-            "TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"
-        )
-    )
-    .groupBy(
-        F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("s.s_part").alias("nha")
-    )
-    .agg(
-        F.sum("s.openqty").cast("int").alias("sprs_dmd")
-    )
-)
+# --- CELL 3 UPDATE: AGGREGATE QMEL ---
 
-sprs_dmd26wk.cache()
+# ... (Previous code for KNA1, MARA, MBEW remains the same) ...
+
+# FIX: Deduplicate QMEL (Service Notifications)
+# SAP allows multiple Notifications per Order. We picked the "Max" QMNUM to keep it 1:1.
+# If you need ALL of them, we would use collect_list(), but that keeps the count at 15M.
+df_qmel = spark.read.table(S_QMEL).groupBy("aufnr").agg(
+    F.max("qmnum").alias("qmnum") 
+).withColumnRenamed("aufnr", "qmel_aufnr")
+
+# ... (Rest of Cell 3 logic for VEKP, VBKD, AFKO remains the same) ...
+
+
+
+
+
+
+
+
+
+
+# --- CELL 4 UPDATE: ADD MISSING COLUMNS ---
+
+# ... (Join Logic remains the same - now safe because QMEL is 1:1) ...
+
+df_gold = df_final_logic.select(
+    # ... (Keep the previous 74 columns I gave you: OrderStatus, Order, Line, etc.) ...
+    
+    # --- ADD MISSING COLUMNS HERE ---
+    # Look at your SAP View output and add the fields I missed.
+    # Examples might include:
+    # F.col("k.ort01").alias("City"),
+    # F.col("k.land1").alias("Country"),
+    # F.col("m.brgew").alias("GrossWeight"),
+    # F.col("f.VBAK_BSTNK").alias("PO_Number"),
+    
+    # ... (Continue until you hit 107 columns) ...
+    
+    # Audit
+    F.current_timestamp().alias("LastRefreshed")
+)
