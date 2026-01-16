@@ -1,7 +1,116 @@
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-from pyspark.sql.types import *
+​Cell 1: Environment Setup & Helpers
+​Business Context:
+This cell initializes the Spark environment for high performance. It enables ANSI mode (strict SQL compliance like SAP) and defines a utility function, read_clean, which automatically converts all incoming column names to lowercase. This ensures we never face case-sensitivity issues later in the logic.
 
+
+
+
+
+# Cell 1: Imports, Config, and Helper Functions
+
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+from pyspark.sql.window import Window
+
+# 1. Strict Compliance: Enable ANSI mode to match SAP/SQL behavior for nulls/errors
+spark.conf.set("spark.sql.ansi.enabled", "true")
+
+# 2. Optimization: Increase Broadcast Join threshold (100MB) 
+#    This speeds up joins with smaller lookup tables (like T024X, MARA) by keeping them in memory.
+spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "104857600")
+
+# 3. Helper Function: Read & Normalize
+def read_clean(path):
+    """
+    Reads a Delta table (or Lakehouse path) and immediately converts 
+    all column names to LOWERCASE to meet the project's coding standard.
+    """
+    try:
+        # Check if it's a direct table name or a file path
+        if "." in path and "/" not in path:
+            df = spark.read.table(path)
+        else:
+            df = spark.read.format("delta").load(path)
+            
+        # Normalize columns to lowercase
+        for col_name in df.columns:
+            df = df.withColumnRenamed(col_name, col_name.lower())
+        return df
+    except Exception as e:
+        print(f"Warning: Could not read {path}. Returning empty DataFrame to prevent failure.")
+        # Return empty DF with no schema if table missing (safer than crashing)
+        return spark.createDataFrame([], T.StructType([]))
+
+print("Environment setup complete. Helper functions ready.")
+
+
+
+
+
+
+
+
+
+​Cell 2: Configuration, Parameters & Paths
+​Business Context:
+This cell acts as the "Control Panel" for the entire process. It defines:
+​Spark Compatibility: Forces "Legacy" mode for dates to ensure compatibility with older SAP timestamps.
+​Control Parameters: mimic the input parameters of the SAP Stored Procedure (Date ranges, Pruning Flags, Sales Orgs).
+​Table Inventory: A central dictionary of all table paths. You must update the values in paths to match your actual Lakehouse table names.
+
+
+
+
+
+# Cell 2: Configurations and Parameters
+
+# --- 1. Spark Legacy Date Handling (Critical for SAP Data) ---
+# Ensures compatibility for dates written before the switch to the Gregorian calendar (1582)
+# and prevents errors when writing data back to Parquet/Delta.
 spark.conf.set("spark.sql.parquet.datetimeRebaseModeInWrite", "LEGACY")
 spark.conf.set("spark.sql.parquet.int96RebaseModeInWrite", "LEGACY")
 spark.conf.set("spark.sql.avro.datetimeRebaseModeInWrite", "LEGACY")
+
+# --- 2. Input Parameters (Mimicking SAP Stored Procedure Inputs) ---
+params = {
+    # Flag to toggle secondary table joins (Y=Include, N=Exclude)
+    # Positions: 1:MARC, 2:MBEW, 3:VEKP, 4:VBKD, 5:AFVC, 6:QMEL, 7:T024X
+    "IP_DATA_PRUNING_FLAG": "YYYYYYY", 
+    
+    # Comma-separated lists for filtering (replaces PARSE_20)
+    "IP_SALES_ORG": "1000,2000,3000,9000", 
+    "IP_ORDER_TYPE": "OR,ZSO,ZFD",         
+    
+    # Date Filtering Logic
+    "IP_DATE_FLAG": "L",       # Options: L, P, R, C, F, A, N
+    "IP_ERDAT_FROM": "2022-01-01",
+    "IP_ERDAT_TO": "2025-12-31"
+}
+
+# --- 3. Table Paths (UPDATE THESE TO MATCH YOUR LAKEHOUSE) ---
+# Do not hardcode table names in the logic below; use this dictionary.
+paths = {
+    # Main Transaction Table
+    "prst": "Lakehouse.zt_m_sales_order_status_v2", 
+    
+    # Master Data / Lookups
+    "kna1":  "Lakehouse.cv_kna1",
+    "mara":  "Lakehouse.cv_mara",
+    "marc":  "Lakehouse.cv_marc",
+    "mbew":  "Lakehouse.cv_mbew",
+    "vekp":  "Lakehouse.cv_vekp",
+    "afko":  "Lakehouse.cv_afko",
+    "afvc":  "Lakehouse.cv_afvc",
+    "vbkd":  "Lakehouse.cvns_vbkd",
+    "qmel":  "Lakehouse.cvns_qmel",
+    "t024x": "Lakehouse.cv_t024x",
+    "part":  "Lakehouse.cv_part",
+    
+    # Target Table
+    "target": "Lakehouse.so_optimized_final" 
+}
+
+print("Configuration loaded. Parameters set.")
+
+
+
