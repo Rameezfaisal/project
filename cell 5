@@ -1,40 +1,9 @@
-# 1) How many relevant SO lines exist *before* any date filter?
-dbg1 = (
-    so2
-    .filter(
-        (F.col("ordergroup") == "SO") &
-        (F.lower(F.col("orderstatus")) != "closed") &
-        F.col("ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")
-    )
-)
+SO lines after order filters: 613843
++-------+-------+
+|min_due|max_due|
++-------+-------+
+|   NULL|   NULL|
++-------+-------+
 
-print("SO lines after order filters:", dbg1.count())
-
-# 2) What is the date range of DeliveryDueDate for these?
-dbg1.agg(
-    F.min("deliveryduedate").alias("min_due"),
-    F.max("deliveryduedate").alias("max_due")
-).show()
-
-# 3) How many of those dates fall in our 26-week window?
-dbg2 = dbg1.filter(
-    (F.col("deliveryduedate") >= dt1wk) &
-    (F.col("deliveryduedate") <= dt26wk)
-)
-
-print("SO lines in 26-week window:", dbg2.count())
-
-# 4) How many of those match MKNHA parts?
-dbg3 = (
-    dbg2
-    .join(
-        mknha.select(
-            F.col("cmpprtno").alias("m_cmpprtno"),
-            F.col("nha").alias("m_nha")
-        ),
-        dbg2.part == F.col("m_nha"),
-        "inner"
-    )
-)
-
-print("After join with MKNHA:", dbg3.count())
+SO lines in 26-week window: 0
+After join with MKNHA: 0
