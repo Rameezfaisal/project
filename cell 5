@@ -1,12 +1,12 @@
 sprs_dmd26wk = (
     so2
     .select(
-        F.col("part").alias("s_part"),
-        F.col("openqty").cast("int").alias("openqty"),
-        F.col("ordergroup").alias("ordergroup"),
-        F.col("orderstatus").alias("orderstatus"),
-        F.to_date("deliveryduedate", "yyyyMMdd").alias("deliveryduedate_dt"),
-        F.col("ordertype").alias("ordertype")
+        F.col("Part").alias("s_part"),
+        F.col("OpenQty").cast("int").alias("openqty"),
+        F.col("OrderGroup").alias("ordergroup"),
+        F.col("OrderStatus").alias("orderstatus"),
+        F.col("DeliveryDueDate").alias("deliveryduedate_dt"),
+        F.col("OrderType").alias("ordertype")
     )
     .alias("s")
     .join(
@@ -24,7 +24,9 @@ sprs_dmd26wk = (
         (F.lower(F.col("s.orderstatus")) != "closed") &
         (F.col("s.deliveryduedate_dt") >= dt1wk) &
         (F.col("s.deliveryduedate_dt") <= dt26wk) &
-        F.col("s.ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")
+        F.col("s.ordertype").isin(
+            "TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"
+        )
     )
     .groupBy(
         F.col("m.m_cmpprtno").alias("cmpprtno"),
