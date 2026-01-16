@@ -1,7 +1,35 @@
-​Cell 1: Environment Setup & Helpers
-​Business Context:
-This cell initializes the Spark environment for high performance. It enables ANSI mode (strict SQL compliance like SAP) and defines a utility function, read_clean, which automatically converts all incoming column names to lowercase. This ensures we never face case-sensitivity issues later in the logic.
+​# Cell 1: Imports, Config, and Helper Functions
 
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+from pyspark.sql.window import Window
+
+# 1. Strict Compliance: Enable ANSI mode to match SAP/SQL behavior
+spark.conf.set("spark.sql.ansi.enabled", "true")
+
+# 2. Optimization: Increase Broadcast Join threshold (100MB)
+#    This speeds up joins with smaller lookup tables by keeping them in memory.
+spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "104857600")
+
+# 3. Helper Function: Read Table safely
+def read_table(path):
+    """
+    Reads a Delta table (or Lakehouse path).
+    Returns an empty DataFrame if the table does not exist, preventing notebook failure.
+    """
+    try:
+        # Check if it's a direct table name (has dot, no slashes) or a file path
+        if "." in path and "/" not in path:
+            return spark.read.table(path)
+        else:
+            return spark.read.format("delta").load(path)
+            
+    except Exception as e:
+        print(f"Warning: Could not read {path}. Returning empty DataFrame to prevent failure.")
+        # Return empty DF with no schema if table missing (safer than crashing)
+        return spark.createDataFrame([], T.StructType([]))
+
+print("Environment setup complete. Helper function ready.")
 
 
 
