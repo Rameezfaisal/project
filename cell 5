@@ -1,40 +1,42 @@
-sprs_dmd26wk = (
+# --- Step A: Are there ANY SO lines that match MKNHA parts at all? (no dates yet) ---
+dbg_a = (
     so2
-    .select(
-        F.col("part").alias("s_part"),
-        F.col("ordergroup").alias("ordergroup"),
-        F.col("orderstatus").alias("orderstatus"),
-        F.col("ordertype").alias("ordertype"),
-        F.col("requestdate").alias("due_dt"),   # ✅ USE REQUESTDATE INSTEAD
-        F.col("openqty").cast("int").alias("openqty")
-    )
-    .alias("s")
-    .join(
-        mknha
-        .select(
-            F.col("cmpprtno").alias("m_cmpprtno"),
-            F.col("nha").alias("m_nha")
-        )
-        .alias("m"),
-        F.col("s.s_part") == F.col("m.m_nha"),
-        "inner"
-    )
-    .where(
-        (F.col("s.ordergroup") == "SO") &
-        (F.lower(F.col("s.orderstatus")) != "closed") &
-        (F.col("s.due_dt") >= dt1wk) &
-        (F.col("s.due_dt") <= dt26wk) &
-        F.col("s.ordertype").isin(
+    .filter(
+        (F.col("ordergroup") == "SO") &
+        (F.lower(F.col("orderstatus")) != "closed") &
+        F.col("ordertype").isin(
             "TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"
         )
     )
-    .groupBy(
-        F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("s.s_part").alias("nha")
-    )
-    .agg(
-        F.sum("s.openqty").cast("int").alias("sprs_dmd")
+    .join(
+        mknha.select(
+            F.col("cmpprtno").alias("m_cmpprtno"),
+            F.col("nha").alias("m_nha")
+        ),
+        so2.part == F.col("m_nha"),
+        "inner"
     )
 )
 
-sprs_dmd26wk.cache()
+print("A) SO lines that match MKNHA parts (no dates):", dbg_a.count())
+
+# --- Step B: What are the requestdate ranges for those matching parts? ---
+dbg_a.agg(
+    F.min("requestdate").alias("min_req"),
+    F.max("requestdate").alias("max_req")
+).show()
+
+# --- Step C: How many fall in our 26-week window? ---
+dbg_b = dbg_a.filter(
+    (F.col("requestdate") >= dt1wk) &
+    (F.col("requestdate") <= dt26wk)
+)
+
+print("B) Matching SO lines inside 26-week window:", dbg_b.count())
+
+# --- Step D: Are there any non-zero openqty among these? ---
+dbg_b.agg(
+    F.min("openqty").alias("min_open"),
+    F.max("openqty").alias("max_open"),
+    F.sum("openqty").alias("sum_open")
+).show()
