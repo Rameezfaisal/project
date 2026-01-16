@@ -1,17 +1,38 @@
-# --- CELL 5: WRITE & OPTIMIZE (FINAL) ---
+sprs_dmd26wk = (
+    so2
+    .select(
+        F.col("part").alias("s_part"),
+        F.col("openqty").cast("int").alias("openqty"),
+        F.col("ordergroup").alias("ordergroup"),
+        F.col("orderstatus").alias("orderstatus"),
+        F.to_date("deliveryduedate", "yyyyMMdd").alias("deliveryduedate_dt"),
+        F.col("ordertype").alias("ordertype")
+    )
+    .alias("s")
+    .join(
+        mknha
+        .select(
+            F.col("cmpprtno").alias("m_cmpprtno"),
+            F.col("nha").alias("m_nha")
+        )
+        .alias("m"),
+        F.col("s.s_part") == F.col("m.m_nha"),
+        "inner"
+    )
+    .where(
+        (F.col("s.ordergroup") == "SO") &
+        (F.lower(F.col("s.orderstatus")) != "closed") &
+        (F.col("s.deliveryduedate_dt") >= dt1wk) &
+        (F.col("s.deliveryduedate_dt") <= dt26wk) &
+        F.col("s.ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")
+    )
+    .groupBy(
+        F.col("m.m_cmpprtno").alias("cmpprtno"),
+        F.col("s.s_part").alias("nha")
+    )
+    .agg(
+        F.sum("s.openqty").cast("int").alias("sprs_dmd")
+    )
+)
 
-# 1. Update Table Properties (CRITICAL FOR 107 COLUMNS)
-# We set the limit to 200 so Spark indexes ALL your columns, not just the first 32.
-# This ensures filters on 'Region', 'Part', or 'Flag' are fast in Power BI.
-spark.sql(f"""
-    ALTER TABLE {T_GOLD_ANALYSIS} 
-    SET TBLPROPERTIES ('delta.dataSkippingNumIndexedCols' = '200')
-""")
-
-# 2. Run Optimize
-# Now that the property is set, Z-ORDER will successfully cluster your data.
-# This might take 5-10 minutes but is worth it for user query speed.
-print(f"Starting Z-Order Optimization on {T_GOLD_ANALYSIS}...")
-spark.sql(f"OPTIMIZE {T_GOLD_ANALYSIS} ZORDER BY (Order, Part, CreationDate)")
-
-print("Optimization completed. Table is ready for Power BI.")
+sprs_dmd26wk.cache()
