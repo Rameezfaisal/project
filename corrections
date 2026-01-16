@@ -1,13 +1,38 @@
-⚠️ WARNING: Found 500173 duplicate keys. Investigate immediately.
-+----------+------+------------+-----+
-|     order|  line|scheduleline|count|
-+----------+------+------------+-----+
-|0005147005|000010|        0001|    2|
-|0005135812|000010|        0001|    2|
-|0005143459|000010|        0001|    2|
-|0005210092|000010|        0001|    4|
-|0005208450|000010|        0001|    4|
-+----------+------+------------+-----+
-only showing top 5 rows
+# Cell 8: Root Cause Analysis (Debug)
 
-💰 Total Gross Value (USD) in Target: $333,489,258,671.63
+# 1. Pick a specific duplicate order to investigate
+test_order = "0005147005" 
+
+print(f"--- Investigating Order {test_order} ---")
+
+# Get the Material and Plant for this order from the main filtered table
+details = prst_filtered.filter(F.col("vbeln") == test_order).select("vbap_matnr", "vbap_werks", "vbak_kunnr").first()
+matnr = details['vbap_matnr']
+werks = details['vbap_werks']
+kunnr = details['vbak_kunnr']
+
+print(f"Material: {matnr} | Plant: {werks} | Customer: {kunnr}")
+
+# --- Check Potential Duplicates in Master Data ---
+
+# Check PART Table
+part_count = spark.read.table(paths["part"]).filter(F.col("part") == matnr).select("part", "consumable").distinct().count()
+print(f"Matches in PART table: {part_count} (Should be 1)")
+if part_count > 1:
+    spark.read.table(paths["part"]).filter(F.col("part") == matnr).distinct().show()
+
+# Check MBEW (Valuation) - Common Culprit for Split Valuation
+mbew_count = spark.read.table(paths["mbew"]).filter((F.col("matnr") == matnr) & (F.col("bwkey").isin("2000", "3120"))).count()
+print(f"Matches in MBEW (2000/3120): {mbew_count} (Should be 1 or 0 per plant)")
+if mbew_count > 1:
+    spark.read.table(paths["mbew"]).filter((F.col("matnr") == matnr) & (F.col("bwkey").isin("2000", "3120"))).show()
+
+# Check MARC (Plant Data)
+marc_count = spark.read.table(paths["marc"]).filter((F.col("matnr") == matnr) & (F.col("werks") == werks)).count()
+print(f"Matches in MARC: {marc_count} (Should be 1)")
+if marc_count > 1:
+    spark.read.table(paths["marc"]).filter((F.col("matnr") == matnr) & (F.col("werks") == werks)).show()
+
+# Check KNA1 (Customer)
+kna_count = spark.read.table(paths["kna1"]).filter(F.col("kunnr") == kunnr).count()
+print(f"Matches in KNA1: {kna_count} (Should be 1)")
