@@ -1,101 +1,30 @@
-​Updated Cell 1: Environment Setup
-​Business Context:
-Initializes the Spark environment. We enable ANSI mode for strict SQL compliance and optimize the Broadcast Join Threshold to speed up joins with smaller lookup tables.
+# Cell 3.1: DEBUG - Inspect Source Data
 
+print("--- 1. Raw Table Check ---")
+raw_count = prst_df.count()
+print(f"Total Rows in Source Table (No Filters): {raw_count}")
 
+if raw_count > 0:
+    print("\n--- 2. Data Sample (First 5 Rows) ---")
+    prst_df.select("vbak_vkorg", "vbak_auart", "vbap_erdat", "order_status").show(5)
 
+    print("\n--- 3. Distinct Values in Data (Check for Mismatches) ---")
+    # Check Sales Orgs present in data
+    print("Top 10 Sales Orgs in Data:")
+    prst_df.select("vbak_vkorg").distinct().show(10)
 
+    # Check Order Types present in data
+    print("Top 10 Order Types in Data:")
+    prst_df.select("vbak_auart").distinct().show(10)
+    
+    # Check Date Range
+    print("Date Range in Data (vbap_erdat):")
+    prst_df.select(F.min("vbap_erdat"), F.max("vbap_erdat")).show()
+    
+    print("\n--- 4. Parameter Check ---")
+    print(f"Input Sales Orgs: {input_sales_org}")
+    print(f"Input Order Types: {input_order_type}")
+    print(f"Input Date Range: {from_date} to {to_date} (Flag: {date_flag})")
 
-# Cell 1: Imports and Environment Configuration
-
-from pyspark.sql import functions as F
-from pyspark.sql import types as T
-from pyspark.sql.window import Window
-
-# 1. Strict Compliance: Enable ANSI mode to match SAP/SQL behavior
-spark.conf.set("spark.sql.ansi.enabled", "true")
-
-# 2. Optimization: Increase Broadcast Join threshold (100MB)
-spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "104857600")
-
-print("Environment setup complete.")
-
-
-
-
-
-
-
-
-
-Updated Cell 3: Core Data Ingestion & Optimization Layer
-​Business Context:
-Reads the main Sales Order table (PRST) directly. It applies the "Pruning Logic" immediately to filter out irrelevant data (old closed orders, technical types) before any heavy processing begins.
-
-
-
-
-
-
-
-
-# Cell 3: Main Source Reading and Optimization Logic
-
-# 1. Parse Input Parameters
-input_sales_org = [x.strip() for x in params["IP_SALES_ORG"].split(",")]
-input_order_type = [x.strip() for x in params["IP_ORDER_TYPE"].split(",")]
-
-# 2. Read the Main Driving Table (Standard Read)
-#    Assumes paths["prst"] is a valid table name (e.g., 'Lakehouse.table_name')
-prst_df = spark.read.table(paths["prst"])
-
-# 3. Define Base Filter (Always Active)
-#    Exclude specific types and limit history to ~2 years unless the order is still 'Open'
-base_filter = (
-    (~F.col("vbak_auart").isin("ZVC", "ZR07")) & 
-    (
-        (F.col("vbap_erdat") >= F.date_add(F.current_date(), -732)) | 
-        (F.col("order_status") == "Open")
-    )
-)
-
-# 4. Define Dynamic Date Logic based on IP_DATE_FLAG
-date_flag = params["IP_DATE_FLAG"]
-from_date = params["IP_ERDAT_FROM"]
-to_date = params["IP_ERDAT_TO"]
-
-if date_flag == 'L':    # Line Creation Date
-    date_cond = F.col("vbap_erdat").between(from_date, to_date)
-elif date_flag == 'P':  # PGI Date
-    date_cond = F.col("pgidate").between(from_date, to_date)
-elif date_flag == 'R':  # Schedule Line Date
-    date_cond = F.col("vbep_h_edatu").between(from_date, to_date)
-elif date_flag == 'C':  # Header Creation Date
-    date_cond = F.col("vbak_erdat").between(from_date, to_date)
-elif date_flag == 'F':  # Material Availability Date
-    date_cond = F.col("vbep_mbdat").between(from_date, to_date)
-elif date_flag == 'A':  # Line Change Date
-    date_cond = F.col("vbap_aedat").between(from_date, to_date)
-else:                   # 'N' = No Date Filter
-    date_cond = F.lit(True)
-
-# 5. Define Organization & Type Filters
-#    If 'ALL' is present in the input, ignore the filter (allow all).
-if 'ALL' in input_sales_org:
-    org_cond = F.lit(True)
 else:
-    org_cond = F.col("vbak_vkorg").isin(input_sales_org)
-
-if 'ALL' in input_order_type:
-    type_cond = F.lit(True)
-else:
-    type_cond = F.col("vbak_auart").isin(input_order_type)
-
-# 6. Apply All Filters
-prst_filtered = prst_df.filter(base_filter & date_cond & org_cond & type_cond)
-
-# 7. Cache the result
-prst_filtered.cache()
-
-# Verification
-print(f"Base Table Loaded. Filtered Row Count: {prst_filtered.count()}")
+    print("CRITICAL: The source table 'prst' is completely empty.")
