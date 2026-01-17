@@ -1,41 +1,42 @@
-sprs_dmd26wk = (
-    so2
-    .select(
-        F.col("part").alias("s_part"),
-        F.col("ordergroup").alias("ordergroup"),
-        F.col("orderstatus").alias("orderstatus"),
-        F.col("ordertype").alias("ordertype"),
-        F.to_date("deliveryduedate", "yyyyMMdd").alias("deliveryduedate_dt"),
-        F.col("openqty").cast("int").alias("openqty")
-    )
-    .alias("s")
-    .join(
-        mknha
-        .select(
-            F.col("cmpprtno").alias("m_cmpprtno"),
-            F.col("nha").alias("m_nha")
-        )
-        .alias("m"),
-        F.col("s.s_part") == F.col("m.m_nha"),
-        "inner"
-    )
-    .where(
-        (F.col("s.ordergroup") == "SO") &
-        (F.lower(F.col("s.orderstatus")) != "closed") &
-        (F.col("s.deliveryduedate_dt") >= dt1wk) &
-        (F.col("s.deliveryduedate_dt") <= dt26wk) &
-        F.col("s.ordertype").isin(
-            "TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"
-        )
-    )
-    .groupBy(
-        F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("s.s_part").alias("nha")
-    )
-    .agg(
-        F.sum("s.openqty").cast("int").alias("sprs_dmd")
-    )
-)
-
-sprs_dmd26wk.cache()
-
+root
+ |-- order: string (nullable = true)
+ |-- orderwz: string (nullable = true)
+ |-- line: string (nullable = true)
+ |-- linewz: string (nullable = true)
+ |-- scheduleline: string (nullable = true)
+ |-- orderstatus: string (nullable = true)
+ |-- ordergroup: string (nullable = true)
+ |-- ordertype: string (nullable = true)
+ |-- creationdate: date (nullable = true)
+ |-- lineitemcreationdate: date (nullable = true)
+ |-- requestdate: date (nullable = true)
+ |-- deliveryduedate: date (nullable = true)
+ |-- firmcommitdate: date (nullable = true)
+ |-- pgidate: date (nullable = true)
+ |-- headerdlvblk: string (nullable = true)
+ |-- itemdlvblk: string (nullable = true)
+ |-- billingblk: string (nullable = true)
+ |-- solinerejectionflag: string (nullable = true)
+ |-- orderlineqty: decimal(15,3) (nullable = true)
+ |-- committedqty: decimal(13,3) (nullable = true)
+ |-- pgiqty: double (nullable = true)
+ |-- openqty: double (nullable = true)
+ |-- onhandqty: decimal(14,3) (nullable = true)
+ |-- soldtoname: string (nullable = true)
+ |-- shipto: string (nullable = true)
+ |-- vendorplant: string (nullable = true)
+ |-- part: string (nullable = true)
+ |-- partdescription: string (nullable = true)
+ |-- consumableflag: string (nullable = true)
+ |-- matgrp: string (nullable = true)
+ |-- doccurrency: string (nullable = true)
+ |-- grosssopriceusd: double (nullable = true)
+ |-- highdollarflag: string (nullable = true)
+ |-- unitpriceusd: double (nullable = true)
+ |-- stdcost: decimal(12,2) (nullable = true)
+ |-- track: string (nullable = true)
+ |-- srvcnotif: string (nullable = true)
+ |-- activitytype: string (nullable = true)
+ |-- laboffice: string (nullable = true)
+ |-- shipmentdueflag: string (nullable = true)
+ |-- deliverydueflag: string (nullable = true)
