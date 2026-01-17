@@ -2,3 +2,22 @@ Total Rows to Write: 14,158,326
 Rows with Null Keys (Must be 0): 0
 Distinct Primary Keys: 14,158,313
 Duplicate Rows: 13
+
+when i ran this query in sap the output is below for reference
+
+SELECT vbeln, vbep_edatu from "ALEX_CUSTOM"."ZT_M_SALES_ORDER_STATUS_V2" where vbeln = '0000001246' limit 100
+
+  ;VBELN     ;VBEP_EDATU  
+1 ;0000001246;Aug 15, 2000
+2 ;0000001246;Oct 18, 2000
+3 ;0000001246;Aug 15, 2000
+4 ;0000001246;Aug 15, 2000
+5 ;0000001246;Aug 15, 2000
+6 ;0000001246;Aug 15, 2000
+7 ;0000001246;Aug 15, 2000
+8 ;0000001246;Aug 15, 2000
+9 ;0000001246;Aug 15, 2000
+10;0000001246;Aug 15, 2000
+11;0000001246;Aug 15, 2000
+12;0000001246;Aug 15, 2000
+13;0000001246;Aug 15, 2000
