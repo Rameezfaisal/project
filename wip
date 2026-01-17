@@ -1,59 +1,21 @@
-# --- FIX FOR CELL 8 FILTER ---
-# Replace the existing .filter() block at the very end of df_master construction
-
-# ... (previous joins) ...
-    .filter(
-        # FIX: Cast WERKS to Integer to ensure '2000' > '1900' works mathematically
-        # We also handle non-numeric plants gracefully (if cast fails, they become null)
-        (F.col("ap.werks").cast("int") >= 1900) & 
-        (~F.col("ak.auart").isin("ZVC", "ZR07"))
-    )
+Total Rows to Write: 14,158,326
+Rows with Null Keys (Must be 0): 0
+Distinct Primary Keys: 14,158,313
+Duplicate Rows: 13
 
 
 
-
-
-
-
-
-
-
-# --- VALIDATION CHECK (Run before writing) ---
-# 1. Check if the row count recovered from 14.1M to ~16.7M
-count_total = final_df.count()
-print(f"Total Rows to Write: {count_total:,}")
-
-# 2. Check for Null Primary Keys (Crucial for Merge)
-# If this is > 0, the MERGE in Step 9 will fail or behave unpredictably.
-count_null_keys = final_df.filter(
-    F.col("VBELN").isNull() | 
-    F.col("POSNR").isNull() | 
-    F.col("ETENR").isNull()
-).count()
-print(f"Rows with Null Keys (Must be 0): {count_null_keys}")
-
-# 3. Check for Duplicates
-# Ideally, this should be the same as count_total.
-count_distinct = final_df.select("VBELN", "POSNR", "ETENR").distinct().count()
-print(f"Distinct Primary Keys: {count_distinct:,}")
-print(f"Duplicate Rows: {count_total - count_distinct:,}")
-
-
-
-
-
-
-
-# --- DIAGNOSTIC: WHICH PLANTS ARE BEING DROPPED? ---
-# This shows the top Plants excluded by the filter
-print("--- TOP 10 DROPPED PLANTS ---")
-dropped_plants = df_vbep.join(df_vbap, ["vbeln", "posnr"]) \
-    .select(F.col("werks")) \
-    .filter(
-        # Show rows that FAIL the numeric check
-        (F.col("werks").cast("int") < 1900) | 
-        (F.col("werks").cast("int").isNull())
-    ) \
-    .groupBy("werks").count().orderBy(F.desc("count")).limit(10)
-
-dropped_plants.show()
+--- TOP 10 DROPPED PLANTS ---
++-----+--------+
+|werks|   count|
++-----+--------+
+| 1000|16442257|
+| 1020| 3752178|
+| 1090| 1829463|
+| 1010|  793308|
+| 1040|    3177|
+|     |    2124|
+| 1060|    1123|
+| 1050|     217|
+| 1030|      68|
++-----+--------+
