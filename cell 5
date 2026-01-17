@@ -1,40 +1,56 @@
-sprs_dmd26wk = (
-    so2
-    .select(
-        F.col("part").alias("s_part"),
-        F.col("ordergroup").alias("ordergroup"),
-        F.col("orderstatus").alias("orderstatus"),
-        F.col("ordertype").alias("ordertype"),
-        F.col("creationdate").alias("due_dt"),   # ✅ FINAL CHOICE
-        F.col("openqty").cast("int").alias("openqty")
-    )
-    .alias("s")
-    .join(
-        mknha
-        .select(
-            F.col("cmpprtno").alias("m_cmpprtno"),
-            F.col("nha").alias("m_nha")
-        )
-        .alias("m"),
-        F.col("s.s_part") == F.col("m.m_nha"),
-        "inner"
-    )
-    .where(
-        (F.col("s.ordergroup") == "SO") &
-        (F.lower(F.col("s.orderstatus")) != "closed") &
-        (F.col("s.due_dt") >= dt1wk) &
-        (F.col("s.due_dt") <= dt26wk) &
-        F.col("s.ordertype").isin(
-            "TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"
-        )
-    )
-    .groupBy(
-        F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("s.s_part").alias("nha")
-    )
-    .agg(
-        F.sum("s.openqty").cast("int").alias("sprs_dmd")
-    )
-)
 
-sprs_dmd26wk.cache()
+# --- 1. Spark Legacy Date Handling (Critical for SAP Data) ---
+spark.conf.set("spark.sql.parquet.datetimeRebaseModeInWrite", "LEGACY")
+spark.conf.set("spark.sql.parquet.int96RebaseModeInWrite", "LEGACY")
+spark.conf.set("spark.sql.avro.datetimeRebaseModeInWrite", "LEGACY")
+
+# --- 2. Input Parameters ---
+params = {
+    "IP_DATA_PRUNING_FLAG": "YYYYYYY", 
+    "IP_SALES_ORG": "1000,2000,3000,9000", 
+    "IP_ORDER_TYPE": "OR,ZSO,ZFD",         
+    "IP_DATE_FLAG": "L",
+    "IP_ERDAT_FROM": "2022-01-01",
+    "IP_ERDAT_TO": "2025-12-31"
+}
+
+# --- 3. Table Paths ---
+# UPDATE these values to match your exact Lakehouse table names
+paths = {
+    # Main Transaction Table
+    "prst": "lhs_glb.eng_test.sales_order", 
+    
+    # Master Data / Lookups
+    "kna1":  "wsf_silk_glb_da_dev.lhs_glb.ecc.kna1",
+    "mara":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mara",
+    "marc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.marc",
+    "mbew":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mbew",
+    "vekp":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vekp",
+    "afko":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afko",
+    "afvc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afvc",
+    "vbkd":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbkd",
+    "qmel":  "wsf_silk_glb_da_dev.lhs_glb.ecc.qmel",
+    "t024x": "wsf_silk_glb_da_dev.lhs_glb.ecc.t024x",
+    "part":  "lhs_glb.eng_test.stg_omat_part",
+    
+    # Target Table
+    "target": "lhs_glb.eng_test.sales_order_optimised" 
+}
+
+# --- 4. Initialize DataFrames (Lazy Read) ---
+# We define them here so they are available globally in the notebook.
+
+    
+df_prst  = spark.read.table(paths["prst"])
+df_kna1  = spark.read.table(paths["kna1"])
+df_mara  = spark.read.table(paths["mara"])
+df_marc  = spark.read.table(paths["marc"])
+df_mbew  = spark.read.table(paths["mbew"])
+df_vekp  = spark.read.table(paths["vekp"])
+df_afko  = spark.read.table(paths["afko"])
+df_afvc  = spark.read.table(paths["afvc"])
+df_vbkd  = spark.read.table(paths["vbkd"])
+df_qmel  = spark.read.table(paths["qmel"])
+df_t024x = spark.read.table(paths["t024x"])
+df_part  = spark.read.table(paths["part"])
+    
