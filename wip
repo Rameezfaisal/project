@@ -1,23 +1,37 @@
-Total Rows to Write: 14,158,326
-Rows with Null Keys (Must be 0): 0
-Distinct Primary Keys: 14,158,313
-Duplicate Rows: 13
+# --- FUNNEL DIAGNOSTIC: FIND THE MISSING 2.6M ROWS ---
 
-when i ran this query in sap the output is below for reference
+print("--- STARTING COUNT FUNNEL ---")
 
-SELECT vbeln, vbep_edatu from "ALEX_CUSTOM"."ZT_M_SALES_ORDER_STATUS_V2" where vbeln = '0000001246' limit 100
+# 1. Base Scope: VBEP (Schedule Lines) in range
+c1 = df_vbep.count()
+print(f"1. Raw VBEP (Range Filtered): {c1:,}")
 
-  ;VBELN     ;VBEP_EDATU  
-1 ;0000001246;Aug 15, 2000
-2 ;0000001246;Oct 18, 2000
-3 ;0000001246;Aug 15, 2000
-4 ;0000001246;Aug 15, 2000
-5 ;0000001246;Aug 15, 2000
-6 ;0000001246;Aug 15, 2000
-7 ;0000001246;Aug 15, 2000
-8 ;0000001246;Aug 15, 2000
-9 ;0000001246;Aug 15, 2000
-10;0000001246;Aug 15, 2000
-11;0000001246;Aug 15, 2000
-12;0000001246;Aug 15, 2000
-13;0000001246;Aug 15, 2000
+# 2. Filter: BMENG > 0 (Quantity check)
+# SAP logic: t1."BMENG" > 0
+c2 = ds_vbep_cum.count()
+print(f"2. VBEP with BMENG > 0:       {c2:,}  (Diff: {c2 - c1:,})")
+
+# 3. Join: VBAK (Header Existence)
+# If this drops rows, you have Orphan Schedule Lines (VBEP exists, but VBAK is missing)
+c3 = ds_vbep_cum.join(df_vbak, "vbeln", "inner").count()
+print(f"3. After Join VBAK (Header):  {c3:,}  (Diff: {c3 - c2:,})")
+
+# 4. Join: VBAP (Item Existence)
+# If this drops rows, you have Orphan Schedule Lines (VBEP exists, but VBAP is missing)
+c4 = ds_vbep_cum.join(df_vbap, ["vbeln", "posnr"], "inner").count()
+print(f"4. After Join VBAP (Item):    {c4:,}  (Diff: {c4 - c3:,})")
+
+# 5. Filter: Order Type (AUART)
+# SAP logic: AK.AUART NOT IN ('ZVC','ZR07')
+c5 = ds_vbep_cum.join(df_vbak, "vbeln", "inner") \
+        .filter(~F.col("auart").isin("ZVC", "ZR07")).count()
+print(f"5. After Filter AUART:        {c5:,}  (Diff: {c5 - c3:,})")
+
+# 6. Filter: Plant (WERKS) - **LIKELY CULPRIT**
+# SAP logic: AP.WERKS >= '1900'
+# We check if Spark string comparison is dropping valid rows
+c6 = ds_vbep_cum.join(df_vbap, ["vbeln", "posnr"], "inner") \
+        .filter(F.col("werks") >= CONST_WERKS_MIN).count()
+print(f"6. After Filter WERKS:        {c6:,}  (Diff: {c6 - c4:,})")
+
+print("--- END FUNNEL ---")
