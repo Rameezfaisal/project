@@ -1,24 +1,24 @@
-+----------+-----------+---------+---------------+
-|ordergroup|orderstatus|ordertype|deliveryduedate|
-+----------+-----------+---------+---------------+
-|OTH       |Open       |ZSR      |NULL           |
-|RTN       |Open       |ZUPC     |NULL           |
-|SO        |Open       |ZDMR     |NULL           |
-|RTN       |Open       |ZFOC     |NULL           |
-|SO        |Open       |TA       |NULL           |
-|RTN       |Open       |ZR05     |NULL           |
-|SO        |Open       |ZSO      |NULL           |
-|RTN       |Open       |ZR08     |NULL           |
-|SO        |Open       |ZREM     |NULL           |
-|SO        |Open       |ZDIR     |NULL           |
-|RPO       |Open       |ZSO1     |NULL           |
-|SO        |Open       |ZSD      |NULL           |
-|SO        |Open       |ZEVR     |NULL           |
-|SO        |Open       |ZEV      |NULL           |
-|SO        |Open       |ZSU      |NULL           |
-|RPO       |Open       |ZRA1     |NULL           |
-|RTN       |Open       |ZR4B     |NULL           |
-|OTH       |Open       |ZSB      |NULL           |
-|RTN       |Open       |ZR11     |NULL           |
-|RPO       |Open       |ZO03     |NULL           |
-+----------+-----------+---------+---------------+
+# Debug Cell: Inspect 'vbep_edatu' (Delivery Due Date) in Source
+
+print("--- Source Data Inspection: vbep_edatu ---")
+# Check count of NULLs vs Non-NULLs
+df_prst.select(
+    F.count(F.col("vbep_edatu")).alias("Total_Rows"),
+    F.sum(F.when(F.col("vbep_edatu").isNull(), 1).otherwise(0)).alias("Null_Count"),
+    F.sum(F.when(F.col("vbep_edatu") == '00000000', 1).otherwise(0)).alias("SAP_Zero_Date_Count"),
+    F.sum(F.when(F.col("vbep_edatu") == '', 1).otherwise(0)).alias("Empty_String_Count")
+).show()
+
+print("--- Sample Values ---")
+df_prst.select("vbeln", "vbep_edatu").filter(F.col("vbep_edatu").isNotNull()).show(5)
+
+
+
+
+
+
+
+
+
+# Fallback: If Schedule Line date is missing, use Header Request Date
+F.coalesce(F.col("p.vbep_edatu"), F.col("p.vbep_h_edatu")).alias("deliveryduedate"),
