@@ -1,70 +1,76 @@
-Cell 10 — Manufacturing 12-Month Consumption (MKMFG12MNCONS)
+Cell 11 — Final INSERT into Demand & Consumption Delta Table
 Business purpose
-Calculate, for each OB Parent → NHA, how much of that NHA was consumed in manufacturing over the last 12 months (goods movements 261/262).
-This represents recent manufacturing usage, complementing the 5-year history in Cell 7.
+Create the consolidated MAKE-NHA demand & consumption record by bringing together:
+Manufacturing 5-year consumption
+Manufacturing 26-week demand
+Spares 5-year consumption
+Spares 26-week demand
+Manufacturing 12-month consumption
+Only parts with at least one non-zero metric are inserted, exactly as in SAP.
 
 
 
 
 
 
-
-mfg_12m = (
-    mseg
+final_df = (
+    mknha.alias("a")
+    .join(mfg_5yrs.alias("b"),  ["cmpprtno","nha"], "left")
+    .join(mfg_dmd26wk.alias("c"), ["cmpprtno","nha"], "left")
+    .join(sprs_5yrs.alias("d"),  ["cmpprtno","nha"], "left")
+    .join(sprs_dmd26wk.alias("e"), ["cmpprtno","nha"], "left")
+    .join(mfg_12m.alias("f"), ["cmpprtno","nha"], "left")
     .select(
-        F.col("mblnr").alias("b_mblnr"),
-        F.col("matnr").alias("b_matnr"),
-        F.col("bwart").alias("bwart"),
-        F.col("shkzg").alias("shkzg"),
-        F.col("menge").cast("int").alias("menge"),
-        F.to_date("cpudt_mkpf", "yyyyMMdd").alias("cpudt_dt")
+        F.col("a.cmpprtno").alias("cmpprtno"),
+        F.col("a.nha").alias("nha"),
+        F.col("b.mfg_5yrs_consumption").alias("mfg_5yrs_consumption"),
+        F.col("c.mfg_dmd").alias("mfg_dmd"),
+        F.col("d.sprs_5yrs_consumption").alias("sprs_5yrs_consumption"),
+        F.col("e.sprs_dmd").alias("sprs_dmd"),
+        F.col("f.mfg_12mnths_consumption").alias("mfg_12mnths_consumption"),
+        F.current_date().alias("last_modified_on")
     )
-    .alias("b")
-    .join(
-        mkpf
-        .select(
-            F.col("mblnr").alias("d_mblnr"),
-            F.to_date("bldat", "yyyyMMdd").alias("bldat_dt")
-        )
-        .alias("d"),
-        F.col("b.b_mblnr") == F.col("d.d_mblnr"),
-        "inner"
-    )
-    .join(
-        mknha
-        .select(
-            F.col("cmpprtno").alias("m_cmpprtno"),
-            F.col("nha").alias("m_nha")
-        )
-        .alias("m"),
-        F.col("b.b_matnr") == F.col("m.m_nha"),
-        "inner"
-    )
-    .where(
-        F.col("b.bwart").isin("261", "262") &
-        (F.col("d.bldat_dt") > F.date_sub(F.current_date(), 365)) &
-        (F.col("d.bldat_dt") < F.current_date()) &
-        (F.col("b.cpudt_dt") > F.date_sub(F.current_date(), 365))
-    )
-    .groupBy(
-        F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("b.b_matnr").alias("nha")
-    )
-    .agg(
-        F.sum(
-            F.when(F.col("b.shkzg") == "S", -F.col("b.menge"))
-             .otherwise(F.col("b.menge"))
-        )
-        .cast("int")
-        .alias("mfg_12mnths_consumption")
+    .filter(
+        (F.col("mfg_5yrs_consumption") > 0) |
+        (F.col("mfg_dmd") > 0) |
+        (F.col("sprs_5yrs_consumption") > 0) |
+        (F.col("sprs_dmd") > 0) |
+        (F.col("mfg_12mnths_consumption") > 0)
     )
 )
 
-mfg_12m.cache()
 
 
 
 
+final_df.createOrReplaceTempView("vw_makenha_dmd_cons")
+
+
+
+
+
+spark.sql(f"""
+INSERT INTO {dmd_cons_target_path} (
+    cmpprtno,
+    last_modified_on,
+    mfg_12mnths_consumption,
+    mfg_5yrs_consumption,
+    mfg_dmd,
+    nha,
+    sprs_5yrs_consumption,
+    sprs_dmd
+)
+SELECT
+    cmpprtno,
+    last_modified_on,
+    mfg_12mnths_consumption,
+    mfg_5yrs_consumption,
+    mfg_dmd,
+    nha,
+    sprs_5yrs_consumption,
+    sprs_dmd
+FROM vw_makenha_dmd_cons
+""")
 
 
 
