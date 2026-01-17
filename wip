@@ -1,21 +1,49 @@
-Total Rows to Write: 14,158,326
-Rows with Null Keys (Must be 0): 0
-Distinct Primary Keys: 14,158,313
-Duplicate Rows: 13
+# --- CELL 9: FINAL WRITE TO DELTA ---
+
+print("Preparing data for Merge...")
+
+# 1. Safety: Drop Rows with Null Keys
+final_df_clean = final_df.filter(
+    F.col("VBELN").isNotNull() & 
+    F.col("POSNR").isNotNull() & 
+    F.col("ETENR").isNotNull()
+)
+
+# 2. Safety: Deduplicate
+# Dropping duplicates to ensure clean Merge
+final_df_clean = final_df_clean.dropDuplicates(["VBELN", "POSNR", "ETENR"])
+
+# 3. Optimization: Repartition for Write Performance
+final_df_safe = final_df_clean.repartition(200, "VBELN")
+
+# 4. Register View
+final_df_safe.createOrReplaceTempView("source_updates")
+
+print(f"Starting Merge into {T_SO_STATUS}...")
+
+spark.sql(f"""
+MERGE INTO {T_SO_STATUS} AS target
+USING source_updates AS source
+ON target.VBELN = source.VBELN 
+   AND target.POSNR = source.POSNR 
+   AND target.ETENR = source.ETENR
+
+WHEN MATCHED THEN
+  UPDATE SET *
+
+WHEN NOT MATCHED THEN
+  INSERT *
+""")
+
+print(f"SUCCESS: Merge completed into {T_SO_STATUS}")
 
 
 
---- TOP 10 DROPPED PLANTS ---
-+-----+--------+
-|werks|   count|
-+-----+--------+
-| 1000|16442257|
-| 1020| 3752178|
-| 1090| 1829463|
-| 1010|  793308|
-| 1040|    3177|
-|     |    2124|
-| 1060|    1123|
-| 1050|     217|
-| 1030|      68|
-+-----+--------+
+
+
+
+%%sql
+SELECT * FROM lhs_glb.eng_test.sales_order 
+WHERE VBELN IS NULL OR VBEP_EDATU IS NULL
+LIMIT 10;
+
