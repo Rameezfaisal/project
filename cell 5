@@ -5,8 +5,8 @@ sprs_dmd26wk = (
         F.col("ordergroup").alias("ordergroup"),
         F.col("orderstatus").alias("orderstatus"),
         F.col("ordertype").alias("ordertype"),
-        F.to_date("deliveryduedate", "yyyyMMdd").alias("deliveryduedate_dt"),
-        F.col("openqty").cast("int").alias("openqty")
+        F.col("deliveryduedate").alias("deliveryduedate"),   # already DATE in Fabric
+        F.col("openqty").alias("openqty")                   # keep as double, aggregate then cast
     )
     .alias("s")
     .join(
@@ -22,8 +22,8 @@ sprs_dmd26wk = (
     .where(
         (F.col("s.ordergroup") == "SO") &
         (F.lower(F.col("s.orderstatus")) != "closed") &
-        (F.col("s.deliveryduedate_dt") >= dt1wk) &
-        (F.col("s.deliveryduedate_dt") <= dt26wk) &
+        (F.col("s.deliveryduedate") >= dt1wk) &
+        (F.col("s.deliveryduedate") <= dt26wk) &
         F.col("s.ordertype").isin(
             "TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"
         )
@@ -33,7 +33,7 @@ sprs_dmd26wk = (
         F.col("s.s_part").alias("nha")
     )
     .agg(
-        F.sum("s.openqty").cast("int").alias("sprs_dmd")
+        F.sum("s.openqty").cast("int").alias("sprs_dmd")  # cast only at the end for Delta
     )
 )
 
