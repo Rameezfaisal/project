@@ -2,11 +2,11 @@ sprs_dmd26wk = (
     so2
     .select(
         F.col("part").alias("s_part"),
-        F.col("opencqty").alias("open_qty"),
         F.col("ordergroup").alias("ordergroup"),
         F.col("orderstatus").alias("orderstatus"),
+        F.col("ordertype").alias("ordertype"),
         F.to_date("deliveryduedate", "yyyyMMdd").alias("deliveryduedate_dt"),
-        F.col("ordertype").alias("ordertype")
+        F.col("openqty").cast("int").alias("openqty")
     )
     .alias("s")
     .join(
@@ -33,8 +33,9 @@ sprs_dmd26wk = (
         F.col("s.s_part").alias("nha")
     )
     .agg(
-        F.sum(F.col("s.open_qty")).cast("int").alias("sprs_dmd")
+        F.sum("s.openqty").cast("int").alias("sprs_dmd")
     )
 )
 
 sprs_dmd26wk.cache()
+
