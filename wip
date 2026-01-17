@@ -1,36 +1,18 @@
-# --- DEBUGGING CELL: DIAGNOSE DATA MISMATCH ---
-debug_vbeln = "0012345678"  # <--- REPLACE THIS with a failing Sales Order Number
+--- DIAGNOSTICS FOR VBELN: 000001246 ---
+Base VBEP Count (Spark): 0
+Raw LIPS Count (Spark): 0
++-----+---------+-----+
+|vgbel|wadat_ist|lfimg|
++-----+---------+-----+
++-----+---------+-----+
 
-print(f"--- DIAGNOSTICS FOR VBELN: {debug_vbeln} ---")
+--- Document Flow (F1) Raw Data ---
++-----+-----+-----+-------+-----+
+|vbelv|posnv|vbeln|vbtyp_n|rfmng|
++-----+-----+-----+-------+-----+
++-----+-----+-----+-------+-----+
 
-# 1. Check Base VBEP (Schedule Lines)
-# If this count is lower than SAP, your source filter (BMENG > 0) is too strict or data is missing.
-cnt_vbep = df_vbep.filter(F.col("vbeln") == debug_vbeln).count()
-print(f"Base VBEP Count (Spark): {cnt_vbep}")
-
-# 2. Check Delivery Logic (LIKP/LIPS)
-# Common Issue: SAP empty string '' vs Spark NULL in 'wadat_ist'
-cnt_lips = df_lips.filter(F.col("vgbel") == debug_vbeln).count()
-print(f"Raw LIPS Count (Spark): {cnt_lips}")
-
-# Check the PGI Date specifically (Crucial for DlvStatus)
-df_lips.alias("s").join(df_likp.alias("k"), F.col("s.vbeln") == F.col("k.vbeln")) \
-    .filter(F.col("s.vgbel") == debug_vbeln) \
-    .select("s.vgbel", "k.wadat_ist", "s.lfimg") \
-    .show()
-
-# 3. Check Document Flow (VBFA) - F1 Logic
-# Common Issue: Missing 'R' or 'h' records due to 'read_union_distinct' not catching them
-print("--- Document Flow (F1) Raw Data ---")
-df_vbfa.filter(F.col("vbelv") == debug_vbeln).select("vbelv", "posnv", "vbeln", "vbtyp_n", "rfmng").show()
-
-# 4. Check Final Calculation Inputs
-# See what the final dataframe sees before the logic is applied
-df_master.filter(F.col("ep.vbeln") == debug_vbeln).select(
-    F.col("ep.posnr"),
-    F.col("ep.bmeng"),
-    F.col("f1.delvd_qty_cd"),
-    F.col("ap.kwmeng"),
-    F.col("uk.wbstk"),
-    F.col("up.lfsta")
-).show()
++-----+-----+------------+------+-----+-----+
+|posnr|bmeng|delvd_qty_cd|kwmeng|wbstk|lfsta|
++-----+-----+------------+------+-----+-----+
++-----+-----+------------+------+-----+-----+
