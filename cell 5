@@ -1,40 +1,24 @@
-sprs_dmd26wk = (
-    so2
-    .select(
-        F.col("part").alias("s_part"),
-        F.col("ordergroup").alias("ordergroup"),
-        F.col("orderstatus").alias("orderstatus"),
-        F.col("ordertype").alias("ordertype"),
-        F.col("deliveryduedate").alias("deliveryduedate"),   # already DATE in Fabric
-        F.col("openqty").alias("openqty")                   # keep as double, aggregate then cast
-    )
-    .alias("s")
-    .join(
-        mknha
-        .select(
-            F.col("cmpprtno").alias("m_cmpprtno"),
-            F.col("nha").alias("m_nha")
-        )
-        .alias("m"),
-        F.col("s.s_part") == F.col("m.m_nha"),
-        "inner"
-    )
-    .where(
-        (F.col("s.ordergroup") == "SO") &
-        (F.lower(F.col("s.orderstatus")) != "closed") &
-        (F.col("s.deliveryduedate") >= dt1wk) &
-        (F.col("s.deliveryduedate") <= dt26wk) &
-        F.col("s.ordertype").isin(
-            "TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"
-        )
-    )
-    .groupBy(
-        F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("s.s_part").alias("nha")
-    )
-    .agg(
-        F.sum("s.openqty").cast("int").alias("sprs_dmd")  # cast only at the end for Delta
-    )
-)
-
-sprs_dmd26wk.cache()
++----------+-----------+---------+---------------+
+|ordergroup|orderstatus|ordertype|deliveryduedate|
++----------+-----------+---------+---------------+
+|SO        |Open       |TA       |2021-03-29     |
+|SO        |Open       |ZSO      |2008-05-27     |
+|SO        |Open       |ZSO      |2016-11-07     |
+|SO        |Open       |TA       |2022-09-26     |
+|SO        |Open       |ZCON     |2008-10-01     |
+|SO        |Open       |ZO09     |2018-05-09     |
+|OTH       |Open       |ZSB      |2015-03-02     |
+|SO        |Open       |ZO09     |2015-09-09     |
+|SO        |Open       |ZSO      |2012-12-11     |
+|SO        |Open       |ZSO      |2019-04-22     |
+|SO        |Open       |TA       |2022-01-17     |
+|SO        |Open       |ZSO      |2012-03-28     |
+|SO        |Open       |ZSO      |2015-03-05     |
+|SO        |Open       |ZSO      |2014-12-15     |
+|SO        |Open       |ZSO      |2013-03-06     |
+|OTH       |Open       |ZAS      |2015-12-04     |
+|SO        |Open       |TA       |2007-02-07     |
+|SO        |Open       |TA       |2006-07-05     |
+|SO        |Open       |TA       |2023-08-23     |
+|OTH       |Open       |ZSB      |2010-04-06     |
++----------+-----------+---------+---------------+
