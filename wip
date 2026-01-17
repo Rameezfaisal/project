@@ -1,119 +1,60 @@
-# #### Step-2 -- Read Sources & Apply Scope Filters (FIXED)
-# NOTE: We filter the DataFrames defined in Step 1 (df_vbep, df_vbak, etc.)
-# We do NOT use spark.read.table() here, or we lose the Union/Lowercase logic.
+# --- CELL 6: Document Flow Logic (F1 & F2) (CORRECTED) ---
 
-# --- 1. CORE SALES DOCUMENTS (Filtered by Range) ---
-# VBEP: Schedule Lines (The primary driver)
-df_vbep = df_vbep.filter(
-    (F.col("vbeln") >= PARAM_LOW_VBELN) & (F.col("vbeln") <= PARAM_HIGH_VBELN)
+# --- PREPARE DATASETS ---
+
+# Table A: Flow starting from the Sales Order (Already filtered in Step 2)
+# This uses the dataframe we filtered earlier
+df_vbfa_a = df_vbfa.filter(
+    (F.col("stufe") == "00") & 
+    (F.col("vbtyp_n").isin("T", "J"))
+).alias("a")
+
+# Table B: Flow starting from the Delivery (Subsequent steps)
+# FIX: Use read_union_distinct("vbfa") instead of spark.read.table(S_VBFA)
+# We need to read the full VBFA again (unfiltered by Sales Order) to find the "Next Steps" (PGI/Invoice)
+df_vbfa_b = read_union_distinct("vbfa").filter(
+    F.col("vbtyp_n").isin("R", "h") # R=Invoice/PGI, h=Returns
+).alias("b")
+
+# --- BUILD THE JOIN ---
+# Join A (Order->Dlv) to B (Dlv->PGI)
+# SAP Join: a.VBELN (Delivery) = b.VBELV (Preceding Doc of PGI)
+#           a.POSNN (Dlv Item) = b.POSNV (Preceding Item of PGI)
+df_flow_joined = df_vbfa_a.join(
+    df_vbfa_b,
+    (F.col("a.vbeln") == F.col("b.vbelv")) & 
+    (F.col("a.posnn") == F.col("b.posnv"))
 )
 
-# VBAK: Header
-df_vbak = df_vbak.filter(
-    (F.col("vbeln") >= PARAM_LOW_VBELN) & (F.col("vbeln") <= PARAM_HIGH_VBELN)
+# --- F1 LOGIC (Delivered Quantity) ---
+ds_f1 = df_flow_joined.groupBy(
+    F.col("a.vbelv").alias("vbelv"), # Original Sales Order
+    F.col("a.posnv").alias("posnv")  # Original Sales Item
+).agg(
+    F.max("a.vbeln").alias("f1_vbeln_cd"), # Latest Delivery Doc
+    
+    # Conditional Sum matching SAP CASE statement
+    F.sum(
+        F.when((F.col("b.vbtyp_n") == "R") & (F.col("b.plmin") == "+"), F.coalesce(F.col("b.rfmng_flo"), F.lit(0)))
+         .when(F.col("b.vbtyp_n") == "h", F.coalesce(F.col("b.rfmng_flo"), F.lit(0)) * -1)
+         .otherwise(0)
+    ).alias("delvd_qty_cd")
 )
 
-# VBAP: Item
-df_vbap = df_vbap.filter(
-    (F.col("vbeln") >= PARAM_LOW_VBELN) & (F.col("vbeln") <= PARAM_HIGH_VBELN)
-)
-
-# VBUK: Header Status
-df_vbuk = df_vbuk.filter(
-    (F.col("vbeln") >= PARAM_LOW_VBELN) & (F.col("vbeln") <= PARAM_HIGH_VBELN)
-)
-
-# VBUP: Item Status
-df_vbup = df_vbup.filter(
-    (F.col("vbeln") >= PARAM_LOW_VBELN) & (F.col("vbeln") <= PARAM_HIGH_VBELN)
-)
-
-# --- 2. DOCUMENT FLOW & DELIVERIES (Filtered by Preceding Doc) ---
-# VBFA: Document Flow (Filter on Preceding Doc VBELV)
-df_vbfa = df_vbfa.filter(
-    (F.col("vbelv") >= PARAM_LOW_VBELN) & (F.col("vbelv") <= PARAM_HIGH_VBELN)
-)
-
-# LIPS: Delivery Item (Filter on Reference Doc VGBEL = Sales Order)
-df_lips = df_lips.filter(
-    (F.col("vgbel") >= PARAM_LOW_VBELN) & (F.col("vgbel") <= PARAM_HIGH_VBELN)
-)
-
-# LIKP: Delivery Header (Read full; joined later via LIPS)
-# df_likp is already loaded in Step 1, no filter needed yet (it's joined via LIPS later)
-
-# CSBG: Spares Deliveries View (Filter on ORDER_NO)
-df_csbg = df_csbg.filter(
-    (F.col("order_no") >= PARAM_LOW_VBELN) & (F.col("order_no") <= PARAM_HIGH_VBELN)
-)
-
-
-
-
-
-
-
-
-# --- CELL 8: OPTIMIZED MASTER JOIN (FIXED) ---
-
-# We use Explicit Join Conditions (e.g. ep.vbeln == uk.vbeln)
-# This prevents Spark from merging columns and allows us to select "ep.vbeln" specifically at the end.
-
-df_master = ds_vbep_cum.alias("ep") \
-    .join(df_vbuk.alias("uk"), F.col("ep.vbeln") == F.col("uk.vbeln"), "inner") \
-    .join(df_vbak.alias("ak"), F.col("ep.vbeln") == F.col("ak.vbeln"), "inner") \
-    .join(df_vbap_calc.alias("ap"), (F.col("ep.vbeln") == F.col("ap.vbeln")) & (F.col("ep.posnr") == F.col("ap.posnr")), "inner") \
-    .join(df_vbup.alias("up"), (F.col("ep.vbeln") == F.col("up.vbeln")) & (F.col("ep.posnr") == F.col("up.posnr")), "inner") \
-    .join(ds_h.alias("h").hint("broadcast"), (F.col("ep.vbeln") == F.col("h.h_vbeln")) & (F.col("ep.posnr") == F.col("h.h_posnr")), "inner") \
-    .join(ds_shipto.alias("sh").hint("broadcast"), F.col("ep.vbeln") == F.col("sh.shipto_vbeln"), "inner") \
-    .join(ds_f1.alias("f1"), (F.col("ep.vbeln") == F.col("f1.f1_vbeln_cd")) & (F.col("ep.posnr") == F.col("f1.posnv")), "left") \
-    .join(ds_f2.alias("f2"), (F.col("ep.vbeln") == F.col("f2.lastpgidoc_cd")) & (F.col("ep.posnr") == F.col("f2.posnv")), "left") \
-    .join(ds_likp_lips.alias("ll"), (F.col("ep.vbeln") == F.col("ll.opendlvdoc_cd")) & (F.col("ep.posnr") == F.col("ll.vgpos")), "left") \
-    .join(ds_jest.alias("je"), F.col("ak.objnr") == F.col("je.objnr"), "left") \
-    .join(ds_csbg.alias("cs").hint("broadcast"), (F.col("ep.vbeln") == F.col("cs.order_no")) & (F.col("ep.posnr") == F.col("cs.order_line_no")), "left") \
-    .join(ds_mard.alias("md"), 
-          (F.col("ap.matnr") == F.col("md.matnr")) & 
-          (F.col("ap.werks") == F.col("md.werks")) & 
-          (F.col("ap.calc_lgort") == F.col("md.lgort")), 
-          "left") \
-    .filter(
-        (F.col("ap.werks") >= CONST_WERKS_MIN) & 
-        (~F.col("ak.auart").isin("ZVC", "ZR07"))
-    )
-
-# --- 2. ORDER STATUS CALCULATION (Unchanged) ---
-c_wbstk  = F.coalesce(F.col("uk.wbstk"), F.lit(""))
-c_abgru  = F.coalesce(F.col("ap.abgru"), F.lit(""))
-c_lfsta  = F.coalesce(F.col("up.lfsta"), F.lit(""))
-n_kwmeng = F.coalesce(F.col("ap.kwmeng"), F.lit(0))
-n_delvd  = F.coalesce(F.col("f1.delvd_qty_cd"), F.lit(0))
-n_bmeng  = F.coalesce(F.col("ep.bmeng"), F.lit(0))
-n_expcum = F.coalesce(F.col("ep.expectedqtycumulative_cd"), F.lit(0))
-
-calc_remaining = F.when(n_expcum <= n_delvd, 0) \
-                  .when((n_expcum - n_delvd) <= n_bmeng, (n_expcum - n_delvd)) \
-                  .otherwise(n_bmeng)
-
-df_calculated = df_master.withColumn(
-    "calc_order_status",
-    F.when(
-        (c_wbstk != "C") & 
-        (c_abgru == "") & 
-        (c_lfsta != "") & 
-        (n_kwmeng > n_delvd) & 
-        (n_bmeng > 0) & 
-        (calc_remaining > 0), 
-        "Open"
-    ).otherwise("Closed")
-)
-
-# --- 3. FINAL PROJECTION (Unchanged) ---
-# Your existing Select block will now work correctly because 
-# "ep.vbeln" and "ep.edatu" are preserved by the explicit joins.
-final_df = df_calculated.select(
-    F.col("je.booking_cd").alias("Booking"),
-    # ... (rest of your columns) ...
-    F.col("ep.vbeln").alias("VBELN"),
-    F.col("ep.edatu").alias("VBEP_EDATU"),
-    # ...
+# --- F2 LOGIC (PGI Quantity & Last Doc) ---
+# Same join, but extra filter on 'b' (Target Doc starts with 49, e.g., Pro Forma)
+ds_f2 = df_flow_joined.filter(
+    F.col("b.vbeln").like("49%")
+).groupBy(
+    F.col("a.vbelv"), 
+    F.col("a.posnv")
+).agg(
+    F.max("b.vbeln").alias("lastpgidoc_cd"),
+    
+    # Conditional Sum for PGI
+    F.sum(
+        F.when(F.col("b.vbtyp_n") == "R", F.coalesce(F.col("b.rfmng"), F.lit(0)))
+         .when(F.col("b.vbtyp_n") == "h", F.coalesce(F.col("b.rfmng"), F.lit(0)) * -1)
+         .otherwise(0)
+    ).alias("pgiqty_cd")
 )
