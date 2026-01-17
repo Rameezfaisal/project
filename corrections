@@ -47,3 +47,16 @@ SPRSDMD	= 	SELECT DISTINCT A1."Part" as "MATNR"
         	)A1
         GROUP BY A1."Part"
         ORDER BY A1."Part" ASC;
+
+
+
+/* Your Fabric SQL Query */
+SELECT 
+    part,
+    SUM(openqty) as Demand
+FROM Lakehouse.so_optimized_final
+WHERE ordergroup = 'SO'
+  AND orderstatus <> 'Closed'
+  AND ordertype IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP') -- Filtering happens HERE now
+GROUP BY part
+ORDER BY part ASC;
