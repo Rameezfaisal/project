@@ -1,78 +1,24 @@
-# Cell 2: Configurations, Parameters, and Source Initialization
-
-from datetime import date
-from dateutil.relativedelta import relativedelta # Standard library in Fabric/Databricks
-
-# --- 1. Spark Legacy Date Handling ---
-spark.conf.set("spark.sql.parquet.datetimeRebaseModeInWrite", "LEGACY")
-spark.conf.set("spark.sql.parquet.int96RebaseModeInWrite", "LEGACY")
-spark.conf.set("spark.sql.avro.datetimeRebaseModeInWrite", "LEGACY")
-
-# --- 2. Dynamic Date Calculation (Rolling Window) ---
-# SAP Logic: ADD_months(CURRENT_DATE, -12) and ADD_months(CURRENT_DATE, 12)
-current_date = date.today()
-
-# Calculate the rolling window
-calc_from_date = current_date - relativedelta(months=12)
-calc_to_date   = current_date + relativedelta(months=12)
-
-# Convert to string format YYYY-MM-DD for Spark
-str_from_date = calc_from_date.strftime("%Y-%m-%d")
-str_to_date   = calc_to_date.strftime("%Y-%m-%d")
-
-print(f"📅 Running for Dynamic Date Window: {str_from_date} to {str_to_date}")
-
-# --- 3. Input Parameters ---
-params = {
-    "IP_DATA_PRUNING_FLAG": "YYYYYYY", 
-    
-    # Universal Filtering (Matches 'ALL' placeholder logic)
-    "IP_SALES_ORG": "ALL", 
-    "IP_ORDER_TYPE": "ALL",         
-    
-    # Dynamic Dates
-    "IP_DATE_FLAG": "L",
-    "IP_ERDAT_FROM": str_from_date, # Now Dynamic: Today - 12 Months
-    "IP_ERDAT_TO": str_to_date      # Now Dynamic: Today + 12 Months
-}
-
-# --- 4. Table Paths ---
-paths = {
-    # Main Transaction Table
-    "prst": "lhs_glb.eng_test.sales_order", 
-    
-    # Master Data / Lookups
-    "kna1":  "wsf_silk_glb_da_dev.lhs_glb.ecc.kna1",
-    "mara":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mara",
-    "marc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.marc",
-    "mbew":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mbew",
-    "vekp":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vekp",
-    "afko":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afko",
-    "afvc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afvc",
-    "vbkd":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbkd",
-    "qmel":  "wsf_silk_glb_da_dev.lhs_glb.ecc.qmel",
-    "t024x": "wsf_silk_glb_da_dev.lhs_glb.ecc.t024x",
-    "part":  "lhs_glb.eng_test.stg_omat_part",
-    
-    # Target Table
-    "target": "lhs_glb.eng_test.sales_order_optimised" 
-}
-
-# --- 5. Initialize DataFrames (Lazy Read) ---
-try:
-    print("Initializing Source DataFrames...")
-    df_prst  = spark.read.table(paths["prst"])
-    df_kna1  = spark.read.table(paths["kna1"])
-    df_mara  = spark.read.table(paths["mara"])
-    df_marc  = spark.read.table(paths["marc"])
-    df_mbew  = spark.read.table(paths["mbew"])
-    df_vekp  = spark.read.table(paths["vekp"])
-    df_afko  = spark.read.table(paths["afko"])
-    df_afvc  = spark.read.table(paths["afvc"])
-    df_vbkd  = spark.read.table(paths["vbkd"])
-    df_qmel  = spark.read.table(paths["qmel"])
-    df_t024x = spark.read.table(paths["t024x"])
-    df_part  = spark.read.table(paths["part"])
-    print("✅ All source tables initialized successfully.")
-except Exception as e:
-    print(f"❌ CRITICAL ERROR: Could not find one of the tables. Check paths dictionary.\n{e}")
++----------+-----------+---------+---------------+
+|ordergroup|orderstatus|ordertype|deliveryduedate|
++----------+-----------+---------+---------------+
+|OTH       |Open       |ZSR      |NULL           |
+|RTN       |Open       |ZUPC     |NULL           |
+|SO        |Open       |ZDMR     |NULL           |
+|RTN       |Open       |ZFOC     |NULL           |
+|SO        |Open       |TA       |NULL           |
+|RTN       |Open       |ZR05     |NULL           |
+|SO        |Open       |ZSO      |NULL           |
+|RTN       |Open       |ZR08     |NULL           |
+|SO        |Open       |ZREM     |NULL           |
+|SO        |Open       |ZDIR     |NULL           |
+|RPO       |Open       |ZSO1     |NULL           |
+|SO        |Open       |ZSD      |NULL           |
+|SO        |Open       |ZEVR     |NULL           |
+|SO        |Open       |ZEV      |NULL           |
+|SO        |Open       |ZSU      |NULL           |
+|RPO       |Open       |ZRA1     |NULL           |
+|RTN       |Open       |ZR4B     |NULL           |
+|OTH       |Open       |ZSB      |NULL           |
+|RTN       |Open       |ZR11     |NULL           |
+|RPO       |Open       |ZO03     |NULL           |
++----------+-----------+---------+---------------+
