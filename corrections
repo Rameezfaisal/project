@@ -1,36 +1,24 @@
-so2.join(mknha, so2.part == mknha.nha, "inner").count()
-
-
-
-
-
-
-
-
-so2.filter(
-    (F.col("ordergroup") == "SO") &
-    (F.lower(F.col("orderstatus")) != "closed") &
-    (F.col("deliveryduedate") >= dt1wk) &
-    (F.col("deliveryduedate") <= dt26wk)
-).count()
-
-
-
-
-
-
-
-
-so2.filter(
-    F.col("ordertype").isin(
-        "TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"
-    )
-).select("ordertype").distinct().display()
-
-
-
-
-
-
-
-
+SPRSDMD26WK = SELECT DISTINCT A1.CMPPRTNO
+              ,A1."Part" as "Material"
+            , SUM(A1."OpenQty") AS "Demand"
+        FROM (
+        		SELECT DISTINCT A.CMPPRTNO, B.*    
+        		FROM  :MKNHA A
+            	INNER JOIN "_SYS_BIC"."prd.gops.GLIS/CV_SQL_SO_OPTIMISED"(
+                	PLACEHOLDER."$$IP_ORDER_TYPE$$" =>  'ALL',
+	 				PLACEHOLDER."$$IP_DATE_FLAG$$" => 'L',
+	 				PLACEHOLDER."$$IP_SALES_ORG$$" => 'ALL',
+	 				PLACEHOLDER."$$IP_ERDAT_FROM$$" => :From_date,
+	 				PLACEHOLDER."$$IP_ERDAT_TO$$" => :T_date,
+	 				PLACEHOLDER."$$IP_DATA_PRUNING_FLAG$$" => 'NNNNNNN'
+            	) B ON
+                	A.NHA = B."Part"
+        		WHERE (
+           			"OrderGroup" = 'SO'
+            		AND LOWER("OrderStatus") <> 'closed'
+            		AND "DeliveryDueDate" >= DT1WK
+            		AND "DeliveryDueDate" <= DT26WK
+            		AND "OrderType" IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP'))
+        	)A1
+        GROUP BY A1.CMPPRTNO,A1."Part"
+        ORDER BY A1."Part" ASC;
