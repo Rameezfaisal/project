@@ -1,19 +1,35 @@
-sprs_dmd26wk = (
-    so2
+Cell 10 — Manufacturing 12-Month Consumption (MKMFG12MNCONS)
+Business purpose
+Calculate, for each OB Parent → NHA, how much of that NHA was consumed in manufacturing over the last 12 months (goods movements 261/262).
+This represents recent manufacturing usage, complementing the 5-year history in Cell 7.
+
+
+
+
+
+
+
+mfg_12m = (
+    mseg
     .select(
-        F.col("part").alias("s_part"),
-        F.col("ordergroup").alias("ordergroup"),
-        F.col("orderstatus").alias("orderstatus"),
-        F.col("ordertype").alias("ordertype"),
-        # use the same “best available date” logic, but still filter on the 26-week window
-        F.coalesce(
-            F.col("deliveryduedate"),
-            F.col("requestdate"),
-            F.col("firmcommitdate")
-        ).alias("demand_date"),
-        F.col("openqty").alias("openqty")
+        F.col("mblnr").alias("b_mblnr"),
+        F.col("matnr").alias("b_matnr"),
+        F.col("bwart").alias("bwart"),
+        F.col("shkzg").alias("shkzg"),
+        F.col("menge").cast("int").alias("menge"),
+        F.to_date("cpudt_mkpf", "yyyyMMdd").alias("cpudt_dt")
     )
-    .alias("s")
+    .alias("b")
+    .join(
+        mkpf
+        .select(
+            F.col("mblnr").alias("d_mblnr"),
+            F.to_date("bldat", "yyyyMMdd").alias("bldat_dt")
+        )
+        .alias("d"),
+        F.col("b.b_mblnr") == F.col("d.d_mblnr"),
+        "inner"
+    )
     .join(
         mknha
         .select(
@@ -21,25 +37,34 @@ sprs_dmd26wk = (
             F.col("nha").alias("m_nha")
         )
         .alias("m"),
-        F.col("s.s_part") == F.col("m.m_nha"),
+        F.col("b.b_matnr") == F.col("m.m_nha"),
         "inner"
     )
     .where(
-        (F.col("s.ordergroup") == "SO") &
-        (F.lower(F.col("s.orderstatus")) != "closed") &
-        (F.col("s.demand_date") >= dt1wk) &
-        (F.col("s.demand_date") <= dt26wk) &
-        F.col("s.ordertype").isin(
-            "TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"
-        )
+        F.col("b.bwart").isin("261", "262") &
+        (F.col("d.bldat_dt") > F.date_sub(F.current_date(), 365)) &
+        (F.col("d.bldat_dt") < F.current_date()) &
+        (F.col("b.cpudt_dt") > F.date_sub(F.current_date(), 365))
     )
     .groupBy(
         F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("s.s_part").alias("nha")
+        F.col("b.b_matnr").alias("nha")
     )
     .agg(
-        F.sum("s.openqty").cast("int").alias("sprs_dmd")
+        F.sum(
+            F.when(F.col("b.shkzg") == "S", -F.col("b.menge"))
+             .otherwise(F.col("b.menge"))
+        )
+        .cast("int")
+        .alias("mfg_12mnths_consumption")
     )
 )
 
-sprs_dmd26wk.cache()
+mfg_12m.cache()
+
+
+
+
+
+
+
