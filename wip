@@ -1,8 +1,33 @@
---- STARTING COUNT FUNNEL ---
-1. Raw VBEP (Range Filtered): 40,037,588
-2. VBEP with BMENG > 0:       35,256,813  (Diff: -4,780,775)
-3. After Join VBAK (Header):  35,254,561  (Diff: -2,252)
-4. After Join VBAP (Item):    35,254,435  (Diff: -126)
-5. After Filter AUART:        34,972,313  (Diff: -282,248)
-6. After Filter WERKS:        14,434,667  (Diff: -20,819,768)
---- END FUNNEL ---
+# --- FIX FOR CELL 8 FILTER ---
+# Replace the existing .filter() block at the very end of df_master construction
+
+# ... (previous joins) ...
+    .filter(
+        # FIX: Cast WERKS to Integer to ensure '2000' > '1900' works mathematically
+        # We also handle non-numeric plants gracefully (if cast fails, they become null)
+        (F.col("ap.werks").cast("int") >= 1900) & 
+        (~F.col("ak.auart").isin("ZVC", "ZR07"))
+    )
+
+
+
+
+
+
+
+
+
+
+# --- DIAGNOSTIC: WHICH PLANTS ARE BEING DROPPED? ---
+# This shows the top Plants excluded by the filter
+print("--- TOP 10 DROPPED PLANTS ---")
+dropped_plants = df_vbep.join(df_vbap, ["vbeln", "posnr"]) \
+    .select(F.col("werks")) \
+    .filter(
+        # Show rows that FAIL the numeric check
+        (F.col("werks").cast("int") < 1900) | 
+        (F.col("werks").cast("int").isNull())
+    ) \
+    .groupBy("werks").count().orderBy(F.desc("count")).limit(10)
+
+dropped_plants.show()
