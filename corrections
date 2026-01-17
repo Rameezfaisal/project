@@ -1,28 +1,42 @@
 # Cell 2: Configurations, Parameters, and Source Initialization
 
-# --- 1. Spark Legacy Date Handling (Critical for SAP Data) ---
+from datetime import date
+from dateutil.relativedelta import relativedelta # Standard library in Fabric/Databricks
+
+# --- 1. Spark Legacy Date Handling ---
 spark.conf.set("spark.sql.parquet.datetimeRebaseModeInWrite", "LEGACY")
 spark.conf.set("spark.sql.parquet.int96RebaseModeInWrite", "LEGACY")
 spark.conf.set("spark.sql.avro.datetimeRebaseModeInWrite", "LEGACY")
 
-# --- 2. Input Parameters ---
+# --- 2. Dynamic Date Calculation (Rolling Window) ---
+# SAP Logic: ADD_months(CURRENT_DATE, -12) and ADD_months(CURRENT_DATE, 12)
+current_date = date.today()
+
+# Calculate the rolling window
+calc_from_date = current_date - relativedelta(months=12)
+calc_to_date   = current_date + relativedelta(months=12)
+
+# Convert to string format YYYY-MM-DD for Spark
+str_from_date = calc_from_date.strftime("%Y-%m-%d")
+str_to_date   = calc_to_date.strftime("%Y-%m-%d")
+
+print(f"📅 Running for Dynamic Date Window: {str_from_date} to {str_to_date}")
+
+# --- 3. Input Parameters ---
 params = {
-    # Keep flags as 'Y' so the final table has ALL columns populated (Cost, Plant, etc.)
     "IP_DATA_PRUNING_FLAG": "YYYYYYY", 
     
-    # CRITICAL UPDATE: Set to "ALL" so the table includes ALL Orgs and Types
-    # This allows your downstream queries to filter for 'TA', 'ZCON', etc.
+    # Universal Filtering (Matches 'ALL' placeholder logic)
     "IP_SALES_ORG": "ALL", 
     "IP_ORDER_TYPE": "ALL",         
     
-    # Date History Configuration
-    # Adjust these dates if you need more than ~3 years of history in the table
+    # Dynamic Dates
     "IP_DATE_FLAG": "L",
-    "IP_ERDAT_FROM": "2022-01-01",
-    "IP_ERDAT_TO": "2025-12-31"
+    "IP_ERDAT_FROM": str_from_date, # Now Dynamic: Today - 12 Months
+    "IP_ERDAT_TO": str_to_date      # Now Dynamic: Today + 12 Months
 }
 
-# --- 3. Table Paths ---
+# --- 4. Table Paths ---
 paths = {
     # Main Transaction Table
     "prst": "lhs_glb.eng_test.sales_order", 
@@ -44,8 +58,7 @@ paths = {
     "target": "lhs_glb.eng_test.sales_order_optimised" 
 }
 
-# --- 4. Initialize DataFrames (Lazy Read) ---
-# We define them here so they are available globally in the notebook.
+# --- 5. Initialize DataFrames (Lazy Read) ---
 try:
     print("Initializing Source DataFrames...")
     df_prst  = spark.read.table(paths["prst"])
