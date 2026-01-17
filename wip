@@ -1,15 +1,19 @@
-# --- DEBUG: CHECK "HIGH RISK" JOINS ---
-debug_vbeln = "0000001246" 
+--- 1. Check First Schedule Line (ds_h) for 0000001246 ---
++----------+------+-----+--------+
+|     vbeln| posnr|etenr|   edatu|
++----------+------+-----+--------+
+|0000001246|000110| 0001|20000815|
+|0000001246|000090| 0001|20000815|
+|0000001246|000060| 0001|20000815|
+|0000001246|000080| 0001|20000815|
+|0000001246|000070| 0001|20000815|
++----------+------+-----+--------+
+only showing top 5 rows
 
-print(f"--- 1. Check First Schedule Line (ds_h) for {debug_vbeln} ---")
-# If this is empty, the INNER JOIN on 'h' kills the whole order.
-# Check if ETENR is '0001' (String) or 1 (Int)
-df_vbep.filter(F.col("vbeln") == debug_vbeln).select("vbeln", "posnr", "etenr", "edatu").show(5)
-
-print(f"--- 2. Check Ship-To (ds_shipto) for {debug_vbeln} ---")
-# If this is empty, the INNER JOIN on 'sh' kills the whole order.
-ds_shipto.filter(F.col("shipto_vbeln") == debug_vbeln).show()
-
-
-
-
+--- 2. Check Ship-To (ds_shipto) for 0000001246 ---
++------------+----------+--------------------+
+|shipto_vbeln| shipto_cd|       shiptoname_cd|
++------------+----------+--------------------+
+|  0000001246|0000000628|Samsung **Do not ...|
+|  0000001246|0000000239|Allegro Manufactu...|
++------------+----------+--------------------+
