@@ -18,6 +18,32 @@
 
 
 
+# --- VALIDATION CHECK (Run before writing) ---
+# 1. Check if the row count recovered from 14.1M to ~16.7M
+count_total = final_df.count()
+print(f"Total Rows to Write: {count_total:,}")
+
+# 2. Check for Null Primary Keys (Crucial for Merge)
+# If this is > 0, the MERGE in Step 9 will fail or behave unpredictably.
+count_null_keys = final_df.filter(
+    F.col("VBELN").isNull() | 
+    F.col("POSNR").isNull() | 
+    F.col("ETENR").isNull()
+).count()
+print(f"Rows with Null Keys (Must be 0): {count_null_keys}")
+
+# 3. Check for Duplicates
+# Ideally, this should be the same as count_total.
+count_distinct = final_df.select("VBELN", "POSNR", "ETENR").distinct().count()
+print(f"Distinct Primary Keys: {count_distinct:,}")
+print(f"Duplicate Rows: {count_total - count_distinct:,}")
+
+
+
+
+
+
+
 # --- DIAGNOSTIC: WHICH PLANTS ARE BEING DROPPED? ---
 # This shows the top Plants excluded by the filter
 print("--- TOP 10 DROPPED PLANTS ---")
