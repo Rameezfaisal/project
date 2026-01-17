@@ -1,51 +1,39 @@
-demand_date = COALESCE(deliveryduedate, requestdate, firmcommitdate)
-
-
-
-
-
-sprs_dmd26wk = (
+date_profile = (
     so2
-    .select(
-        F.col("part").alias("s_part"),
-        F.col("ordergroup").alias("ordergroup"),
-        F.col("orderstatus").alias("orderstatus"),
-        F.col("ordertype").alias("ordertype"),
-        # 👉 CRITICAL FIX: create a single demand date like SAP BW usually does
-        F.coalesce(
-            F.col("deliveryduedate"),
-            F.col("requestdate"),
-            F.col("firmcommitdate")
-        ).alias("demand_date"),
-        F.col("openqty").alias("openqty")
-    )
-    .alias("s")
     .join(
-        mknha
-        .select(
-            F.col("cmpprtno").alias("m_cmpprtno"),
-            F.col("nha").alias("m_nha")
-        )
-        .alias("m"),
-        F.col("s.s_part") == F.col("m.m_nha"),
+        mknha.select("cmpprtno","nha"),
+        so2.part == mknha.nha,
         "inner"
     )
-    .where(
-        (F.col("s.ordergroup") == "SO") &
-        (F.lower(F.col("s.orderstatus")) != "closed") &
-        (F.col("s.demand_date") >= dt1wk) &
-        (F.col("s.demand_date") <= dt26wk) &
-        F.col("s.ordertype").isin(
-            "TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"
-        )
-    )
-    .groupBy(
-        F.col("m.m_cmpprtno").alias("cmpprtno"),
-        F.col("s.s_part").alias("nha")
-    )
-    .agg(
-        F.sum("s.openqty").cast("int").alias("sprs_dmd")
+    .select(
+        F.min("deliveryduedate").alias("min_delivery"),
+        F.max("deliveryduedate").alias("max_delivery"),
+        F.min("requestdate").alias("min_request"),
+        F.max("requestdate").alias("max_request"),
+        F.min("firmcommitdate").alias("min_firmcommit"),
+        F.max("firmcommitdate").alias("max_firmcommit")
     )
 )
 
-sprs_dmd26wk.cache()
+date_profile.show()
+
+
+
+
+
+
+
+spark.sql("""
+SELECT 
+  current_date() as today,
+  date_sub(current_date(), ((dayofweek(current_date())+5)%7)) as dt1wk,
+  date_add(
+      date_sub(
+          date_add(date_sub(current_date(), ((dayofweek(current_date())+5)%7)), 182),
+          ((dayofweek(date_add(date_sub(current_date(), ((dayofweek(current_date())+5)%7)), 182))+5)%7)
+      ), 6
+  ) as dt26wk
+""").show()
+
+
+
