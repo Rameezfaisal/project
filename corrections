@@ -1,62 +1,65 @@
-SPRSDMD26WK = SELECT DISTINCT A1.CMPPRTNO
-              ,A1."Part" as "Material"
-            , SUM(A1."OpenQty") AS "Demand"
-        FROM (
-        		SELECT DISTINCT A.CMPPRTNO, B.*    
-        		FROM  :MKNHA A
-            	INNER JOIN "_SYS_BIC"."prd.gops.GLIS/CV_SQL_SO_OPTIMISED"(
-                	PLACEHOLDER."$$IP_ORDER_TYPE$$" =>  'ALL',
-	 				PLACEHOLDER."$$IP_DATE_FLAG$$" => 'L',
-	 				PLACEHOLDER."$$IP_SALES_ORG$$" => 'ALL',
-	 				PLACEHOLDER."$$IP_ERDAT_FROM$$" => :From_date,
-	 				PLACEHOLDER."$$IP_ERDAT_TO$$" => :T_date,
-	 				PLACEHOLDER."$$IP_DATA_PRUNING_FLAG$$" => 'NNNNNNN'
-            	) B ON
-                	A.NHA = B."Part"
-        		WHERE (
-           			"OrderGroup" = 'SO'
-            		AND LOWER("OrderStatus") <> 'closed'
-            		AND "DeliveryDueDate" >= DT1WK
-            		AND "DeliveryDueDate" <= DT26WK
-            		AND "OrderType" IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP'))
-        	)A1
-        GROUP BY A1.CMPPRTNO,A1."Part"
-        ORDER BY A1."Part" ASC;
+# Cell 2: Configurations, Parameters, and Source Initialization
 
+# --- 1. Spark Legacy Date Handling (Critical for SAP Data) ---
+spark.conf.set("spark.sql.parquet.datetimeRebaseModeInWrite", "LEGACY")
+spark.conf.set("spark.sql.parquet.int96RebaseModeInWrite", "LEGACY")
+spark.conf.set("spark.sql.avro.datetimeRebaseModeInWrite", "LEGACY")
 
-SPRSDMD	= 	SELECT DISTINCT A1."Part" as "MATNR"
-              , SUM(A1."OpenQty") AS "SPRS_DMD"
-        FROM (
-        		SELECT DISTINCT A.NHA, B.*    
-        		FROM  :NHALIST A
-            	INNER JOIN "_SYS_BIC"."prd.gops.GLIS/CV_SQL_SO_2"(
-                	PLACEHOLDER."$$IP_ORDER_TYPE$$" =>  'ALL',
-	 				PLACEHOLDER."$$IP_DATE_FLAG$$" => 'L',
-	 				PLACEHOLDER."$$IP_SALES_ORG$$" => 'ALL',
-	 				PLACEHOLDER."$$IP_ERDAT_FROM$$" => :From_date,
-	 				PLACEHOLDER."$$IP_ERDAT_TO$$" => :T_date,
-	 				PLACEHOLDER."$$IP_DATA_PRUNING_FLAG$$" => 'NNNNNNN'
-            	) B ON
-                	A.NHA = B."Part"
-        		WHERE (
-           			"OrderGroup" = 'SO'
-            		AND LOWER("OrderStatus") <> 'closed'
-            		AND "DeliveryDueDate" >= DT1WK
-            		AND "DeliveryDueDate" <= DT26WK
-            		AND "OrderType" IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP'))
-        	)A1
-        GROUP BY A1."Part"
-        ORDER BY A1."Part" ASC;
+# --- 2. Input Parameters ---
+params = {
+    # Keep flags as 'Y' so the final table has ALL columns populated (Cost, Plant, etc.)
+    "IP_DATA_PRUNING_FLAG": "YYYYYYY", 
+    
+    # CRITICAL UPDATE: Set to "ALL" so the table includes ALL Orgs and Types
+    # This allows your downstream queries to filter for 'TA', 'ZCON', etc.
+    "IP_SALES_ORG": "ALL", 
+    "IP_ORDER_TYPE": "ALL",         
+    
+    # Date History Configuration
+    # Adjust these dates if you need more than ~3 years of history in the table
+    "IP_DATE_FLAG": "L",
+    "IP_ERDAT_FROM": "2022-01-01",
+    "IP_ERDAT_TO": "2025-12-31"
+}
 
+# --- 3. Table Paths ---
+paths = {
+    # Main Transaction Table
+    "prst": "lhs_glb.eng_test.sales_order", 
+    
+    # Master Data / Lookups
+    "kna1":  "wsf_silk_glb_da_dev.lhs_glb.ecc.kna1",
+    "mara":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mara",
+    "marc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.marc",
+    "mbew":  "wsf_silk_glb_da_dev.lhs_glb.ecc.mbew",
+    "vekp":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vekp",
+    "afko":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afko",
+    "afvc":  "wsf_silk_glb_da_dev.lhs_glb.ecc.afvc",
+    "vbkd":  "wsf_silk_glb_da_dev.lhs_glb.ecc.vbkd",
+    "qmel":  "wsf_silk_glb_da_dev.lhs_glb.ecc.qmel",
+    "t024x": "wsf_silk_glb_da_dev.lhs_glb.ecc.t024x",
+    "part":  "lhs_glb.eng_test.stg_omat_part",
+    
+    # Target Table
+    "target": "lhs_glb.eng_test.sales_order_optimised" 
+}
 
-
-/* Your Fabric SQL Query */
-SELECT 
-    part,
-    SUM(openqty) as Demand
-FROM Lakehouse.so_optimized_final
-WHERE ordergroup = 'SO'
-  AND orderstatus <> 'Closed'
-  AND ordertype IN ('TA','ZCON','ZO09','ZO04','ZSD','ZSO','ZFO','ZUP') -- Filtering happens HERE now
-GROUP BY part
-ORDER BY part ASC;
+# --- 4. Initialize DataFrames (Lazy Read) ---
+# We define them here so they are available globally in the notebook.
+try:
+    print("Initializing Source DataFrames...")
+    df_prst  = spark.read.table(paths["prst"])
+    df_kna1  = spark.read.table(paths["kna1"])
+    df_mara  = spark.read.table(paths["mara"])
+    df_marc  = spark.read.table(paths["marc"])
+    df_mbew  = spark.read.table(paths["mbew"])
+    df_vekp  = spark.read.table(paths["vekp"])
+    df_afko  = spark.read.table(paths["afko"])
+    df_afvc  = spark.read.table(paths["afvc"])
+    df_vbkd  = spark.read.table(paths["vbkd"])
+    df_qmel  = spark.read.table(paths["qmel"])
+    df_t024x = spark.read.table(paths["t024x"])
+    df_part  = spark.read.table(paths["part"])
+    print("✅ All source tables initialized successfully.")
+except Exception as e:
+    print(f"❌ CRITICAL ERROR: Could not find one of the tables. Check paths dictionary.\n{e}")
