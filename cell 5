@@ -1,34 +1,26 @@
-from pyspark.sql.types import StructType, StructField, TimestampType, IntegerType, StringType
-from pyspark.sql.functions import current_timestamp, lit
+from pyspark.sql.functions import current_timestamp
 
-# ---- Calculate counts (SAP OBPRTCnt / NHACnt equivalents) ----
-obprtno_cnt = df_nhamainlist.select("cmpprtno_cd").distinct().count()
-obpr_cnt = df_nhamainlist.select("nha_cd").distinct().count()
-obprtno_nha_cnt = df_nhamainlist.count()   # total CMPPRTNO–NHA pairs
+spark.sql("""
+INSERT INTO eng_test.rpt_omat_log_dtls (
+  executed_on,
+  obprtno_cnt,
+  obprtno_nha_cnt,
+  obpr_cnt,
+  program_name
+)
+VALUES (
+  current_timestamp(),
+  NULL,
+  NULL,
+  1,
+  'SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh - Started'
+)
+""")
 
-# ---- Define schema explicitly to avoid Delta merge issues ----
-log_schema = StructType([
-    StructField("executed_on", TimestampType(), True),
-    StructField("obprtno_cnt", IntegerType(), True),
-    StructField("obprtno_nha_cnt", IntegerType(), True),
-    StructField("obpr_cnt", IntegerType(), True),
-    StructField("program_name", StringType(), True)
-])
 
-# ---- Create START log row using Spark current_timestamp ----
-df_log_start = spark.createDataFrame(
-    [(None, obprtno_cnt, obprtno_nha_cnt, obpr_cnt,
-      "SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh - Started")],
-    schema=log_schema
-).withColumn("executed_on", current_timestamp())
 
-# ---- Create END log row using Spark current_timestamp ----
-df_log_end = spark.createDataFrame(
-    [(None, obprtno_cnt, obprtno_nha_cnt, obpr_cnt,
-      "SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh - End")],
-    schema=log_schema
-).withColumn("executed_on", current_timestamp())
 
-# ---- Append both records to Delta log table ----
-df_log_start.write.format("delta").mode("append").saveAsTable("eng_test.rpt_omat_log_dtls")
-df_log_end.write.format("delta").mode("append").saveAsTable("eng_test.rpt_omat_log_dtls")
+
+
+
+
