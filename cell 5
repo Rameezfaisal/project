@@ -1,17 +1,39 @@
-Cell 12 — Mark MAKE-NHAs as Processed
-Business purpose
-Once demand and consumption have been calculated and written, all new MAKE-NHAs used in this run must be marked as processed so that:
-They are not reprocessed in the next run, and
-The next execution only picks up truly new NHAs.
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from pyspark.sql.types import *
 
 
 
 
 
-spark.sql(f"""
-UPDATE {make_nha_target_path}
-SET isprocessed = 'Y'
-WHERE isprocessed = 'N'
+# ---------- SOURCE TABLES ----------
+cv_omat_obpn_make_nha_dtls = "lakehouse_prd._sys_bic_prd_gops_omat_cv_omat_obpn_make_nha_dtls"
+cv_omat_obprtno_dtls = "lakehouse_prd._sys_bic_prd_gops_omat_cv_omat_obprtno_dtls"
+cv_mseg = "lakehouse_prd._sys_bic_prd_global_ecc_cv_mseg"
+cv_makt = "lakehouse_prd._sys_bic_prd_global_ecc_cv_makt"
+cv_mkpf = "lakehouse_prd._sys_bic_prd_global_ecc_cv_mkpf"
+cv_mdkp = "lakehouse_prd._sys_bic_prd_global_ecc_cv_mdkp"
+cv_mdtb = "lakehouse_prd._sys_bic_prd_global_ecc_cv_mdtb"
+cv_sql_so_2 = "lakehouse_prd._sys_bic_prd_gops_glis_cv_sql_so_2"
+zt_csbg_spares_deliveries = "lakehouse_prd.alex_custom_zt_csbg_spares_deliveries"
+
+# ---------- TARGET TABLES ----------
+tgt_dmd_cons = "lakehouse_prd.w_omat_omat_makenha_dmd_consumption_dtls"
+tgt_log = "lakehouse_prd.w_omat_omat_log_dtls"
+
+# ---------- CONTROL DATES ----------
+from_date = F.add_months(F.current_date(), -12)
+to_date = F.add_months(F.current_date(), 12)
+
+dt1wk = F.expr("date_add(current_date(), - (dayofweek(current_date()) - 1))")
+dt26wk = F.expr("""
+    date_add(
+        date_add(
+            date_add(current_date(), 182),
+            - (dayofweek(date_add(current_date(), 182)) - 1)
+        ),
+        6
+    )
 """)
 
 
@@ -19,37 +41,191 @@ WHERE isprocessed = 'N'
 
 
 
-Cell 13 — Logging / Audit INSERT (OMAT_LOG_DTLS)
-Business purpose
-Create a single audit record for this execution capturing:
-When the job ran
-How many OB parent parts were processed
-How many NHAs were processed
-A run indicator (always 1 for a successful execution)
-The program/notebook name
+
+
+
+df_obpn = spark.read.format("delta").table(cv_omat_obpn_make_nha_dtls) \
+    .selectExpr(
+        "lower(cmpprtno) as cmpprtno_cd",
+        "lower(nha) as nha_cd"
+    )
+
+df_obprt = spark.read.format("delta").table(cv_omat_obprtno_dtls) \
+    .selectExpr(
+        "lower(obprtno) as obprtno_cd",
+        "upper(obpr_state) as obpr_state_cd"
+    )
+
+df_mseg = spark.read.format("delta").table(cv_mseg) \
+    .selectExpr(
+        "lower(matnr) as matnr_cd",
+        "lower(shkzg) as shkzg_cd",
+        "menge",
+        "bwart",
+        "werks",
+        "cpudt_mkpf",
+        "mblnr"
+    )
+
+df_makt = spark.read.format("delta").table(cv_makt) \
+    .selectExpr("lower(matnr) as matnr_cd")
+
+df_mkpf = spark.read.format("delta").table(cv_mkpf) \
+    .selectExpr(
+        "mblnr",
+        "bldat"
+    )
+
+df_mdkp = spark.read.format("delta").table(cv_mdkp) \
+    .selectExpr(
+        "lower(matnr) as matnr_cd",
+        "plwrk",
+        "dtnum"
+    )
+
+df_mdtb = spark.read.format("delta").table(cv_mdtb) \
+    .selectExpr(
+        "dtnum",
+        "plumi",
+        "delkz",
+        "dat00",
+        "mng01"
+    )
+
+df_so = spark.read.format("delta").table(cv_sql_so_2) \
+    .selectExpr(
+        "lower(part) as matnr_cd",
+        "lower(orderstatus) as orderstatus_cd",
+        "ordergroup",
+        "deliveryduedate",
+        "ordertype",
+        "openqty"
+    )
+
+df_spares = spark.read.format("delta").table(zt_csbg_spares_deliveries) \
+    .selectExpr(
+        "lower(material) as material_cd",
+        "qty_shipped",
+        "source_doc",
+        "order_type",
+        "actual_gi"
+    )
 
 
 
 
 
-# Compute counts (same as SAP variables)
-obprtno_cnt = mknha.select("cmpprtno").distinct().count()
-obprtno_nha_cnt = mknha.select("nha").distinct().count()
 
-# Insert audit record with explicit column list (Delta-safe)
-spark.sql(f"""
-INSERT INTO {log_table_path} (
-    executed_on,
-    obprtno_cnt,
-    obprtno_nha_cnt,
-    obpr_cnt,
-    program_name
+
+
+df_nhamainlist = (
+    df_obpn.alias("a")
+    .join(df_obprt.alias("b"),
+          F.col("b.obprtno_cd") == F.col("a.cmpprtno_cd"),
+          "inner")
+    .filter(F.col("b.obpr_state_cd").isin("CONFIRMED","IN REVIEW","IN WORK"))
+    .select(
+        F.col("a.cmpprtno_cd"),
+        F.col("a.nha_cd")
+    )
+    .distinct()
 )
-VALUES (
-    current_timestamp(),
-    {obprtno_cnt},
-    {obprtno_nha_cnt},
-    1,
-    'SP_OMAT_INSERT_MAKENHA_DMD_CONS'
+
+df_nhamainlist.createOrReplaceTempView("nhamainlist_vw")
+
+
+
+
+
+
+
+
+df_nhalist = df_nhamainlist.select("nha_cd").distinct()
+df_nhalist.createOrReplaceTempView("nhalist_vw")
+
+
+
+
+
+
+
+
+
+df_mfg_5yrs = (
+    df_nhalist.alias("a")
+    .join(df_mseg.alias("b"), F.col("a.nha_cd") == F.col("b.matnr_cd"), "inner")
+    .join(df_makt.alias("c"), F.col("c.matnr_cd") == F.col("b.matnr_cd"), "inner")
+    .join(df_mkpf.alias("d"), F.col("b.mblnr") == F.col("d.mblnr"), "inner")
+    .filter(
+        F.col("b.bwart").isin("261","262") &
+        (F.col("d.bldat") > F.date_sub(F.current_date(), 365*5)) &
+        (F.col("d.bldat") < F.current_date()) &
+        ((F.col("b.werks") < 2001) | (F.col("b.werks") == 3120)) &
+        (F.col("b.cpudt_mkpf") > F.date_sub(F.current_date(), 365*5))
+    )
+    .groupBy(F.col("b.matnr_cd"))
+    .agg(
+        F.sum(
+            F.when(F.col("b.shkzg_cd") == "s", -1 * F.col("b.menge"))
+             .otherwise(F.col("b.menge"))
+        ).alias("mfg_5yrs_consumption_cd")
+    )
 )
-""")
+
+df_nhalist_mfgcons = (
+    df_nhamainlist.alias("a")
+    .join(df_mfg_5yrs.alias("b"),
+          F.col("b.matnr_cd") == F.col("a.nha_cd"),
+          "left")
+    .select(
+        F.col("a.cmpprtno_cd"),
+        F.col("a.nha_cd"),
+        F.col("b.mfg_5yrs_consumption_cd")
+    )
+)
+
+df_nhalist_mfgcons.createOrReplaceTempView("nhalist_mfgcons_vw")
+
+
+
+
+
+
+
+
+
+
+df_mfg_dmd = (
+    df_nhalist.alias("m")
+    .join(df_mdkp.alias("d"), F.col("m.nha_cd") == F.col("d.matnr_cd"), "inner")
+    .join(df_mdtb.alias("f"), F.col("f.dtnum") == F.col("d.dtnum"), "inner")
+    .filter(
+        F.col("f.plumi").isin("+","-") &
+        ((F.col("d.plwrk") < 2001) | (F.col("d.plwrk") == 3120)) &
+        F.col("f.delkz").isin("AR","SB") &
+        (F.col("f.dat00") >= dt1wk) &
+        (F.col("f.dat00") <= dt26wk)
+    )
+    .groupBy(F.col("d.matnr_cd"))
+    .agg(
+        F.sum(
+            F.when(F.col("f.plumi") == "-", F.col("f.mng01"))
+             .otherwise(-1 * F.col("f.mng01"))
+        ).alias("mfg_dmd_cd")
+    )
+)
+
+df_nhalist_mfgdmd = (
+    df_nhalist_mfgcons.alias("a")
+    .join(df_mfg_dmd.alias("b"),
+          F.col("b.matnr_cd") == F.col("a.nha_cd"),
+          "left")
+    .select(
+        "a.cmpprtno_cd",
+        "a.nha_cd",
+        "a.mfg_5yrs_consumption_cd",
+        F.col("b.mfg_dmd_cd")
+    )
+)
+
+df_nhalist_mfgdmd.createOrReplaceTempView("nhalist_mfgdmd_vw")
