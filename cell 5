@@ -1,13 +1,59 @@
-+--------+
-|count(1)|
-+--------+
-|     589|
-+--------+
+Cell 12 — Logging / Audit (SAP-equivalent completion step)
+What this cell does (business meaning)
+This cell replicates the start/end audit trail of your SAP procedure in Fabric:
+Captures how many OB component parts (CMPPRTNO) were in scope
+Captures how many NHAs were in scope
+Writes two records to OMAT_LOG_DTLS:
+“Procedure started”
+“Procedure ended”
+This provides:
+Weekly run traceability
+Simple operational monitoring
+A control record you can reconcile against your final table load (589 rows).
 
 
 
-+----------+-----------------+------------+
-|total_rows|distinct_cmpprtno|distinct_nha|
-+----------+-----------------+------------+
-|       589|              215|         336|
-+----------+-----------------+------------+
+
+
+
+
+# ---- Business counters (equivalent to SAP OBPRTCnt, NHACnt) ----
+obprt_cnt = df_nhamainlist.select("cmpprtno_cd").distinct().count()
+nha_cnt = df_nhamainlist.select("nha_cd").distinct().count()
+
+# ---- Start log record ----
+df_log_start = spark.createDataFrame(
+    [(
+        "sp_omat_updatedmd_cons_mknha_wklyrefresh - started",
+        1,
+        obprt_cnt,
+        nha_cnt,
+        F.current_timestamp()
+    )],
+    ["message", "status", "obprt_cnt", "nha_cnt", "logged_at"]
+)
+
+# ---- End log record ----
+df_log_end = spark.createDataFrame(
+    [(
+        "sp_omat_updatedmd_cons_mknha_wklyrefresh - end",
+        1,
+        obprt_cnt,
+        nha_cnt,
+        F.current_timestamp()
+    )],
+    ["message", "status", "obprt_cnt", "nha_cnt", "logged_at"]
+)
+
+# ---- Append to Delta log table ----
+df_log_start.write.format("delta").mode("append").saveAsTable(tgt_log)
+df_log_end.write.format("delta").mode("append").saveAsTable(tgt_log)
+
+
+
+
+
+SELECT *
+FROM <tgt_log>
+ORDER BY logged_at DESC
+LIMIT 2;
