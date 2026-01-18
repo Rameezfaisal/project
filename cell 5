@@ -1,65 +1,46 @@
-Cell 10 — Manufacturing 12 Months Consumption + Final Candidate Dataset
+Cell 11 — Truncate Target + Final INSERT into Delta
 What this cell does (business meaning)
-This cell does two things:
-Part A — Calculate recent (last 12 months) manufacturing consumption
-It answers:
-“For each NHA, how much was consumed in manufacturing in the last 12 months?”
-It uses the same movement logic as your 5-year consumption (261/262, SHKZG sign handling), but only for the last 12 months. This gives you a recent trend signal rather than long-term history.
-Part B — Build the final working dataset (SAP equivalent of NHALIST_MFG12MNTHSCONS)
-Then it keeps only those NHAs where at least one of these is non-zero:
-5-year manufacturing consumption
-26-week manufacturing demand
-26-week spares demand
-5-year spares consumption
-Business meaning of this filter:
-“Keep only NHAs that actually show some meaningful activity or demand.”
+This cell performs your official weekly refresh for OMAT:
+Clears the previous snapshot of:
+Copy code
+
+OMAT_MAKENHA_DMD_CONSUMPTION_DTLS
+(equivalent to your SAP DELETE FROM)
+Loads only the 589 “active” records from df_final_base into the target table, with:
+Explicit column list (no positional inserts)
+Lowercase column mapping
+Load date stamped as last_modified_on
+In business terms, this means:
+“Replace last week’s view with the new, activity-driven view of Make-NHA demand and consumption.”
 
 
 
 
 
 
+# --- Step 1: Truncate target (SAP DELETE equivalent) ---
+spark.sql(f"TRUNCATE TABLE {tgt_dmd_cons}")
 
-df_mfg_12m = (
-    df_mseg.alias("b")
-    .join(df_makt.alias("c"), F.col("c.matnr_cd") == F.col("b.matnr_cd"), "inner")
-    .join(df_mkpf.alias("d"), F.col("b.mblnr") == F.col("d.mblnr"), "inner")
-    .join(df_nhalist.alias("a"), F.col("b.matnr_cd") == F.col("a.nha_cd"), "inner")
-    .filter(
-        F.col("b.bwart").isin("261","262") &
-        (F.col("d.bldat") > F.date_sub(F.current_date(), 365)) &
-        (F.col("d.bldat") < F.current_date()) &
-        (F.col("b.cpudt_mkpf") > F.date_sub(F.current_date(), 365))
-    )
-    .groupBy(F.col("b.matnr_cd"))
-    .agg(
-        F.sum(
-            F.when(F.col("b.shkzg_cd") == "s", -1 * F.col("b.menge"))
-             .otherwise(F.col("b.menge"))
-        ).alias("mfg_12mnths_consumption_cd")
-    )
+# --- Step 2: Final explicit-column insert ---
+spark.sql(f"""
+INSERT INTO {tgt_dmd_cons} (
+    cmpprtno,
+    nha,
+    mfg_5yrs_consumption,
+    mfg_dmd,
+    sprs_dmd,
+    sprs_5yrs_consumption,
+    mfg_12mnths_consumption,
+    last_modified_on
 )
-
-df_final_base = (
-    df_nhalist_sprscons.alias("a")
-    .join(df_mfg_12m.alias("b"),
-          F.col("b.matnr_cd") == F.col("a.nha_cd"),
-          "left")
-    .select(
-        "a.cmpprtno_cd",
-        "a.nha_cd",
-        "a.mfg_5yrs_consumption_cd",
-        "a.mfg_dmd_cd",
-        "a.sprs_dmd_cd",
-        "a.sprs_5yrs_consumption_cd",
-        F.col("b.mfg_12mnths_consumption_cd")
-    )
-    .filter(
-        (F.abs(F.coalesce("mfg_5yrs_consumption_cd", F.lit(0))) +
-         F.abs(F.coalesce("mfg_dmd_cd", F.lit(0))) +
-         F.abs(F.coalesce("sprs_dmd_cd", F.lit(0))) +
-         F.abs(F.coalesce("sprs_5yrs_consumption_cd", F.lit(0)))) > 0
-    )
-)
-
-df_final_base.createOrReplaceTempView("nhalist_final_vw")
+SELECT
+    cmpprtno_cd,
+    nha_cd,
+    mfg_5yrs_consumption_cd,
+    mfg_dmd_cd,
+    sprs_dmd_cd,
+    sprs_5yrs_consumption_cd,
+    mfg_12mnths_consumption_cd,
+    current_date()
+FROM nhalist_final_vw
+""")
