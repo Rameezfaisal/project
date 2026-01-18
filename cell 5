@@ -1,67 +1,13 @@
-Cell 11 — Truncate Target + Final INSERT into Delta
-What this cell does (business meaning)
-This cell performs your official weekly refresh for OMAT:
-Clears the previous snapshot of:
-Copy code
-
-OMAT_MAKENHA_DMD_CONSUMPTION_DTLS
-(equivalent to your SAP DELETE FROM)
-Loads only the 589 “active” records from df_final_base into the target table, with:
-Explicit column list (no positional inserts)
-Lowercase column mapping
-Load date stamped as last_modified_on
-In business terms, this means:
-“Replace last week’s view with the new, activity-driven view of Make-NHA demand and consumption.”
++--------+
+|count(1)|
++--------+
+|     589|
++--------+
 
 
 
-
-
-
-# --- Step 1: Truncate target (SAP DELETE equivalent) ---
-spark.sql(f"TRUNCATE TABLE {tgt_dmd_cons}")
-
-# --- Step 2: Final explicit-column insert ---
-spark.sql(f"""
-INSERT INTO {tgt_dmd_cons} (
-    cmpprtno,
-    nha,
-    mfg_5yrs_consumption,
-    mfg_dmd,
-    sprs_dmd,
-    sprs_5yrs_consumption,
-    mfg_12mnths_consumption,
-    last_modified_on
-)
-SELECT
-    cmpprtno_cd,
-    nha_cd,
-    mfg_5yrs_consumption_cd,
-    mfg_dmd_cd,
-    sprs_dmd_cd,
-    sprs_5yrs_consumption_cd,
-    mfg_12mnths_consumption_cd,
-    current_date()
-FROM nhalist_final_vw
-""")
-
-
-
-
-
-
-spark.sql(f"SELECT COUNT(*) FROM {tgt_dmd_cons}").show()
-
-
-
-
-
-
-spark.sql(f"""
-SELECT COUNT(*) AS total_rows,
-       COUNT(DISTINCT cmpprtno) AS distinct_cmpprtno,
-       COUNT(DISTINCT nha) AS distinct_nha
-FROM {tgt_dmd_cons}
-""").show()
-
-
++----------+-----------------+------------+
+|total_rows|distinct_cmpprtno|distinct_nha|
++----------+-----------------+------------+
+|       589|              215|         336|
++----------+-----------------+------------+
