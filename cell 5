@@ -44,3 +44,24 @@ SELECT
     current_date()
 FROM nhalist_final_vw
 """)
+
+
+
+
+
+
+spark.sql(f"SELECT COUNT(*) FROM {tgt_dmd_cons}").show()
+
+
+
+
+
+
+spark.sql(f"""
+SELECT COUNT(*) AS total_rows,
+       COUNT(DISTINCT cmpprtno) AS distinct_cmpprtno,
+       COUNT(DISTINCT nha) AS distinct_nha
+FROM {tgt_dmd_cons}
+""").show()
+
+
