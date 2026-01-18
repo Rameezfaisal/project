@@ -1,237 +1,249 @@
-# ##### Step-0 -- Imports and Helper Functions
-
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-from pyspark.sql.types import *
-from pyspark.sql.utils import AnalysisException
-
-# --- DATE NORMALIZATION FUNCTION (USER PROVIDED) ---
-def normalize_sap_date(col_input):
-    """
-    Handles SAP dates (yyyyMMdd), ISO dates, and Slashes.
-    Returns a Column object castable to Date/Timestamp.
-    """
-    # Allow passing either a string name or a Column object
-    c = F.col(col_input) if isinstance(col_input, str) else col_input
-    c = F.trim(c)
-
-    # 1. ISO: yyyy-MM-dd
-    iso = F.when(c.rlike(r"^\d{4}-\d{1,2}-\d{1,2}$"), c)
-
-    # 2. SAP Compact: yyyyMMdd (e.g. 20220101)
-    ymd = F.when(c.rlike(r"^\d{8}$"),
-                 F.concat_ws("-", F.substring(c,1,4), F.substring(c,5,2), F.substring(c,7,2)))
-
-    # 3. US Slashes: MM/dd/yyyy
-    mdy = F.when(c.rlike(r"^\d{1,2}/\d{1,2}/\d{4}$"),
-        F.concat_ws("-",
-            F.split(c,"/").getItem(2),
-            F.lpad(F.split(c,"/").getItem(0),2,"0"),
-            F.lpad(F.split(c,"/").getItem(1),2,"0")
-        )
-    )
-
-    normalized = F.coalesce(iso, ymd, mdy)
-
-    # Handle SAP Empty/Zero dates
-    return F.when(
-        c.isNull() | c.isin("", "0", "00000000"),
-        None
-    ).otherwise(
-        # We append full timestamp structure to be safe, then cast to string
-        F.concat(normalized, F.lit("T00:00:00Z"))
-    )
-
-# --- READ HELPER ---
-def _read_if_exists(path: str):
-    try:
-        if not path: return None
-        df = spark.read.table(path)
-        return df if df.head(1) else None
-    except AnalysisException:
-        return None
-
-def read_union_distinct(table_key: str):
-    # (Your existing read_union_distinct logic goes here unchanged)
-    # ...
-    ecc_path = paths["ecc"].get(table_key)
-    s4h_path = paths["s4h"].get(table_key)
-    # ... (Keep the rest of your Step 0 logic) ...
-    df_ecc = _read_if_exists(ecc_path)
-    df_s4h = _read_if_exists(s4h_path)
-
-    if df_ecc is None and df_s4h is None:
-        raise ValueError(f"No data found for '{table_key}'")
-
-    if df_ecc is None:
-        return df_s4h.distinct()
-    if df_s4h is None:
-        return df_ecc.distinct()
-
-    df_ecc = df_ecc.select([F.col(c).alias(c.lower()) for c in df_ecc.columns])
-    df_s4h = df_s4h.select([F.col(c).alias(c.lower()) for c in df_s4h.columns])
-
-    all_cols = sorted(set(df_ecc.columns) | set(df_s4h.columns))
-
-    ecc_aligned = df_ecc.select([F.col(c) if c in df_ecc.columns else F.lit(None).alias(c) 
-                                 for c in all_cols])
-    s4h_aligned = df_s4h.select([F.col(c) if c in df_s4h.columns else F.lit(None).alias(c) 
-                                 for c in all_cols])
-
-    return ecc_aligned.unionByName(s4h_aligned).distinct()
-
-
-
-
-
-
-
-
-
-
-
-# --- CELL 8: OPTIMIZED MASTER JOIN & DATE FIX ---
-
-# 1. Perform the Joins (Including the previous Left Join and Integer Cast fixes)
-df_master = ds_vbep_cum.alias("ep") \
-    .join(df_vbak.alias("ak"), F.col("ep.vbeln") == F.col("ak.vbeln"), "inner") \
-    .join(df_vbap_calc.alias("ap"), (F.col("ep.vbeln") == F.col("ap.vbeln")) & (F.col("ep.posnr") == F.col("ap.posnr")), "inner") \
-    .join(df_vbuk.alias("uk"), F.col("ep.vbeln") == F.col("uk.vbeln"), "left") \
-    .join(df_vbup.alias("up"), (F.col("ep.vbeln") == F.col("up.vbeln")) & (F.col("ep.posnr") == F.col("up.posnr")), "left") \
-    .join(ds_h.alias("h").hint("broadcast"), (F.col("ep.vbeln") == F.col("h.h_vbeln")) & (F.col("ep.posnr") == F.col("h.h_posnr")), "left") \
-    .join(ds_shipto.alias("sh").hint("broadcast"), F.col("ep.vbeln") == F.col("sh.shipto_vbeln"), "left") \
-    .join(ds_f1.alias("f1"), (F.col("ep.vbeln") == F.col("f1.f1_vbeln_cd")) & (F.col("ep.posnr") == F.col("f1.posnv")), "left") \
-    .join(ds_f2.alias("f2"), (F.col("ep.vbeln") == F.col("f2.lastpgidoc_cd")) & (F.col("ep.posnr") == F.col("f2.posnv")), "left") \
-    .join(ds_likp_lips.alias("ll"), (F.col("ep.vbeln") == F.col("ll.opendlvdoc_cd")) & (F.col("ep.posnr") == F.col("ll.vgpos")), "left") \
-    .join(ds_jest.alias("je"), F.col("ak.objnr") == F.col("je.objnr"), "left") \
-    .join(ds_csbg.alias("cs").hint("broadcast"), (F.col("ep.vbeln") == F.col("cs.order_no")) & (F.col("ep.posnr") == F.col("cs.order_line_no")), "left") \
-    .join(ds_mard.alias("md"), 
-          (F.col("ap.matnr") == F.col("md.matnr")) & 
-          (F.col("ap.werks") == F.col("md.werks")) & 
-          (F.col("ap.calc_lgort") == F.col("md.lgort")), 
-          "left") \
-    .filter(
-        (F.col("ap.werks").cast("int") >= 1900) & 
-        (~F.col("ak.auart").isin("ZVC", "ZR07"))
-    )
-
-# 2. ORDER STATUS CALCULATION (Unchanged)
-c_wbstk  = F.coalesce(F.col("uk.wbstk"), F.lit(""))
-c_abgru  = F.coalesce(F.col("ap.abgru"), F.lit(""))
-c_lfsta  = F.coalesce(F.col("up.lfsta"), F.lit(""))
-n_kwmeng = F.coalesce(F.col("ap.kwmeng"), F.lit(0))
-n_delvd  = F.coalesce(F.col("f1.delvd_qty_cd"), F.lit(0))
-n_bmeng  = F.coalesce(F.col("ep.bmeng"), F.lit(0))
-n_expcum = F.coalesce(F.col("ep.expectedqtycumulative_cd"), F.lit(0))
-
-calc_remaining = F.when(n_expcum <= n_delvd, 0) \
-                  .when((n_expcum - n_delvd) <= n_bmeng, (n_expcum - n_delvd)) \
-                  .otherwise(n_bmeng)
-
-df_calculated = df_master.withColumn(
-    "calc_order_status",
-    F.when(
-        (c_wbstk != "C") & 
-        (c_abgru == "") & 
-        (c_lfsta != "") & 
-        (n_kwmeng > n_delvd) & 
-        (n_bmeng > 0) & 
-        (calc_remaining > 0), 
-        "Open"
-    ).otherwise("Closed")
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_obprtno_dtls (
+  business_unit           STRING,
+  created_on              TIMESTAMP,   -- SECONDDATE
+  duplicate_pr_flag       STRING,
+  enditem                 STRING,
+  is_ltb_avail            STRING,
+  is_obprt_processed      STRING,
+  is_weekly_processed     STRING,
+  last_modified_on        TIMESTAMP,   -- SECONDDATE
+  ltb_date                DATE,
+  ltb_qty                 INT,
+  obprno                  STRING       NOT NULL,
+  obprtno                 STRING       NOT NULL,
+  obpr_state              STRING,
+  part_status             STRING,
+  pg_pm                   STRING,
+  reltd_ob_pr             STRING,
+  supplier_date_to_zero   DATE
 )
-
-# 3. FINAL PROJECTION with DATE NORMALIZATION
-# We apply normalize_sap_date() then cast("date") to ensuring valid formats.
-final_df = df_calculated.select(
-    F.col("je.booking_cd").alias("Booking"),
-    F.col("cs.carrier_cd").alias("CARRIER"),
-    F.col("cs.carrier_name_cd").alias("CARRIER_NAME"),
-    F.col("ll.dlvstatus_cd").alias("DlvStatus"),
-    F.col("ep.etenr").alias("ETENR"),
-    F.col("ep.expectedqtycumulative_cd").cast("decimal(13,3)").alias("ExpectedQtyCumulative"),
-    F.col("f1.f1_vbeln_cd").alias("F1_VBELN"),
-    F.col("je.frontload_cd").alias("FrontLoad"),
-    F.current_timestamp().alias("LAST_CHANGED"),
-    F.col("f2.lastpgidoc_cd").alias("LastPGIDoc"),
-    F.col("md.mard_kinsm").cast("decimal(13,3)").alias("MARD_KINSM"),
-    F.col("md.mard_klabs").cast("decimal(13,3)").alias("MARD_KLABS"),
-    F.col("md.mard_labst").cast("decimal(13,3)").alias("MARD_LABST"),
-    F.col("md.lgort").alias("MARD_LGORT"),
-    F.col("md.matnr").alias("MARD_MATNR"),
-    F.col("md.werks").alias("MARD_WERKS"),
-    F.col("calc_order_status").alias("ORDER_STATUS"),
-    F.col("ll.opendlvdoc_cd").alias("OpenDlvDoc"),
-    F.col("ll.opendlvqty_cd").cast("decimal(13,3)").alias("OpenDlvQty"),
-    
-    # Date Fix: PGIDate
-    normalize_sap_date("ll.pgidate_cd").cast("date").alias("PGIDate"),
-    
-    F.col("f2.pgiqty_cd").cast("decimal(15,3)").alias("PGIQty"),
-    F.col("je.poreceived_cd").alias("POReceived"),
-    F.col("ep.posnr").alias("POSNR"),
-    F.col("ll.qtyshippedttline_cd").cast("decimal(13,3)").alias("QtyShippedTtLine"),
-    F.col("sh.shipto_cd").alias("ShipTo"),
-    F.col("sh.shiptoname_cd").alias("ShipToName"),
-    F.col("ak.auart").alias("VBAK_AUART"),
-    F.col("ak.aufnr").alias("VBAK_AUFNR"),
-    F.col("ak.autlf").alias("VBAK_AUTLF"),
-    F.col("ak.bstnk").alias("VBAK_BSTNK"),
-    
-    # Date Fix: VBAK_ERDAT
-    normalize_sap_date("ak.erdat").cast("date").alias("VBAK_ERDAT"),
-    
-    F.col("ak.ernam").alias("VBAK_ERNAM"),
-    F.col("ak.faksk").alias("VBAK_FAKSK"),
-    F.col("ak.ihrez").alias("VBAK_IHREZ"),
-    F.col("ak.kunnr").alias("VBAK_KUNNR"),
-    F.col("ak.lifsk").alias("VBAK_LIFSK"),
-    F.col("ak.netwr").cast("decimal(15,2)").alias("VBAK_NETWR"),
-    F.col("ak.objnr").alias("VBAK_OBJNR"),
-    F.col("ak.vkorg").alias("VBAK_VKORG"),
-    F.col("ak.vsnmr_v").alias("VBAK_VSNMR_V"),
-    F.col("ak.waerk").alias("VBAK_WAERK"),
-    F.col("ap.abgru").alias("VBAP_ABGRU"),
-    
-    # Date Fix: VBAP_AEDAT
-    normalize_sap_date("ap.aedat").cast("date").alias("VBAP_AEDAT"),
-    
-    F.col("ap.arktx").alias("VBAP_ARKTX"),
-    F.col("ap.charg").alias("VBAP_CHARG"),
-    
-    # Date Fix: VBAP_ERDAT
-    normalize_sap_date("ap.erdat").cast("date").alias("VBAP_ERDAT"),
-    
-    F.col("ap.ernam").alias("VBAP_ERNAM"),
-    F.col("ap.erzet").alias("VBAP_ERZET"),
-    F.col("ap.faksp").alias("VBAP_FAKSP"),
-    F.col("ap.grkor").alias("VBAP_GRKOR"),
-    F.col("ap.kdmat").alias("VBAP_KDMAT"),
-    F.col("ap.kwmeng").cast("decimal(15,3)").alias("VBAP_KWMENG"),
-    F.col("ap.lgort").alias("VBAP_LGORT"),
-    F.col("ap.lprio").alias("VBAP_LPRIO"),
-    F.col("ap.matnr").alias("VBAP_MATNR"),
-    F.col("ap.netpr").cast("decimal(11,2)").alias("VBAP_NETPR"),
-    F.col("ap.posex").alias("VBAP_POSEX"),
-    F.col("ap.prodh").alias("VBAP_PRODH"),
-    F.col("ap.vstel").alias("VBAP_VSTEL"),
-    F.col("ap.werks").alias("VBAP_WERKS"),
-    F.col("ep.vbeln").alias("VBELN"),
-    F.col("ep.bmeng").cast("decimal(13,3)").alias("VBEP_BMENG"),
-    
-    # Date Fix: VBEP_EDATU (Primary Issue)
-    normalize_sap_date("ep.edatu").cast("date").alias("VBEP_EDATU"),
-    
-    # Date Fix: VBEP_H_EDATU
-    normalize_sap_date("h.vbep_h_edatu_cd").cast("date").alias("VBEP_H_EDATU"),
-    
-    F.col("ep.lifsp").alias("VBEP_LIFSP"),
-    
-    # Date Fix: VBEP_MBDAT
-    normalize_sap_date("ep.mbdat").cast("date").alias("VBEP_MBDAT"),
-    
-    F.col("uk.lfgsk").alias("VBUK_LFGSK"),
-    F.col("uk.wbstk").alias("VBUK_WBSTK"),
-    F.col("up.lfsta").alias("VBUP_LFSTA"),
-    F.col("f1.delvd_qty_cd").cast("double").alias("delvd_qty")
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_obpn_nha_dtls (
+  bomitem             STRING,
+  bomqpa              INT,
+  childpn             STRING      NOT NULL,
+  cmpprtno            STRING      NOT NULL,
+  cmpqpa              INT,
+  exploded            STRING,
+  last_modified_on    DATE,
+  level               INT         NOT NULL,
+  matkl               STRING,
+  mstae               STRING,
+  nha                 STRING      NOT NULL,
+  nha_status_inactive STRING
 )
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_obpn_buy_nha_dtls (
+  cmpprtno            STRING,
+  cmpqpa              INT,
+  isprocessed         STRING,
+  last_modified_on    DATE,
+  level               INT,
+  matkl               STRING,
+  mstae               STRING,
+  nha                 STRING,
+  nha_status_inactive STRING
+)
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.omat_dmd_consumption_dtls (
+  cmpprtno                STRING,
+  lamqoh                  INT,
+  last_modified_on        DATE,
+  mfg_12mnths_consumption INT,
+  mfg_3yrs_consumption    INT,
+  mfg_5yrs_consumption    INT,
+  mfg_dmd                 INT,
+  nha                     STRING,
+  open_po_qty             INT,
+  restricted_all_stock    INT,
+  sprs_3yrs_consumption   INT,
+  sprs_5yrs_consumption   INT,
+  sprs_dmd                INT
+)
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_part_dtls (
+  ce           STRING,
+  cmpprtno     STRING,
+  commodity    STRING,
+  critical     STRING,
+  curr_cost    DOUBLE,
+  description  STRING,
+  lead_time    INT,
+  mrp_supplier INT,
+  nha          STRING,
+  po_supp_code STRING,
+  po_supp_name STRING,
+  sbm          STRING,
+  smg_group    STRING,
+  smg_head     STRING,
+  std_cost     DOUBLE,
+  vencode      STRING,
+  venname      STRING
+)
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_obpr_info_dtls (
+  active_co                   STRING,
+  active_co_nha               STRING,
+  active_co_status            STRING,
+  active_co_status_nha        STRING,
+  bu                          STRING,
+  ce                          STRING,
+  co_effected_bu              STRING,
+  co_effected_bu_nha          STRING,
+  critical                    STRING,
+  description                 STRING,
+  deviation_expiry            STRING,
+  deviation_name              STRING,
+  deviation_state             STRING,
+  deviation_exists            STRING,
+  disposition                 STRING,
+  end_items                   STRING,
+  epl_trigger_lead_time       STRING,
+  is_last_time_buy_available  STRING,
+  ltb_available_date          DATE,
+  ltb_decision                STRING,
+  mbu_flag                    STRING,
+  mpn                         STRING,
+  obprno                      STRING NOT NULL,
+  obprtno                     STRING NOT NULL,
+  open_pos                    INT,
+  primary_product_affected    STRING,
+  primary_product_pgpm        STRING,
+  priority                    STRING,
+  product_group               STRING,
+  pr_originator               STRING,
+  pr_planned_completion_date  DATE,
+  pr_submitted_date           DATE,
+  requestor_org               STRING,
+  reviewer                    STRING,
+  review_start_date           DATE,
+  secondary_products_affected STRING,
+  solution_owner              STRING,
+  state                       STRING,
+  status                      STRING,
+  supplier_code               STRING,
+  supplier_date_to_zero       DATE,
+  supplier_name               STRING,
+  vendor_code                 STRING,
+  vendor_name                 STRING
+)
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_makenha_dmdconsumption_dtls (
+  cmpprtno                STRING,
+  last_modified_on        DATE,
+  mfg_12mnths_consumption INT,
+  mfg_5yrs_consumption    INT,
+  mfg_dmd                 INT,
+  nha                     STRING,
+  sprs_5yrs_consumption   INT,
+  sprs_dmd                INT
+)
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_rscxd_dmd_cons (
+  cmpprtno             STRING,
+  lamqoh               INT,
+  last_modified_on     DATE,
+  nha                  STRING,
+  open_po_qty          INT,
+  restricted_all_stock INT,
+  sprs_cons            INT,
+  sprs_dmd             INT
+)
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_rscxd_dtls (
+  ce               STRING,
+  cmpprtno         STRING,
+  cmpqpa           STRING,
+  commodity        STRING,
+  critical         STRING,
+  curr_cost        STRING,
+  dash             STRING,
+  description      STRING,
+  lead_time        INT,
+  matkl            STRING,
+  mstae            STRING,
+  nha              STRING,
+  po_supplier      STRING,
+  po_supplier_code STRING,
+  sbm              STRING,
+  smg_group        STRING,
+  smg_head         STRING,
+  std_cost         STRING,
+  type             STRING,
+  vencode          STRING,
+  venname          STRING
+)
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_odrbom_cons_dtls (
+  cons_date DATE,
+  menge     DECIMAL(13,3) NOT NULL,
+  nha       STRING,
+  odrbom    STRING
+)
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_odrbom_dmd_dtls (
+  dmd1     DECIMAL(13,3),
+  dmd10    DECIMAL(13,3),
+  dmd11    DECIMAL(13,3),
+  dmd12    DECIMAL(13,3),
+  dmd13    DECIMAL(13,3),
+  dmd14    DECIMAL(13,3),
+  dmd15    DECIMAL(13,3),
+  dmd16    DECIMAL(13,3),
+  dmd17    DECIMAL(13,3),
+  dmd18    DECIMAL(13,3),
+  dmd19    DECIMAL(13,3),
+  dmd2     DECIMAL(13,3),
+  dmd20    DECIMAL(13,3),
+  dmd21    DECIMAL(13,3),
+  dmd22    DECIMAL(13,3),
+  dmd23    DECIMAL(13,3),
+  dmd24    DECIMAL(13,3),
+  dmd25    DECIMAL(13,3),
+  dmd26    DECIMAL(13,3),
+  dmd3     DECIMAL(13,3),
+  dmd4     DECIMAL(13,3),
+  dmd5     DECIMAL(13,3),
+  dmd6     DECIMAL(13,3),
+  dmd7     DECIMAL(13,3),
+  dmd8     DECIMAL(13,3),
+  dmd9     DECIMAL(13,3),
+  dmdpd    DECIMAL(13,3),
+  nha      STRING,
+  odrbom   STRING,
+  rowtype  STRING
+)
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_buynha_suppliers_plants (
+  nha                      STRING,
+  omat_selected_plant      STRING,
+  omat_selected_supplier   STRING,
+  omat_selected_suppliercd STRING,
+  suppcd_1050              STRING,
+  suppcd_1060              STRING,
+  suppcd_1090              STRING,
+  suppcd_1900              STRING,
+  suppcd_2000              STRING,
+  suppcd_3120              STRING,
+  suppcd_po1               STRING,
+  suppcd_po2               STRING,
+  suppcd_pr                STRING,
+  suppname_1050            STRING,
+  suppname_1060            STRING,
+  suppname_1090            STRING,
+  suppname_1900            STRING,
+  suppname_2000            STRING,
+  suppname_3120            STRING,
+  suppname_po1             STRING,
+  suppname_po2             STRING,
+  suppname_pr              STRING
+)
+USING DELTA;"
+"CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_log_dtls (
+  executed_on        TIMESTAMP,  -- SECONDDATE
+  obprtno_cnt        INT,
+  obprtno_nha_cnt    INT,
+  obpr_cnt           INT,
+  program_name       STRING
+)
+USING DELTA;"
