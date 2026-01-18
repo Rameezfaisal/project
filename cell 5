@@ -1,37 +1,39 @@
-from datetime import datetime
+---------------------------------------------------------------------------
+AnalysisException                         Traceback (most recent call last)
+Cell In[187], line 36
+     24 df_log_end = spark.createDataFrame(
+     25     [(
+     26         datetime.now(),
+   (...)
+     32     ["executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"]
+     33 )
+     35 # ---- Append both records to Delta log table ----
+---> 36 df_log_start.write.format("delta").mode("append").saveAsTable("eng_test.rpt_omat_log_dtls")
+     37 df_log_end.write.format("delta").mode("append").saveAsTable("eng_test.rpt_omat_log_dtls")
 
-# ---- Calculate counts (SAP OBPRTCnt / NHACnt equivalents) ----
-obprtno_cnt = df_nhamainlist.select("cmpprtno_cd").distinct().count()
-obpr_cnt = df_nhamainlist.select("nha_cd").distinct().count()
-obprtno_nha_cnt = df_nhamainlist.count()   # total CMPPRTNO–NHA pairs
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/readwriter.py:1586, in DataFrameWriter.saveAsTable(self, name, format, mode, partitionBy, **options)
+   1584 if format is not None:
+   1585     self.format(format)
+-> 1586 self._jwrite.saveAsTable(name)
 
-# materialize timestamp once
-ts_now = datetime.now()
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
-# ---- Create start log row (use Python values, not Spark Columns) ----
-df_log_start = spark.createDataFrame(
-    [(
-        ts_now,
-        obprtno_cnt,
-        obprtno_nha_cnt,
-        obpr_cnt,
-        "SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh - Started"
-    )],
-    ["executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"]
-)
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-# ---- Create end log row (new timestamp) ----
-df_log_end = spark.createDataFrame(
-    [(
-        datetime.now(),
-        obprtno_cnt,
-        obprtno_nha_cnt,
-        obpr_cnt,
-        "SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh - End"
-    )],
-    ["executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"]
-)
-
-# ---- Append both records to Delta log table ----
-df_log_start.write.format("delta").mode("append").saveAsTable("eng_test.rpt_omat_log_dtls")
-df_log_end.write.format("delta").mode("append").saveAsTable("eng_test.rpt_omat_log_dtls")
+AnalysisException: [DELTA_FAILED_TO_MERGE_FIELDS] Failed to merge fields 'obprtno_cnt' and 'obprtno_cnt'
