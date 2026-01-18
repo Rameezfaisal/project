@@ -1,39 +1,160 @@
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-from pyspark.sql.types import *
-
-
-
-
-
-# ---------- SOURCE TABLES ----------
-cv_omat_obpn_make_nha_dtls = "lakehouse_prd._sys_bic_prd_gops_omat_cv_omat_obpn_make_nha_dtls"
-cv_omat_obprtno_dtls = "lakehouse_prd._sys_bic_prd_gops_omat_cv_omat_obprtno_dtls"
-cv_mseg = "lakehouse_prd._sys_bic_prd_global_ecc_cv_mseg"
-cv_makt = "lakehouse_prd._sys_bic_prd_global_ecc_cv_makt"
-cv_mkpf = "lakehouse_prd._sys_bic_prd_global_ecc_cv_mkpf"
-cv_mdkp = "lakehouse_prd._sys_bic_prd_global_ecc_cv_mdkp"
-cv_mdtb = "lakehouse_prd._sys_bic_prd_global_ecc_cv_mdtb"
-cv_sql_so_2 = "lakehouse_prd._sys_bic_prd_gops_glis_cv_sql_so_2"
-zt_csbg_spares_deliveries = "lakehouse_prd.alex_custom_zt_csbg_spares_deliveries"
-
-# ---------- TARGET TABLES ----------
-tgt_dmd_cons = "lakehouse_prd.w_omat_omat_makenha_dmd_consumption_dtls"
-tgt_log = "lakehouse_prd.w_omat_omat_log_dtls"
-
-# ---------- CONTROL DATES ----------
-from_date = F.add_months(F.current_date(), -12)
-to_date = F.add_months(F.current_date(), 12)
-
-dt1wk = F.expr("date_add(current_date(), - (dayofweek(current_date()) - 1))")
-dt26wk = F.expr("""
-    date_add(
-        date_add(
-            date_add(current_date(), 182),
-            - (dayofweek(date_add(current_date(), 182)) - 1)
-        ),
-        6
+df_sprs_dmd = (
+    df_nhalist.alias("a")
+    .join(df_so.alias("b"),
+          F.col("a.nha_cd") == F.col("b.matnr_cd"),
+          "inner")
+    .filter(
+        (F.col("b.ordergroup") == "SO") &
+        (F.col("b.orderstatus_cd") != "closed") &
+        (F.col("b.deliveryduedate") >= dt1wk) &
+        (F.col("b.deliveryduedate") <= dt26wk) &
+        F.col("b.ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")
     )
+    .groupBy(F.col("b.matnr_cd"))
+    .agg(
+        F.sum(F.col("b.openqty")).alias("sprs_dmd_cd")
+    )
+)
+
+df_nhalist_sprsdmd = (
+    df_nhalist_mfgdmd.alias("a")
+    .join(df_sprs_dmd.alias("b"),
+          F.col("b.matnr_cd") == F.col("a.nha_cd"),
+          "left")
+    .select(
+        "a.cmpprtno_cd",
+        "a.nha_cd",
+        "a.mfg_5yrs_consumption_cd",
+        "a.mfg_dmd_cd",
+        F.col("b.sprs_dmd_cd")
+    )
+)
+
+df_nhalist_sprsdmd.createOrReplaceTempView("nhalist_sprsdmd_vw")
+
+
+
+
+
+
+
+
+df_sprs_cons = (
+    df_spares.alias("a")
+    .join(df_nhalist.alias("b"),
+          F.col("b.nha_cd") == F.col("a.material_cd"),
+          "inner")
+    .filter(
+        F.col("a.source_doc") != "STO" &
+        F.col("a.order_type").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP") &
+        (F.col("a.actual_gi") > F.date_sub(F.current_date(), 365*5))
+    )
+    .groupBy(F.col("a.material_cd"))
+    .agg(
+        F.sum(F.col("a.qty_shipped")).alias("sprs_5yrs_consumption_cd")
+    )
+    .filter(F.col("sprs_5yrs_consumption_cd") > 0)
+)
+
+df_nhalist_sprscons = (
+    df_nhalist_sprsdmd.alias("a")
+    .join(df_sprs_cons.alias("b"),
+          F.col("b.material_cd") == F.col("a.nha_cd"),
+          "left")
+    .select(
+        "a.cmpprtno_cd",
+        "a.nha_cd",
+        "a.mfg_5yrs_consumption_cd",
+        "a.mfg_dmd_cd",
+        "a.sprs_dmd_cd",
+        F.col("b.sprs_5yrs_consumption_cd")
+    )
+)
+
+df_nhalist_sprscons.createOrReplaceTempView("nhalist_sprscons_vw")
+
+
+
+
+
+
+
+
+
+df_mfg_12m = (
+    df_mseg.alias("b")
+    .join(df_makt.alias("c"), F.col("c.matnr_cd") == F.col("b.matnr_cd"), "inner")
+    .join(df_mkpf.alias("d"), F.col("b.mblnr") == F.col("d.mblnr"), "inner")
+    .join(df_nhalist.alias("a"), F.col("b.matnr_cd") == F.col("a.nha_cd"), "inner")
+    .filter(
+        F.col("b.bwart").isin("261","262") &
+        (F.col("d.bldat") > F.date_sub(F.current_date(), 365)) &
+        (F.col("d.bldat") < F.current_date()) &
+        (F.col("b.cpudt_mkpf") > F.date_sub(F.current_date(), 365))
+    )
+    .groupBy(F.col("b.matnr_cd"))
+    .agg(
+        F.sum(
+            F.when(F.col("b.shkzg_cd") == "s", -1 * F.col("b.menge"))
+             .otherwise(F.col("b.menge"))
+        ).alias("mfg_12mnths_consumption_cd")
+    )
+)
+
+df_final_base = (
+    df_nhalist_sprscons.alias("a")
+    .join(df_mfg_12m.alias("b"),
+          F.col("b.matnr_cd") == F.col("a.nha_cd"),
+          "left")
+    .select(
+        "a.cmpprtno_cd",
+        "a.nha_cd",
+        "a.mfg_5yrs_consumption_cd",
+        "a.mfg_dmd_cd",
+        "a.sprs_dmd_cd",
+        "a.sprs_5yrs_consumption_cd",
+        F.col("b.mfg_12mnths_consumption_cd")
+    )
+    .filter(
+        (F.abs(F.coalesce("mfg_5yrs_consumption_cd", F.lit(0))) +
+         F.abs(F.coalesce("mfg_dmd_cd", F.lit(0))) +
+         F.abs(F.coalesce("sprs_dmd_cd", F.lit(0))) +
+         F.abs(F.coalesce("sprs_5yrs_consumption_cd", F.lit(0)))) > 0
+    )
+)
+
+df_final_base.createOrReplaceTempView("nhalist_final_vw")
+
+
+
+
+
+
+
+
+spark.sql(f"TRUNCATE TABLE {tgt_dmd_cons}")
+
+spark.sql(f"""
+INSERT INTO {tgt_dmd_cons} (
+    cmpprtno,
+    nha,
+    mfg_5yrs_consumption,
+    mfg_dmd,
+    sprs_dmd,
+    sprs_5yrs_consumption,
+    mfg_12mnths_consumption,
+    last_modified_on
+)
+SELECT
+    cmpprtno_cd,
+    nha_cd,
+    mfg_5yrs_consumption_cd,
+    mfg_dmd_cd,
+    sprs_dmd_cd,
+    sprs_5yrs_consumption_cd,
+    mfg_12mnths_consumption_cd,
+    current_date()
+FROM nhalist_final_vw
 """)
 
 
@@ -44,188 +165,18 @@ dt26wk = F.expr("""
 
 
 
-df_obpn = spark.read.format("delta").table(cv_omat_obpn_make_nha_dtls) \
-    .selectExpr(
-        "lower(cmpprtno) as cmpprtno_cd",
-        "lower(nha) as nha_cd"
-    )
+obprt_cnt = df_nhamainlist.select("cmpprtno_cd").distinct().count()
+nha_cnt = df_nhamainlist.select("nha_cd").distinct().count()
 
-df_obprt = spark.read.format("delta").table(cv_omat_obprtno_dtls) \
-    .selectExpr(
-        "lower(obprtno) as obprtno_cd",
-        "upper(obpr_state) as obpr_state_cd"
-    )
-
-df_mseg = spark.read.format("delta").table(cv_mseg) \
-    .selectExpr(
-        "lower(matnr) as matnr_cd",
-        "lower(shkzg) as shkzg_cd",
-        "menge",
-        "bwart",
-        "werks",
-        "cpudt_mkpf",
-        "mblnr"
-    )
-
-df_makt = spark.read.format("delta").table(cv_makt) \
-    .selectExpr("lower(matnr) as matnr_cd")
-
-df_mkpf = spark.read.format("delta").table(cv_mkpf) \
-    .selectExpr(
-        "mblnr",
-        "bldat"
-    )
-
-df_mdkp = spark.read.format("delta").table(cv_mdkp) \
-    .selectExpr(
-        "lower(matnr) as matnr_cd",
-        "plwrk",
-        "dtnum"
-    )
-
-df_mdtb = spark.read.format("delta").table(cv_mdtb) \
-    .selectExpr(
-        "dtnum",
-        "plumi",
-        "delkz",
-        "dat00",
-        "mng01"
-    )
-
-df_so = spark.read.format("delta").table(cv_sql_so_2) \
-    .selectExpr(
-        "lower(part) as matnr_cd",
-        "lower(orderstatus) as orderstatus_cd",
-        "ordergroup",
-        "deliveryduedate",
-        "ordertype",
-        "openqty"
-    )
-
-df_spares = spark.read.format("delta").table(zt_csbg_spares_deliveries) \
-    .selectExpr(
-        "lower(material) as material_cd",
-        "qty_shipped",
-        "source_doc",
-        "order_type",
-        "actual_gi"
-    )
-
-
-
-
-
-
-
-
-df_nhamainlist = (
-    df_obpn.alias("a")
-    .join(df_obprt.alias("b"),
-          F.col("b.obprtno_cd") == F.col("a.cmpprtno_cd"),
-          "inner")
-    .filter(F.col("b.obpr_state_cd").isin("CONFIRMED","IN REVIEW","IN WORK"))
-    .select(
-        F.col("a.cmpprtno_cd"),
-        F.col("a.nha_cd")
-    )
-    .distinct()
+df_log_start = spark.createDataFrame(
+    [("sp_omat_updatedmd_cons_mknha_wklyrefresh - started", 1, obprt_cnt, nha_cnt, F.current_timestamp())],
+    ["message","status","obprt_cnt","nha_cnt","logged_at"]
 )
 
-df_nhamainlist.createOrReplaceTempView("nhamainlist_vw")
-
-
-
-
-
-
-
-
-df_nhalist = df_nhamainlist.select("nha_cd").distinct()
-df_nhalist.createOrReplaceTempView("nhalist_vw")
-
-
-
-
-
-
-
-
-
-df_mfg_5yrs = (
-    df_nhalist.alias("a")
-    .join(df_mseg.alias("b"), F.col("a.nha_cd") == F.col("b.matnr_cd"), "inner")
-    .join(df_makt.alias("c"), F.col("c.matnr_cd") == F.col("b.matnr_cd"), "inner")
-    .join(df_mkpf.alias("d"), F.col("b.mblnr") == F.col("d.mblnr"), "inner")
-    .filter(
-        F.col("b.bwart").isin("261","262") &
-        (F.col("d.bldat") > F.date_sub(F.current_date(), 365*5)) &
-        (F.col("d.bldat") < F.current_date()) &
-        ((F.col("b.werks") < 2001) | (F.col("b.werks") == 3120)) &
-        (F.col("b.cpudt_mkpf") > F.date_sub(F.current_date(), 365*5))
-    )
-    .groupBy(F.col("b.matnr_cd"))
-    .agg(
-        F.sum(
-            F.when(F.col("b.shkzg_cd") == "s", -1 * F.col("b.menge"))
-             .otherwise(F.col("b.menge"))
-        ).alias("mfg_5yrs_consumption_cd")
-    )
+df_log_end = spark.createDataFrame(
+    [("sp_omat_updatedmd_cons_mknha_wklyrefresh - end", 1, obprt_cnt, nha_cnt, F.current_timestamp())],
+    ["message","status","obprt_cnt","nha_cnt","logged_at"]
 )
 
-df_nhalist_mfgcons = (
-    df_nhamainlist.alias("a")
-    .join(df_mfg_5yrs.alias("b"),
-          F.col("b.matnr_cd") == F.col("a.nha_cd"),
-          "left")
-    .select(
-        F.col("a.cmpprtno_cd"),
-        F.col("a.nha_cd"),
-        F.col("b.mfg_5yrs_consumption_cd")
-    )
-)
-
-df_nhalist_mfgcons.createOrReplaceTempView("nhalist_mfgcons_vw")
-
-
-
-
-
-
-
-
-
-
-df_mfg_dmd = (
-    df_nhalist.alias("m")
-    .join(df_mdkp.alias("d"), F.col("m.nha_cd") == F.col("d.matnr_cd"), "inner")
-    .join(df_mdtb.alias("f"), F.col("f.dtnum") == F.col("d.dtnum"), "inner")
-    .filter(
-        F.col("f.plumi").isin("+","-") &
-        ((F.col("d.plwrk") < 2001) | (F.col("d.plwrk") == 3120)) &
-        F.col("f.delkz").isin("AR","SB") &
-        (F.col("f.dat00") >= dt1wk) &
-        (F.col("f.dat00") <= dt26wk)
-    )
-    .groupBy(F.col("d.matnr_cd"))
-    .agg(
-        F.sum(
-            F.when(F.col("f.plumi") == "-", F.col("f.mng01"))
-             .otherwise(-1 * F.col("f.mng01"))
-        ).alias("mfg_dmd_cd")
-    )
-)
-
-df_nhalist_mfgdmd = (
-    df_nhalist_mfgcons.alias("a")
-    .join(df_mfg_dmd.alias("b"),
-          F.col("b.matnr_cd") == F.col("a.nha_cd"),
-          "left")
-    .select(
-        "a.cmpprtno_cd",
-        "a.nha_cd",
-        "a.mfg_5yrs_consumption_cd",
-        F.col("b.mfg_dmd_cd")
-    )
-)
-
-df_nhalist_mfgdmd.createOrReplaceTempView("nhalist_mfgdmd_vw")
+df_log_start.write.format("delta").mode("append").saveAsTable(tgt_log)
+df_log_end.write.format("delta").mode("append").saveAsTable(tgt_log)
