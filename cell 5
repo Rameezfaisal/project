@@ -1,256 +1,37 @@
----------------------------------------------------------------------------
-PySparkTypeError                          Traceback (most recent call last)
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1644, in _infer_type(obj, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1643 try:
--> 1644     return _infer_schema(
-   1645         obj,
-   1646         infer_dict_as_struct=infer_dict_as_struct,
-   1647         infer_array_from_first_element=infer_array_from_first_element,
-   1648     )
-   1649 except TypeError:
+from datetime import datetime
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1684, in _infer_schema(row, names, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1683 else:
--> 1684     raise PySparkTypeError(
-   1685         error_class="CANNOT_INFER_SCHEMA_FOR_TYPE",
-   1686         message_parameters={"data_type": type(row).__name__},
-   1687     )
-   1689 fields = []
+# ---- Calculate counts (SAP OBPRTCnt / NHACnt equivalents) ----
+obprtno_cnt = df_nhamainlist.select("cmpprtno_cd").distinct().count()
+obpr_cnt = df_nhamainlist.select("nha_cd").distinct().count()
+obprtno_nha_cnt = df_nhamainlist.count()   # total CMPPRTNO–NHA pairs
 
-PySparkTypeError: [CANNOT_INFER_SCHEMA_FOR_TYPE] Can not infer schema for type: `set`.
+# materialize timestamp once
+ts_now = datetime.now()
 
-During handling of the above exception, another exception occurred:
+# ---- Create start log row (use Python values, not Spark Columns) ----
+df_log_start = spark.createDataFrame(
+    [(
+        ts_now,
+        obprtno_cnt,
+        obprtno_nha_cnt,
+        obpr_cnt,
+        "SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh - Started"
+    )],
+    ["executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"]
+)
 
-PySparkTypeError                          Traceback (most recent call last)
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1695, in _infer_schema(row, names, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1691 try:
-   1692     fields.append(
-   1693         StructField(
-   1694             k,
--> 1695             _infer_type(
-   1696                 v,
-   1697                 infer_dict_as_struct,
-   1698                 infer_array_from_first_element,
-   1699                 prefer_timestamp_ntz,
-   1700             ),
-   1701             True,
-   1702         )
-   1703     )
-   1704 except TypeError:
+# ---- Create end log row (new timestamp) ----
+df_log_end = spark.createDataFrame(
+    [(
+        datetime.now(),
+        obprtno_cnt,
+        obprtno_nha_cnt,
+        obpr_cnt,
+        "SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh - End"
+    )],
+    ["executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"]
+)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1650, in _infer_type(obj, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1649 except TypeError:
--> 1650     raise PySparkTypeError(
-   1651         error_class="UNSUPPORTED_DATA_TYPE",
-   1652         message_parameters={"data_type": type(obj).__name__},
-   1653     )
-
-PySparkTypeError: [UNSUPPORTED_DATA_TYPE] Unsupported DataType `set`.
-
-During handling of the above exception, another exception occurred:
-
-PySparkTypeError                          Traceback (most recent call last)
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1644, in _infer_type(obj, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1643 try:
--> 1644     return _infer_schema(
-   1645         obj,
-   1646         infer_dict_as_struct=infer_dict_as_struct,
-   1647         infer_array_from_first_element=infer_array_from_first_element,
-   1648     )
-   1649 except TypeError:
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1705, in _infer_schema(row, names, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1704     except TypeError:
--> 1705         raise PySparkTypeError(
-   1706             error_class="CANNOT_INFER_TYPE_FOR_FIELD",
-   1707             message_parameters={"field_name": k},
-   1708         )
-   1709 return StructType(fields)
-
-PySparkTypeError: [CANNOT_INFER_TYPE_FOR_FIELD] Unable to infer the type of the field `_field_names`.
-
-During handling of the above exception, another exception occurred:
-
-PySparkTypeError                          Traceback (most recent call last)
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1695, in _infer_schema(row, names, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1691 try:
-   1692     fields.append(
-   1693         StructField(
-   1694             k,
--> 1695             _infer_type(
-   1696                 v,
-   1697                 infer_dict_as_struct,
-   1698                 infer_array_from_first_element,
-   1699                 prefer_timestamp_ntz,
-   1700             ),
-   1701             True,
-   1702         )
-   1703     )
-   1704 except TypeError:
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1650, in _infer_type(obj, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1649 except TypeError:
--> 1650     raise PySparkTypeError(
-   1651         error_class="UNSUPPORTED_DATA_TYPE",
-   1652         message_parameters={"data_type": type(obj).__name__},
-   1653     )
-
-PySparkTypeError: [UNSUPPORTED_DATA_TYPE] Unsupported DataType `JavaObject`.
-
-During handling of the above exception, another exception occurred:
-
-PySparkTypeError                          Traceback (most recent call last)
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1644, in _infer_type(obj, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1643 try:
--> 1644     return _infer_schema(
-   1645         obj,
-   1646         infer_dict_as_struct=infer_dict_as_struct,
-   1647         infer_array_from_first_element=infer_array_from_first_element,
-   1648     )
-   1649 except TypeError:
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1705, in _infer_schema(row, names, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1704     except TypeError:
--> 1705         raise PySparkTypeError(
-   1706             error_class="CANNOT_INFER_TYPE_FOR_FIELD",
-   1707             message_parameters={"field_name": k},
-   1708         )
-   1709 return StructType(fields)
-
-PySparkTypeError: [CANNOT_INFER_TYPE_FOR_FIELD] Unable to infer the type of the field `_jc`.
-
-During handling of the above exception, another exception occurred:
-
-PySparkTypeError                          Traceback (most recent call last)
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1695, in _infer_schema(row, names, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1691 try:
-   1692     fields.append(
-   1693         StructField(
-   1694             k,
--> 1695             _infer_type(
-   1696                 v,
-   1697                 infer_dict_as_struct,
-   1698                 infer_array_from_first_element,
-   1699                 prefer_timestamp_ntz,
-   1700             ),
-   1701             True,
-   1702         )
-   1703     )
-   1704 except TypeError:
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1650, in _infer_type(obj, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1649 except TypeError:
--> 1650     raise PySparkTypeError(
-   1651         error_class="UNSUPPORTED_DATA_TYPE",
-   1652         message_parameters={"data_type": type(obj).__name__},
-   1653     )
-
-PySparkTypeError: [UNSUPPORTED_DATA_TYPE] Unsupported DataType `Column`.
-
-During handling of the above exception, another exception occurred:
-
-PySparkTypeError                          Traceback (most recent call last)
-Cell In[184], line 7
-      4 obprtno_nha_cnt = df_nhamainlist.count()   # total CMPPRTNO–NHA pairs
-      6 # ---- Create start log row ----
-----> 7 df_log_start = spark.createDataFrame(
-      8     [(
-      9         F.current_timestamp(),
-     10         obprtno_cnt,
-     11         obprtno_nha_cnt,
-     12         obpr_cnt,
-     13         "SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh - Started"
-     14     )],
-     15     ["executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"]
-     16 )
-     18 # ---- Create end log row ----
-     19 df_log_end = spark.createDataFrame(
-     20     [(
-     21         F.current_timestamp(),
-   (...)
-     27     ["executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"]
-     28 )
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1443, in SparkSession.createDataFrame(self, data, schema, samplingRatio, verifySchema)
-   1438 if has_pandas and isinstance(data, pd.DataFrame):
-   1439     # Create a DataFrame from pandas DataFrame.
-   1440     return super(SparkSession, self).createDataFrame(  # type: ignore[call-overload]
-   1441         data, schema, samplingRatio, verifySchema
-   1442     )
--> 1443 return self._create_dataframe(
-   1444     data, schema, samplingRatio, verifySchema  # type: ignore[arg-type]
-   1445 )
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1485, in SparkSession._create_dataframe(self, data, schema, samplingRatio, verifySchema)
-   1483     rdd, struct = self._createFromRDD(data.map(prepare), schema, samplingRatio)
-   1484 else:
--> 1485     rdd, struct = self._createFromLocal(map(prepare, data), schema)
-   1486 assert self._jvm is not None
-   1487 jrdd = self._jvm.SerDeUtil.toJavaArray(rdd._to_java_object_rdd())
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:1093, in SparkSession._createFromLocal(self, data, schema)
-   1090     data = list(data)
-   1092 if schema is None or isinstance(schema, (list, tuple)):
--> 1093     struct = self._inferSchemaFromList(data, names=schema)
-   1094     converter = _create_converter(struct)
-   1095     tupled_data: Iterable[Tuple] = map(converter, data)
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:955, in SparkSession._inferSchemaFromList(self, data, names)
-    953 infer_array_from_first_element = self._jconf.legacyInferArrayTypeFromFirstElement()
-    954 prefer_timestamp_ntz = is_timestamp_ntz_preferred()
---> 955 schema = reduce(
-    956     _merge_type,
-    957     (
-    958         _infer_schema(
-    959             row,
-    960             names,
-    961             infer_dict_as_struct=infer_dict_as_struct,
-    962             infer_array_from_first_element=infer_array_from_first_element,
-    963             prefer_timestamp_ntz=prefer_timestamp_ntz,
-    964         )
-    965         for row in data
-    966     ),
-    967 )
-    968 if _has_nulltype(schema):
-    969     raise PySparkValueError(
-    970         error_class="CANNOT_DETERMINE_TYPE",
-    971         message_parameters={},
-    972     )
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py:958, in <genexpr>(.0)
-    953 infer_array_from_first_element = self._jconf.legacyInferArrayTypeFromFirstElement()
-    954 prefer_timestamp_ntz = is_timestamp_ntz_preferred()
-    955 schema = reduce(
-    956     _merge_type,
-    957     (
---> 958         _infer_schema(
-    959             row,
-    960             names,
-    961             infer_dict_as_struct=infer_dict_as_struct,
-    962             infer_array_from_first_element=infer_array_from_first_element,
-    963             prefer_timestamp_ntz=prefer_timestamp_ntz,
-    964         )
-    965         for row in data
-    966     ),
-    967 )
-    968 if _has_nulltype(schema):
-    969     raise PySparkValueError(
-    970         error_class="CANNOT_DETERMINE_TYPE",
-    971         message_parameters={},
-    972     )
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/types.py:1705, in _infer_schema(row, names, infer_dict_as_struct, infer_array_from_first_element, prefer_timestamp_ntz)
-   1692         fields.append(
-   1693             StructField(
-   1694                 k,
-   (...)
-   1702             )
-   1703         )
-   1704     except TypeError:
--> 1705         raise PySparkTypeError(
-   1706             error_class="CANNOT_INFER_TYPE_FOR_FIELD",
-   1707             message_parameters={"field_name": k},
-   1708         )
-   1709 return StructType(fields)
-
-PySparkTypeError: [CANNOT_INFER_TYPE_FOR_FIELD] Unable to infer the type of the field `executed_on`.
+# ---- Append both records to Delta log table ----
+df_log_start.write.format("delta").mode("append").saveAsTable("eng_test.rpt_omat_log_dtls")
+df_log_end.write.format("delta").mode("append").saveAsTable("eng_test.rpt_omat_log_dtls")
