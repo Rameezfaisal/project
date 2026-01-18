@@ -1,182 +1,76 @@
-df_sprs_dmd = (
-    df_nhalist.alias("a")
-    .join(df_so.alias("b"),
-          F.col("a.nha_cd") == F.col("b.matnr_cd"),
-          "inner")
-    .filter(
-        (F.col("b.ordergroup") == "SO") &
-        (F.col("b.orderstatus_cd") != "closed") &
-        (F.col("b.deliveryduedate") >= dt1wk) &
-        (F.col("b.deliveryduedate") <= dt26wk) &
-        F.col("b.ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")
-    )
-    .groupBy(F.col("b.matnr_cd"))
-    .agg(
-        F.sum(F.col("b.openqty")).alias("sprs_dmd_cd")
-    )
-)
+---------------------------------------------------------------------------
+Py4JError                                 Traceback (most recent call last)
+Cell In[85], line 7
+      1 df_sprs_cons = (
+      2     df_spares.alias("a")
+      3     .join(df_nhalist.alias("b"),
+      4           F.col("b.nha_cd") == F.col("a.material_cd"),
+      5           "inner")
+      6     .filter(
+----> 7         F.col("a.source_doc") != "STO" &
+      8         F.col("a.order_type").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP") &
+      9         (F.col("a.actual_gi") > F.date_sub(F.current_date(), 365*5))
+     10     )
+     11     .groupBy(F.col("a.material_cd"))
+     12     .agg(
+     13         F.sum(F.col("a.qty_shipped")).alias("sprs_5yrs_consumption_cd")
+     14     )
+     15     .filter(F.col("sprs_5yrs_consumption_cd") > 0)
+     16 )
+     18 df_nhalist_sprscons = (
+     19     df_nhalist_sprsdmd.alias("a")
+     20     .join(df_sprs_cons.alias("b"),
+   (...)
+     30     )
+     31 )
+     33 df_nhalist_sprscons.createOrReplaceTempView("nhalist_sprscons_vw")
 
-df_nhalist_sprsdmd = (
-    df_nhalist_mfgdmd.alias("a")
-    .join(df_sprs_dmd.alias("b"),
-          F.col("b.matnr_cd") == F.col("a.nha_cd"),
-          "left")
-    .select(
-        "a.cmpprtno_cd",
-        "a.nha_cd",
-        "a.mfg_5yrs_consumption_cd",
-        "a.mfg_dmd_cd",
-        F.col("b.sprs_dmd_cd")
-    )
-)
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/column.py:163, in _bin_op.<locals>._(self, other)
+    158 def _(
+    159     self: "Column",
+    160     other: Union["Column", "LiteralType", "DecimalLiteral", "DateTimeLiteral"],
+    161 ) -> "Column":
+    162     jc = other._jc if isinstance(other, Column) else other
+--> 163     njc = getattr(self._jc, name)(jc)
+    164     return Column(njc)
 
-df_nhalist_sprsdmd.createOrReplaceTempView("nhalist_sprsdmd_vw")
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:179, in capture_sql_exception.<locals>.deco(*a, **kw)
+    177 def deco(*a: Any, **kw: Any) -> Any:
+    178     try:
+--> 179         return f(*a, **kw)
+    180     except Py4JJavaError as e:
+    181         converted = convert_exception(e.java_exception)
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/protocol.py:330, in get_return_value(answer, gateway_client, target_id, name)
+    326         raise Py4JJavaError(
+    327             "An error occurred while calling {0}{1}{2}.\n".
+    328             format(target_id, ".", name), value)
+    329     else:
+--> 330         raise Py4JError(
+    331             "An error occurred while calling {0}{1}{2}. Trace:\n{3}\n".
+    332             format(target_id, ".", name, value))
+    333 else:
+    334     raise Py4JError(
+    335         "An error occurred while calling {0}{1}{2}".
+    336         format(target_id, ".", name))
 
-
-
-
-
-
-df_sprs_cons = (
-    df_spares.alias("a")
-    .join(df_nhalist.alias("b"),
-          F.col("b.nha_cd") == F.col("a.material_cd"),
-          "inner")
-    .filter(
-        F.col("a.source_doc") != "STO" &
-        F.col("a.order_type").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP") &
-        (F.col("a.actual_gi") > F.date_sub(F.current_date(), 365*5))
-    )
-    .groupBy(F.col("a.material_cd"))
-    .agg(
-        F.sum(F.col("a.qty_shipped")).alias("sprs_5yrs_consumption_cd")
-    )
-    .filter(F.col("sprs_5yrs_consumption_cd") > 0)
-)
-
-df_nhalist_sprscons = (
-    df_nhalist_sprsdmd.alias("a")
-    .join(df_sprs_cons.alias("b"),
-          F.col("b.material_cd") == F.col("a.nha_cd"),
-          "left")
-    .select(
-        "a.cmpprtno_cd",
-        "a.nha_cd",
-        "a.mfg_5yrs_consumption_cd",
-        "a.mfg_dmd_cd",
-        "a.sprs_dmd_cd",
-        F.col("b.sprs_5yrs_consumption_cd")
-    )
-)
-
-df_nhalist_sprscons.createOrReplaceTempView("nhalist_sprscons_vw")
-
-
-
-
-
-
-
-
-
-df_mfg_12m = (
-    df_mseg.alias("b")
-    .join(df_makt.alias("c"), F.col("c.matnr_cd") == F.col("b.matnr_cd"), "inner")
-    .join(df_mkpf.alias("d"), F.col("b.mblnr") == F.col("d.mblnr"), "inner")
-    .join(df_nhalist.alias("a"), F.col("b.matnr_cd") == F.col("a.nha_cd"), "inner")
-    .filter(
-        F.col("b.bwart").isin("261","262") &
-        (F.col("d.bldat") > F.date_sub(F.current_date(), 365)) &
-        (F.col("d.bldat") < F.current_date()) &
-        (F.col("b.cpudt_mkpf") > F.date_sub(F.current_date(), 365))
-    )
-    .groupBy(F.col("b.matnr_cd"))
-    .agg(
-        F.sum(
-            F.when(F.col("b.shkzg_cd") == "s", -1 * F.col("b.menge"))
-             .otherwise(F.col("b.menge"))
-        ).alias("mfg_12mnths_consumption_cd")
-    )
-)
-
-df_final_base = (
-    df_nhalist_sprscons.alias("a")
-    .join(df_mfg_12m.alias("b"),
-          F.col("b.matnr_cd") == F.col("a.nha_cd"),
-          "left")
-    .select(
-        "a.cmpprtno_cd",
-        "a.nha_cd",
-        "a.mfg_5yrs_consumption_cd",
-        "a.mfg_dmd_cd",
-        "a.sprs_dmd_cd",
-        "a.sprs_5yrs_consumption_cd",
-        F.col("b.mfg_12mnths_consumption_cd")
-    )
-    .filter(
-        (F.abs(F.coalesce("mfg_5yrs_consumption_cd", F.lit(0))) +
-         F.abs(F.coalesce("mfg_dmd_cd", F.lit(0))) +
-         F.abs(F.coalesce("sprs_dmd_cd", F.lit(0))) +
-         F.abs(F.coalesce("sprs_5yrs_consumption_cd", F.lit(0)))) > 0
-    )
-)
-
-df_final_base.createOrReplaceTempView("nhalist_final_vw")
-
-
-
-
-
-
-
-
-spark.sql(f"TRUNCATE TABLE {tgt_dmd_cons}")
-
-spark.sql(f"""
-INSERT INTO {tgt_dmd_cons} (
-    cmpprtno,
-    nha,
-    mfg_5yrs_consumption,
-    mfg_dmd,
-    sprs_dmd,
-    sprs_5yrs_consumption,
-    mfg_12mnths_consumption,
-    last_modified_on
-)
-SELECT
-    cmpprtno_cd,
-    nha_cd,
-    mfg_5yrs_consumption_cd,
-    mfg_dmd_cd,
-    sprs_dmd_cd,
-    sprs_5yrs_consumption_cd,
-    mfg_12mnths_consumption_cd,
-    current_date()
-FROM nhalist_final_vw
-""")
-
-
-
-
-
-
-
-
-
-obprt_cnt = df_nhamainlist.select("cmpprtno_cd").distinct().count()
-nha_cnt = df_nhamainlist.select("nha_cd").distinct().count()
-
-df_log_start = spark.createDataFrame(
-    [("sp_omat_updatedmd_cons_mknha_wklyrefresh - started", 1, obprt_cnt, nha_cnt, F.current_timestamp())],
-    ["message","status","obprt_cnt","nha_cnt","logged_at"]
-)
-
-df_log_end = spark.createDataFrame(
-    [("sp_omat_updatedmd_cons_mknha_wklyrefresh - end", 1, obprt_cnt, nha_cnt, F.current_timestamp())],
-    ["message","status","obprt_cnt","nha_cnt","logged_at"]
-)
-
-df_log_start.write.format("delta").mode("append").saveAsTable(tgt_log)
-df_log_end.write.format("delta").mode("append").saveAsTable(tgt_log)
+Py4JError: An error occurred while calling o8101.and. Trace:
+py4j.Py4JException: Method and([class java.lang.String]) does not exist
+	at py4j.reflection.ReflectionEngine.getMethod(ReflectionEngine.java:321)
+	at py4j.reflection.ReflectionEngine.getMethod(ReflectionEngine.java:329)
+	at py4j.Gateway.invoke(Gateway.java:274)
+	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+	at py4j.GatewayConnection.run(GatewayConnection.java:238)
+	at java.base/java.lang.Thread.run(Thread.java:829)
