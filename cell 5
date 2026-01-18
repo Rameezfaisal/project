@@ -1,76 +1,18 @@
-Cell 4 — NHAMAINLIST (Core population of interest)
-Business meaning:
-This cell identifies “Make NHA parts that are currently active in OB PR”.
-
-
-
-
-
-
-Cell 5 — NHALIST
-Business meaning:
-Extracts the unique list of NHA materials from NHAMAINLIST.
-This is the master NHA population on which:
-Manufacturing consumption
-Manufacturing demand
-Spares demand
-Spares consumption
-will be calculated.
-
-
-
-
-Cell 6 — Manufacturing 5 Years Consumption (df_mfg_5yrs)
-Business intent (as per SAP logic):
-Compute total manufacturing consumption of each NHA over the last 5 years, considering:
-Goods issues/receipts (261/262)
-Only relevant plants (<2001 or 3120)
-Adjusted for debit/credit (SHKZG logic)
-
-
-
-
-
-
-Cell 7 — Manufacturing Weekly Demand (26 Weeks)
-Business meaning:
-Calculates planned manufacturing demand for each NHA over the next 26 weeks, based on:
-MDKP + MDTB planning data
-Only relevant plants
-Only relevant demand categories (AR, SB)
-Only within the 26-week window (DT1WK to DT26WK)
-This is your forward-looking manufacturing demand signal.
-
-
-
-
-
-
-Cell 8 — Spares Weekly Demand (26 Weeks)
-Business meaning:
-Calculates open spares sales order demand for each NHA over the next 26 weeks, considering:
-Only Sales Orders (OrderGroup = SO)
-Excluding closed orders
-Only relevant order types (TA, ZCON, ZUP, etc.)
-Only deliveries due within the 26-week window
-This is your forward-looking spares demand signal.
-
-
-
-
-
-
-
-Cell 9 — Spares 5 Years Consumption (Fixed)
+Cell 10 — Manufacturing 12 Months Consumption + Final Candidate Dataset
 What this cell does (business meaning)
-This step answers:
-“How much of each NHA was actually consumed as spare parts in the last 5 years?”
-It uses actual goods issue from ZT_CSBG_SPARES_DELIVERIES, keeping only:
-Relevant order types (TA, ZCON, ZUP, etc.)
-Non-STO deliveries
-Shipments in the last 5 years
-Positive shipped quantities
-This is your historical spares consumption signal.
+This cell does two things:
+Part A — Calculate recent (last 12 months) manufacturing consumption
+It answers:
+“For each NHA, how much was consumed in manufacturing in the last 12 months?”
+It uses the same movement logic as your 5-year consumption (261/262, SHKZG sign handling), but only for the last 12 months. This gives you a recent trend signal rather than long-term history.
+Part B — Build the final working dataset (SAP equivalent of NHALIST_MFG12MNTHSCONS)
+Then it keeps only those NHAs where at least one of these is non-zero:
+5-year manufacturing consumption
+26-week manufacturing demand
+26-week spares demand
+5-year spares consumption
+Business meaning of this filter:
+“Keep only NHAs that actually show some meaningful activity or demand.”
 
 
 
@@ -78,28 +20,30 @@ This is your historical spares consumption signal.
 
 
 
-
-df_sprs_cons = (
-    df_spares.alias("a")
-    .join(df_nhalist.alias("b"),
-          F.col("b.nha_cd") == F.col("a.material_cd"),
-          "inner")
+df_mfg_12m = (
+    df_mseg.alias("b")
+    .join(df_makt.alias("c"), F.col("c.matnr_cd") == F.col("b.matnr_cd"), "inner")
+    .join(df_mkpf.alias("d"), F.col("b.mblnr") == F.col("d.mblnr"), "inner")
+    .join(df_nhalist.alias("a"), F.col("b.matnr_cd") == F.col("a.nha_cd"), "inner")
     .filter(
-        (F.col("a.source_doc") != "STO") &
-        (F.col("a.order_type").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")) &
-        (F.col("a.actual_gi") > F.date_sub(F.current_date(), 365*5))
+        F.col("b.bwart").isin("261","262") &
+        (F.col("d.bldat") > F.date_sub(F.current_date(), 365)) &
+        (F.col("d.bldat") < F.current_date()) &
+        (F.col("b.cpudt_mkpf") > F.date_sub(F.current_date(), 365))
     )
-    .groupBy(F.col("a.material_cd"))
+    .groupBy(F.col("b.matnr_cd"))
     .agg(
-        F.sum(F.col("a.qty_shipped")).alias("sprs_5yrs_consumption_cd")
+        F.sum(
+            F.when(F.col("b.shkzg_cd") == "s", -1 * F.col("b.menge"))
+             .otherwise(F.col("b.menge"))
+        ).alias("mfg_12mnths_consumption_cd")
     )
-    .filter(F.col("sprs_5yrs_consumption_cd") > 0)
 )
 
-df_nhalist_sprscons = (
-    df_nhalist_sprsdmd.alias("a")
-    .join(df_sprs_cons.alias("b"),
-          F.col("b.material_cd") == F.col("a.nha_cd"),
+df_final_base = (
+    df_nhalist_sprscons.alias("a")
+    .join(df_mfg_12m.alias("b"),
+          F.col("b.matnr_cd") == F.col("a.nha_cd"),
           "left")
     .select(
         "a.cmpprtno_cd",
@@ -107,11 +51,15 @@ df_nhalist_sprscons = (
         "a.mfg_5yrs_consumption_cd",
         "a.mfg_dmd_cd",
         "a.sprs_dmd_cd",
-        F.col("b.sprs_5yrs_consumption_cd")
+        "a.sprs_5yrs_consumption_cd",
+        F.col("b.mfg_12mnths_consumption_cd")
+    )
+    .filter(
+        (F.abs(F.coalesce("mfg_5yrs_consumption_cd", F.lit(0))) +
+         F.abs(F.coalesce("mfg_dmd_cd", F.lit(0))) +
+         F.abs(F.coalesce("sprs_dmd_cd", F.lit(0))) +
+         F.abs(F.coalesce("sprs_5yrs_consumption_cd", F.lit(0)))) > 0
     )
 )
 
-df_nhalist_sprscons.createOrReplaceTempView("nhalist_sprscons_vw")
-
-
-
+df_final_base.createOrReplaceTempView("nhalist_final_vw")
