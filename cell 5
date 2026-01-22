@@ -1,38 +1,13 @@
-# ================================
-# Source CVs (SAP HANA -> Fabric)
-# ================================
-
-src_ekpo           = "prd_global_ecc.cv_ekpo"
-src_makt           = "prd_global_ecc.cv_makt"
-src_marc           = "prd_global_ecc.cv_marc"
-src_mard           = "prd_global_ecc.cv_mard"
-src_mbew           = "prd_global_ecc.cv_mbew"
-src_mkpf           = "prd_global_ecc.cv_mkpf"
-src_mseg           = "prd_global_ecc.cv_mseg"
-src_forecast       = "prd_global_ecc.cv_zmmforecast"
-src_po_hstry       = "prd_global_ecc.cv_zpo_hstry"
-
-src_buy_nha        = "prd_gops_omat.cv_omat_obpn_buy_nha_dtls"
-src_odrbom_cons    = "prd_gops_omat.cv_omat_odrbom_cons_dtls"
-src_odrbom_dmd     = "prd_gops_omat.cv_omat_odrbom_dmd_dtls"
+🟦 Cell 6 – Build & Insert Order-BOM Demand Details
 
 
-# ================================
-# Target Tables (Delta – Fabric)
-# ================================
 
-tgt_odrbom_dmd_dtls   = "w_omat.omat_odrbom_dmd_dtls"
-tgt_odrbom_cons_dtls  = "w_omat.omat_odrbom_cons_dtls"
-tgt_final             = "w_omat.omat_dmd_consumption_dtls"
-
-
-# ================================
-# Control Parameters
-# ================================
-
-plant_cd        = "COMB"
-rowtype_cd      = "6"
-five_year_days  = 365 * 5
+This step derives manufacturing demand at Order-BOM level for:
+Only 571-series NHAs
+Only manufacturing demand (ROWTYPE = 6)
+Only valid standard production materials
+In business terms:
+Forecast demand is mapped from NHA → Order BOM
 
 
 
@@ -40,53 +15,56 @@ five_year_days  = 365 * 5
 
 
 
+# Build demand detail dataset (SAP OMAT_ODRBOM_DMD_DTLS)
 
-# ---------- SAP ECC CVs ----------
-ekpo_df        = spark.read.table(src_ekpo)
-makt_df        = spark.read.table(src_makt)
-marc_df        = spark.read.table(src_marc)
-mard_df        = spark.read.table(src_mard)
-mbew_df        = spark.read.table(src_mbew)
-mkpf_df        = spark.read.table(src_mkpf)
-mseg_df        = spark.read.table(src_mseg)
-forecast_df    = spark.read.table(src_forecast)
-po_hstry_df    = spark.read.table(src_po_hstry)
-
-# ---------- OMAT CVs ----------
-buy_nha_df     = spark.read.table(src_buy_nha)
-odrbom_cons_df = spark.read.table(src_odrbom_cons)
-odrbom_dmd_df  = spark.read.table(src_odrbom_dmd)
-
-
-
-
-
-
-
-Cell 4 – Build NHALIST2 (Identify 571-Series NHA Buy Parts)
-
-
-
-nhalist2_df = (
-    buy_nha_df
-    .filter(F.col("nha").like("571%"))
+odrbom_dmd_df = (
+    nhalist2_df.alias("a")
+    .join(
+        forecast_df.alias("b"),
+        F.substring(F.col("b.matnr"), 1, 11) == F.substring(F.col("a.nha"), 1, 11),
+        "inner"
+    )
+    .join(
+        marc_df.alias("c"),
+        F.col("b.matnr") == F.col("c.matnr"),
+        "inner"
+    )
+    .filter(
+        (F.col("b.rowtype") == rowtype_cd) &
+        (F.col("b.werks") == plant_cd) &
+        (F.col("c.stdpd").isNotNull()) &
+        (F.trim(F.col("c.stdpd")) != "")
+    )
     .select(
-        F.col("cmpprtno").alias("cmpprtno"),
-        F.col("nha").alias("nha")
+        F.col("a.nha").alias("nha"),
+        F.col("b.matnr").alias("odrbom"),
+        F.col("c.stdpd").alias("stdpd"),
+        F.col("b.rowtype").alias("rowtype"),
+        F.col("b.dmdpd").alias("dmdpd"),
+        *[F.col(f"b.dmd{i}").alias(f"dmd{i}") for i in range(1, 27)]
     )
     .distinct()
 )
 
-# Register as temp view to mirror SAP temp table behavior
-nhalist2_df.createOrReplaceTempView("nhalist2")
 
 
 
-🟦 Cell 5 – Clear Target Detail Tables (Reset Before Reload)
 
 
-spark.sql(f"DELETE FROM {tgt_odrbom_cons_dtls}")
-spark.sql(f"DELETE FROM {tgt_odrbom_dmd_dtls}")
+
+
+(
+    odrbom_dmd_df
+    .select(
+        "nha","odrbom","stdpd","rowtype",
+        "dmdpd",
+        *[f"dmd{i}" for i in range(1,27)]
+    )
+    .write
+    .mode("append")
+    .saveAsTable(tgt_odrbom_dmd_dtls)
+)
+
 
 
 
