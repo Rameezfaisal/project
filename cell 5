@@ -1,34 +1,86 @@
-# Build OMAT Order-BOM Demand Details (schema-aligned)
+🟦 Cell 7 – Build NEWLIST (Order BOM ↔ NHA Mapping)
 
-odrbom_dmd_df = (
-    nhalist2_df.alias("a")
+
+This step establishes the core relationship between Order BOMs and NHAs that:
+Drives consumption calculations
+Drives QOH and PO quantity rollups
+Acts as the bridge dataset for all downstream joins
+In business terms:
+“For every NHA in scope, identify all contributing Order BOM materials.”
+
+
+
+
+newlist_df = (
+    spark.read.table("eng_test.rpt_omat_odrbom_dmd_dtls")
+    .select(
+        F.col("odrbom").alias("odrbom"),
+        F.col("nha").alias("nha")
+    )
+    .distinct()
+)
+
+# Register as temp view to mirror SAP temp table
+newlist_df.createOrReplaceTempView("newlist")
+
+
+
+
+
+
+
+
+
+🟦 Cell 8 – Build & Insert Order-BOM Consumption Details (261 / 262)
+
+
+This step calculates actual material consumption for Order BOMs:
+Uses goods issue / reversal movements (261 / 262)
+Applies sign correction based on debit/credit (SHKZG)
+Restricts data to last 5 years
+Ties consumption back to NHA via Order BOM
+In business terms:
+“How much material was actually consumed for manufacturing over the last 5 years?”
+
+
+
+
+
+
+
+odrbom_cons_df = (
+    newlist_df.alias("a")
     .join(
-        forecast_df.alias("b"),
-        F.substring(F.col("b.matnr"), 1, 11) == F.substring(F.col("a.nha"), 1, 11),
+        mseg_df.alias("b"),
+        F.col("b.matnr") == F.col("a.odrbom"),
         "inner"
     )
     .join(
-        marc_df.alias("c"),
-        F.col("b.matnr") == F.col("c.matnr"),
+        makt_df.alias("c"),
+        F.col("c.matnr") == F.col("b.matnr"),
+        "inner"
+    )
+    .join(
+        mkpf_df.alias("d"),
+        F.col("b.mblnr") == F.col("d.mblnr"),
         "inner"
     )
     .filter(
-        (F.col("b.rowtype") == rowtype_cd) &
-        (F.col("b.werks") == plant_cd) &
-        (F.col("c.stdpd").isNotNull()) &
-        (F.trim(F.col("c.stdpd")) != "")
+        F.col("b.bwart").isin("261", "262")
+        & (F.col("d.bldat") > F.date_add(F.current_date(), -five_year_days))
+        & (F.col("d.bldat") < F.current_date())
+        & (F.col("b.cpudt_mkpf") > F.date_add(F.current_date(), -five_year_days))
     )
     .select(
-        # ---- EXACT TARGET SCHEMA ----
+        F.col("d.bldat").alias("cons_date"),
+        F.when(F.col("b.shkzg") == "S", -1 * F.col("b.menge"))
+         .otherwise(F.col("b.menge"))
+         .cast("decimal(13,3)")
+         .alias("menge"),
         F.col("a.nha").alias("nha"),
-        F.col("b.matnr").alias("odrbom"),
-        F.col("b.rowtype").alias("rowtype"),
-        F.col("b.dmdpd").cast("decimal(13,3)").alias("dmdpd"),
-        *[
-            F.col(f"b.dmd{i}").cast("decimal(13,3)").alias(f"dmd{i}")
-            for i in range(1, 27)
-        ]
+        F.col("a.odrbom").alias("odrbom")
     )
+    .filter(F.col("menge").isNotNull())   # Delta NOT NULL safety
     .distinct()
 )
 
@@ -37,17 +89,12 @@ odrbom_dmd_df = (
 
 
 (
-    odrbom_dmd_df
-    .select(
-        "dmd1","dmd10","dmd11","dmd12","dmd13","dmd14","dmd15","dmd16","dmd17","dmd18","dmd19",
-        "dmd2","dmd20","dmd21","dmd22","dmd23","dmd24","dmd25","dmd26",
-        "dmd3","dmd4","dmd5","dmd6","dmd7","dmd8","dmd9",
-        "dmdpd",
-        "nha",
-        "odrbom",
-        "rowtype"
-    )
+    odrbom_cons_df
+    .select("cons_date", "menge", "nha", "odrbom")
     .write
     .mode("append")
-    .saveAsTable("eng_test.rpt_omat_odrbom_dmd_dtls")
+    .saveAsTable("eng_test.rpt_omat_odrbom_cons_dtls")
 )
+
+
+
