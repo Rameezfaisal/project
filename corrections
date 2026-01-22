@@ -1,62 +1,13 @@
-🟦 Cell 14 – Calculate Open Purchase Order Quantity per NHA
+🟦 Cell 16 – MERGE Final Demand & Consumption into Target Table
 
-This step calculates open purchase order quantity per NHA:
-Measures incoming supply not yet received
-Excludes:
-Inactive / deleted / completed POs
-Stock transfers, subcontracting, special item categories
-Artificial year-end due dates (04-01, 12-31)
-Rolled up from Order BOM → NHA
+
+This cell accumulates results into the final reporting table:
+If a Buy Part + NHA already exists
+→ add new demand, consumption, stock, and PO quantities
+If it does not exist
+→ insert a new row
 In business terms:
-“What quantity is still expected to arrive from suppliers for each NHA?”
-
-
-
-
-
-poqty_df = (
-    po_hstry_df.alias("a")
-    .join(
-        ekpo_df.alias("b"),
-        (F.col("a.ebeln") == F.col("b.ebeln")) &
-        (F.col("a.ebelp") == F.col("b.ebelp")),
-        "inner"
-    )
-    .join(
-        newlist_df.alias("c"),
-        F.col("a.matnr") == F.col("c.odrbom"),
-        "inner"
-    )
-    .filter(
-        (F.substring(F.col("a.due_dt"), -5, 5) != "04-01") &
-        (F.substring(F.col("a.due_dt"), -5, 5) != "12-31") &
-        (F.col("a.status") != "INACT") &
-        (F.trim(F.col("a.matnr")) != "") &
-        (F.trim(F.col("a.loekz")) == "") &
-        (F.col("a.aussl") != "U3") &
-        (F.col("a.bsart") != "UB") &
-        (F.col("a.elikz") != "X") &
-        (~F.col("b.pstyp").isin("7", "9"))
-    )
-    .groupBy(
-        F.col("c.nha").alias("nha")
-    )
-    .agg(
-        F.sum(
-            F.col("a.menge") - F.col("a.wemng")
-        ).alias("open_po_qty")
-    )
-)
-
-# Register for final assembly
-poqty_df.createOrReplaceTempView("poqty")
-
-
-
-
-
-poqty_df.count()
-poqty_df.show(10, truncate=False)
+“Continuously build up demand, consumption, inventory, and supply metrics for obsolescence analysis.”
 
 
 
@@ -64,71 +15,59 @@ poqty_df.show(10, truncate=False)
 
 
 
-Cell 15 – Build FINALDATA (Demand + Consumption + Inventory + Supply)
+MERGE INTO eng_test.rpt_omat_dmd_consumption_dtls AS a
+USING finaldata AS b
+ON a.nha = b.nha
+AND a.cmpprtno = b.cmpprtno
 
+WHEN MATCHED THEN
+  UPDATE SET
+    a.mfg_dmd                   = coalesce(a.mfg_dmd, 0) + coalesce(b.mfg_dmd, 0),
+    a.mfg_12mnths_consumption   = coalesce(a.mfg_12mnths_consumption, 0) + coalesce(b.mfg_1yrs_cons, 0),
+    a.mfg_5yrs_consumption      = coalesce(a.mfg_5yrs_consumption, 0) + coalesce(b.mfg_5yrs_cons, 0),
+    a.lamqoh                    = coalesce(a.lamqoh, 0) + coalesce(b.lamqoh, 0),
+    a.open_po_qty               = coalesce(a.open_po_qty, 0) + coalesce(b.open_po_qty, 0),
+    a.restricted_all_stock      = coalesce(a.restricted_all_stock, 0) + coalesce(b.restricted_all_stock, 0)
 
-Business purpose
-This step creates the final analytical dataset per Buy Part + NHA:
-It combines:
-Demand (forecast)
-Consumption (1-year & 5-year actuals)
-Inventory (QOH + restricted stock)
-Supply (open PO quantity)
-And filters out:
-NHAs with no demand and no consumption activity
-In business terms:
-“Only keep NHAs that actually matter for obsolescence decisions.”
-
-
-
-
-
-finaldata_df = (
-    nhalist2_df.alias("a")
-    .join(
-        odrbom_1yr_cons_df.alias("b"),
-        F.col("a.nha") == F.col("b.nha"),
-        "left"
-    )
-    .join(
-        qoh_df.alias("c"),
-        F.col("a.nha") == F.col("c.nha"),
-        "left"
-    )
-    .join(
-        poqty_df.alias("d"),
-        F.col("a.nha") == F.col("d.nha"),
-        "left"
-    )
-    .select(
-        F.col("a.cmpprtno").alias("cmpprtno"),
-        F.col("a.nha").alias("nha"),
-
-        F.col("b.mfg_dmd").alias("mfg_dmd"),
-        F.col("b.mfg_5yrs_cons").alias("mfg_5yrs_cons"),
-        F.col("b.mfg_1yrs_cons").alias("mfg_1yrs_cons"),
-
-        F.col("c.lamqoh").alias("lamqoh"),
-        F.col("d.open_po_qty").alias("open_po_qty"),
-        F.col("c.restricted_all_stock").alias("restricted_all_stock")
-    )
-    .filter(
-        (
-            F.abs(F.coalesce(F.col("mfg_5yrs_cons"), F.lit(0))) +
-            F.abs(F.coalesce(F.col("mfg_dmd"), F.lit(0))) +
-            F.abs(F.coalesce(F.col("mfg_1yrs_cons"), F.lit(0)))
-        ) > 0
-    )
-)
-
-# Register for MERGE step
-finaldata_df.createOrReplaceTempView("finaldata")
+WHEN NOT MATCHED THEN
+  INSERT (
+    cmpprtno,
+    nha,
+    mfg_sales_dmd,
+    mfg_dmd,
+    sfg_sales_dmd,
+    sfg_dmd,
+    mfg_12mnths_consumption,
+    lamqoh,
+    open_po_qty,
+    created_dt,
+    mfg_5yrs_consumption,
+    sfg_5yrs_consumption,
+    restricted_all_stock
+  )
+  VALUES (
+    b.cmpprtno,
+    b.nha,
+    NULL,
+    b.mfg_dmd,
+    NULL,
+    NULL,
+    b.mfg_1yrs_cons,
+    b.lamqoh,
+    b.open_po_qty,
+    current_date,
+    b.mfg_5yrs_cons,
+    NULL,
+    b.restricted_all_stock
+  );
 
 
 
 
 
 
-finaldata_df.count()
-finaldata_df.show(10, truncate=False)
+
+
+SELECT COUNT(*) FROM eng_test.rpt_omat_dmd_consumption_dtls;
+SELECT * FROM eng_test.rpt_omat_dmd_consumption_dtls LIMIT 20;
 
