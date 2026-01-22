@@ -1,2 +1,51 @@
-mseg_df.select("cpudt_mkpf").printSchema()
-mkpf_df.select("bldat").printSchema()
+# SAP-style explicit date conversion (MANDATORY in Spark)
+
+mseg_df_dt = mseg_df.withColumn(
+    "cpudt_mkpf_dt",
+    F.to_date(F.col("cpudt_mkpf"), "yyyyMMdd")
+)
+
+mkpf_df_dt = mkpf_df.withColumn(
+    "bldat_dt",
+    F.to_date(F.col("bldat"), "yyyyMMdd")
+)
+
+
+
+
+
+odrbom_cons_df = (
+    newlist_df.alias("a")
+    .join(
+        mseg_df_dt.alias("b"),
+        F.col("b.matnr") == F.col("a.odrbom"),
+        "inner"
+    )
+    .join(
+        makt_df.alias("c"),
+        F.col("c.matnr") == F.col("b.matnr"),
+        "inner"
+    )
+    .join(
+        mkpf_df_dt.alias("d"),
+        F.col("b.mblnr") == F.col("d.mblnr"),
+        "inner"
+    )
+    .filter(
+        F.col("b.bwart").isin("261", "262")
+        & (F.col("d.bldat_dt") > F.date_add(F.current_date(), -five_year_days))
+        & (F.col("d.bldat_dt") < F.current_date())
+        & (F.col("b.cpudt_mkpf_dt") > F.date_add(F.current_date(), -five_year_days))
+    )
+    .select(
+        F.col("d.bldat_dt").alias("cons_date"),
+        F.when(F.col("b.shkzg") == "S", -1 * F.col("b.menge"))
+         .otherwise(F.col("b.menge"))
+         .cast("decimal(13,3)")
+         .alias("menge"),
+        F.col("a.nha").alias("nha"),
+        F.col("a.odrbom").alias("odrbom")
+    )
+    .filter(F.col("menge").isNotNull())   # Delta NOT NULL
+    .distinct()
+)
