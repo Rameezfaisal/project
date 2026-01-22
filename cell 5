@@ -63,4 +63,32 @@ odrbom_dmd_df  = spark.read.table(src_odrbom_dmd)
 
 
 
+Cell 4 – Build NHALIST2 (Identify 571-Series NHA Buy Parts)
+
+
+
+nhalist2_df = (
+    buy_nha_df
+    .filter(F.col("nha").like("571%"))
+    .select(
+        F.col("cmpprtno").alias("cmpprtno"),
+        F.col("nha").alias("nha")
+    )
+    .distinct()
+)
+
+# Register as temp view to mirror SAP temp table behavior
+nhalist2_df.createOrReplaceTempView("nhalist2")
+
+
+
+🟦 Cell 5 – Clear Target Detail Tables (Reset Before Reload)
+
+
+spark.sql(f"DELETE FROM {tgt_odrbom_cons_dtls}")
+spark.sql(f"DELETE FROM {tgt_odrbom_dmd_dtls}")
+
+
+
+
 
