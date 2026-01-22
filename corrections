@@ -1,15 +1,1 @@
-test_substring_join_df = (
-    nhalist2_df.alias("a")
-    .join(
-        forecast_df.alias("b"),
-        F.substring(F.col("b.matnr"), 1, 11) == F.substring(F.col("a.nha"), 1, 11),
-        "inner"
-    )
-    .select(
-        F.col("a.nha").alias("nha"),
-        F.col("b.matnr").alias("matnr")
-    )
-    .distinct()
-)
-
-test_substring_join_df.count()
+forecast_df.groupBy("rowtype").count().orderBy("rowtype").show(50, truncate=False)
