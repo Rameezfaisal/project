@@ -1,16 +1,1 @@
-test_mseg_join_df = (
-    newlist_df.alias("a")
-    .join(
-        mseg_df.alias("b"),
-        F.col("b.matnr") == F.col("a.odrbom"),
-        "inner"
-    )
-    .select("a.nha", "a.odrbom", "b.bwart")
-)
-
-test_mseg_join_df.count()
-
-
-
-
-mseg_df.groupBy("bwart").count().orderBy("bwart").show(50, truncate=False)
+B.CPUDT_MKPF > ADD_DAYS(CURRENT_DATE, -365*5)
