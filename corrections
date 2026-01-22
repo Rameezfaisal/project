@@ -1,2 +1,57 @@
-[DELTA_MERGE_UNRESOLVED_EXPRESSION] Cannot resolve mfg_sales_dmd in INSERT clause given columns a.cmpprtno, a.lamqoh, a.last_modified_on, a.mfg_12mnths_consumption, a.mfg_3yrs_consumption, a.mfg_5yrs_consumption, a.mfg_dmd, a.nha, a.open_po_qty, a.restricted_all_stock, a.sprs_3yrs_consumption, a.sprs_5yrs_consumption, a.sprs_dmd; line 1 pos 0
-org.apache.spark.sql.delta.ResolveDeltaMergeInto$.$anonfun$resolveReferencesAndSchema$4(ResolveDeltaMergeInto.scala:81)
+MERGE INTO eng_test.rpt_omat_dmd_consumption_dtls AS a
+USING finaldata AS b
+ON a.nha = b.nha
+AND a.cmpprtno = b.cmpprtno
+
+WHEN MATCHED THEN
+  UPDATE SET
+    a.mfg_dmd                 = coalesce(a.mfg_dmd, 0) + coalesce(b.mfg_dmd, 0),
+    a.mfg_12mnths_consumption = coalesce(a.mfg_12mnths_consumption, 0) + coalesce(b.mfg_1yrs_cons, 0),
+    a.mfg_5yrs_consumption    = coalesce(a.mfg_5yrs_consumption, 0) + coalesce(b.mfg_5yrs_cons, 0),
+    a.lamqoh                  = coalesce(a.lamqoh, 0) + coalesce(b.lamqoh, 0),
+    a.open_po_qty             = coalesce(a.open_po_qty, 0) + coalesce(b.open_po_qty, 0),
+    a.restricted_all_stock    = coalesce(a.restricted_all_stock, 0) + coalesce(b.restricted_all_stock, 0),
+    a.last_modified_on        = current_date
+
+WHEN NOT MATCHED THEN
+  INSERT (
+    cmpprtno,
+    nha,
+    mfg_dmd,
+    mfg_12mnths_consumption,
+    mfg_5yrs_consumption,
+    lamqoh,
+    open_po_qty,
+    restricted_all_stock,
+    last_modified_on
+  )
+  VALUES (
+    b.cmpprtno,
+    b.nha,
+    b.mfg_dmd,
+    b.mfg_1yrs_cons,
+    b.mfg_5yrs_cons,
+    b.lamqoh,
+    b.open_po_qty,
+    b.restricted_all_stock,
+    current_date
+  );
+
+
+
+
+
+
+
+SELECT
+  cmpprtno,
+  nha,
+  mfg_dmd,
+  mfg_12mnths_consumption,
+  mfg_5yrs_consumption,
+  lamqoh,
+  open_po_qty,
+  restricted_all_stock,
+  last_modified_on
+FROM eng_test.rpt_omat_dmd_consumption_dtls
+LIMIT 20;
