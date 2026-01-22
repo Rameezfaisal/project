@@ -1,26 +1,12 @@
-from pyspark.sql.functions import current_timestamp
-
-spark.sql("""
-INSERT INTO eng_test.rpt_omat_log_dtls (
-  executed_on,
-  obprtno_cnt,
-  obprtno_nha_cnt,
-  obpr_cnt,
-  program_name
-)
-VALUES (
-  current_timestamp(),
-  NULL,
-  NULL,
-  1,
-  'SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh - Started'
-)
-""")
-
-
-
-
-
-
-
-
+_SYS_BIC."prd.global.ecc/CV_EKPO"
+_SYS_BIC."prd.global.ecc/CV_MAKT"
+_SYS_BIC."prd.global.ecc/CV_MARC"
+_SYS_BIC."prd.global.ecc/CV_MARD"
+_SYS_BIC."prd.global.ecc/CV_MBEW"
+_SYS_BIC."prd.global.ecc/CV_MKPF"
+_SYS_BIC."prd.global.ecc/CV_MSEG"
+_SYS_BIC."prd.global.ecc/CV_ZMMFORECAST"
+_SYS_BIC."prd.global.ecc/CV_ZPO_HSTRY"
+_SYS_BIC."prd.gops.OMAT/CV_OMAT_OBPN_BUY_NHA_DTLS"
+_SYS_BIC."prd.gops.OMAT/CV_OMAT_ODRBOM_CONS_DTLS"
+_SYS_BIC."prd.gops.OMAT/CV_OMAT_ODRBOM_DMD_DTLS"
