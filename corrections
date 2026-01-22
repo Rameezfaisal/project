@@ -1,51 +1,87 @@
-# SAP-style explicit date conversion (MANDATORY in Spark)
+Cell 10 – Build MFGDMD (Manufacturing Demand per NHA)
 
-mseg_df_dt = mseg_df.withColumn(
-    "cpudt_mkpf_dt",
-    F.to_date(F.col("cpudt_mkpf"), "yyyyMMdd")
-)
-
-mkpf_df_dt = mkpf_df.withColumn(
-    "bldat_dt",
-    F.to_date(F.col("bldat"), "yyyyMMdd")
-)
+This step calculates total manufacturing demand (MFG_DMD) at NHA level:
+Considers only manufacturing demand (ROWTYPE = '06')
+Rolls up order-BOM level demand into assembly (NHA) demand
+Forms the baseline demand metric used later with consumption, QOH, and PO
+In business terms:
+“What is the total forecasted manufacturing demand for each 571-series NHA?”
 
 
 
 
 
-odrbom_cons_df = (
+
+mfgdmd_df = (
     newlist_df.alias("a")
     .join(
-        mseg_df_dt.alias("b"),
-        F.col("b.matnr") == F.col("a.odrbom"),
-        "inner"
+        new_dmd_df.alias("b"),
+        F.col("a.nha") == F.col("b.nha"),
+        "left"
     )
+    .filter(F.col("b.rowtype") == "06")
+    .groupBy(
+        F.col("a.nha").alias("nha")
+    )
+    .agg(
+        F.sum(F.col("b.dmd")).alias("mfg_dmd")
+    )
+)
+
+
+
+
+mfgdmd_df.createOrReplaceTempView("mfgdmd")
+
+
+
+
+
+
+
+
+
+Cell 11 – Build 5-Year Manufacturing Consumption & Join with Demand
+Business purpose
+This cell answers:
+“For each NHA, what was the actual manufacturing consumption over the last 5 years, and how does it align with manufacturing demand?”
+
+
+
+
+
+
+# --------------------------------------------------
+# 5-Year Manufacturing Consumption per NHA
+# --------------------------------------------------
+
+mfg_5yr_cons_df = (
+    spark.read.table("eng_test.rpt_omat_odrbom_cons_dtls")
+    .groupBy("nha")
+    .agg(
+        F.sum(F.col("menge")).alias("mfg_5yrs_cons")
+    )
+)
+
+# --------------------------------------------------
+# Join with Manufacturing Demand (MFGDMD)
+# --------------------------------------------------
+
+odrbom_5yr_cons_df = (
+    mfgdmd_df.alias("a")
     .join(
-        makt_df.alias("c"),
-        F.col("c.matnr") == F.col("b.matnr"),
-        "inner"
-    )
-    .join(
-        mkpf_df_dt.alias("d"),
-        F.col("b.mblnr") == F.col("d.mblnr"),
-        "inner"
-    )
-    .filter(
-        F.col("b.bwart").isin("261", "262")
-        & (F.col("d.bldat_dt") > F.date_add(F.current_date(), -five_year_days))
-        & (F.col("d.bldat_dt") < F.current_date())
-        & (F.col("b.cpudt_mkpf_dt") > F.date_add(F.current_date(), -five_year_days))
+        mfg_5yr_cons_df.alias("b"),
+        F.col("a.nha") == F.col("b.nha"),
+        "left"
     )
     .select(
-        F.col("d.bldat_dt").alias("cons_date"),
-        F.when(F.col("b.shkzg") == "S", -1 * F.col("b.menge"))
-         .otherwise(F.col("b.menge"))
-         .cast("decimal(13,3)")
-         .alias("menge"),
         F.col("a.nha").alias("nha"),
-        F.col("a.odrbom").alias("odrbom")
+        F.col("a.mfg_dmd").alias("mfg_dmd"),
+        F.col("b.mfg_5yrs_cons").alias("mfg_5yrs_cons")
     )
-    .filter(F.col("menge").isNotNull())   # Delta NOT NULL
-    .distinct()
 )
+
+# Register for downstream steps
+odrbom_5yr_cons_df.createOrReplaceTempView("odrbom_5yr_cons")
+
+
