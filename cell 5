@@ -98,3 +98,51 @@ odrbom_cons_df = (
 
 
 
+
+
+
+🟦 Cell 9 – Build NEW_DMD (Aggregate Demand per ODRBOM & NHA)
+
+
+Business purpose
+This step consolidates period-wise demand into a single demand number (DMD) for each:
+NHA
+Order BOM
+Demand type (ROWTYPE)
+In business terms:
+“What is the total manufacturing demand for each Order BOM across all forecast periods?”
+This dataset is later used to:
+Compute manufacturing demand rollups
+Compare demand vs consumption
+
+
+
+
+
+
+
+new_dmd_df = (
+    spark.read.table("eng_test.rpt_omat_odrbom_dmd_dtls")
+    .select(
+        F.col("nha").alias("nha"),
+        F.col("odrbom").alias("odrbom"),
+        F.col("rowtype").alias("rowtype"),
+        (
+            F.col("dmdpd")
+            + F.col("dmd1")  + F.col("dmd2")  + F.col("dmd3")  + F.col("dmd4")
+            + F.col("dmd5")  + F.col("dmd6")  + F.col("dmd7")  + F.col("dmd8")
+            + F.col("dmd9")  + F.col("dmd10") + F.col("dmd11") + F.col("dmd12")
+            + F.col("dmd13") + F.col("dmd14") + F.col("dmd15") + F.col("dmd16")
+            + F.col("dmd17") + F.col("dmd18") + F.col("dmd19") + F.col("dmd20")
+            + F.col("dmd21") + F.col("dmd22") + F.col("dmd23") + F.col("dmd24")
+            + F.col("dmd25") + F.col("dmd26")
+        ).alias("dmd")
+    )
+    .distinct()
+)
+
+# Register as SAP-like temp table
+new_dmd_df.createOrReplaceTempView("new_dmd")
+
+
+
