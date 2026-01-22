@@ -1,12 +1,66 @@
-_SYS_BIC."prd.global.ecc/CV_EKPO"
-_SYS_BIC."prd.global.ecc/CV_MAKT"
-_SYS_BIC."prd.global.ecc/CV_MARC"
-_SYS_BIC."prd.global.ecc/CV_MARD"
-_SYS_BIC."prd.global.ecc/CV_MBEW"
-_SYS_BIC."prd.global.ecc/CV_MKPF"
-_SYS_BIC."prd.global.ecc/CV_MSEG"
-_SYS_BIC."prd.global.ecc/CV_ZMMFORECAST"
-_SYS_BIC."prd.global.ecc/CV_ZPO_HSTRY"
-_SYS_BIC."prd.gops.OMAT/CV_OMAT_OBPN_BUY_NHA_DTLS"
-_SYS_BIC."prd.gops.OMAT/CV_OMAT_ODRBOM_CONS_DTLS"
-_SYS_BIC."prd.gops.OMAT/CV_OMAT_ODRBOM_DMD_DTLS"
+# ================================
+# Source CVs (SAP HANA -> Fabric)
+# ================================
+
+src_ekpo           = "prd_global_ecc.cv_ekpo"
+src_makt           = "prd_global_ecc.cv_makt"
+src_marc           = "prd_global_ecc.cv_marc"
+src_mard           = "prd_global_ecc.cv_mard"
+src_mbew           = "prd_global_ecc.cv_mbew"
+src_mkpf           = "prd_global_ecc.cv_mkpf"
+src_mseg           = "prd_global_ecc.cv_mseg"
+src_forecast       = "prd_global_ecc.cv_zmmforecast"
+src_po_hstry       = "prd_global_ecc.cv_zpo_hstry"
+
+src_buy_nha        = "prd_gops_omat.cv_omat_obpn_buy_nha_dtls"
+src_odrbom_cons    = "prd_gops_omat.cv_omat_odrbom_cons_dtls"
+src_odrbom_dmd     = "prd_gops_omat.cv_omat_odrbom_dmd_dtls"
+
+
+# ================================
+# Target Tables (Delta – Fabric)
+# ================================
+
+tgt_odrbom_dmd_dtls   = "w_omat.omat_odrbom_dmd_dtls"
+tgt_odrbom_cons_dtls  = "w_omat.omat_odrbom_cons_dtls"
+tgt_final             = "w_omat.omat_dmd_consumption_dtls"
+
+
+# ================================
+# Control Parameters
+# ================================
+
+plant_cd        = "COMB"
+rowtype_cd      = "6"
+five_year_days  = 365 * 5
+
+
+
+
+
+
+
+
+# ---------- SAP ECC CVs ----------
+ekpo_df        = spark.read.table(src_ekpo)
+makt_df        = spark.read.table(src_makt)
+marc_df        = spark.read.table(src_marc)
+mard_df        = spark.read.table(src_mard)
+mbew_df        = spark.read.table(src_mbew)
+mkpf_df        = spark.read.table(src_mkpf)
+mseg_df        = spark.read.table(src_mseg)
+forecast_df    = spark.read.table(src_forecast)
+po_hstry_df    = spark.read.table(src_po_hstry)
+
+# ---------- OMAT CVs ----------
+buy_nha_df     = spark.read.table(src_buy_nha)
+odrbom_cons_df = spark.read.table(src_odrbom_cons)
+odrbom_dmd_df  = spark.read.table(src_odrbom_dmd)
+
+
+
+
+
+
+
+
