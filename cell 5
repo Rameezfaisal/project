@@ -1,21 +1,4 @@
-🟦 Cell 6 – Build & Insert Order-BOM Demand Details
-
-
-
-This step derives manufacturing demand at Order-BOM level for:
-Only 571-series NHAs
-Only manufacturing demand (ROWTYPE = 6)
-Only valid standard production materials
-In business terms:
-Forecast demand is mapped from NHA → Order BOM
-
-
-
-
-
-
-
-# Build demand detail dataset (SAP OMAT_ODRBOM_DMD_DTLS)
+# Build OMAT Order-BOM Demand Details (schema-aligned)
 
 odrbom_dmd_df = (
     nhalist2_df.alias("a")
@@ -36,12 +19,15 @@ odrbom_dmd_df = (
         (F.trim(F.col("c.stdpd")) != "")
     )
     .select(
+        # ---- EXACT TARGET SCHEMA ----
         F.col("a.nha").alias("nha"),
         F.col("b.matnr").alias("odrbom"),
-        F.col("c.stdpd").alias("stdpd"),
         F.col("b.rowtype").alias("rowtype"),
-        F.col("b.dmdpd").alias("dmdpd"),
-        *[F.col(f"b.dmd{i}").alias(f"dmd{i}") for i in range(1, 27)]
+        F.col("b.dmdpd").cast("decimal(13,3)").alias("dmdpd"),
+        *[
+            F.col(f"b.dmd{i}").cast("decimal(13,3)").alias(f"dmd{i}")
+            for i in range(1, 27)
+        ]
     )
     .distinct()
 )
@@ -50,23 +36,18 @@ odrbom_dmd_df = (
 
 
 
-
-
-
 (
     odrbom_dmd_df
     .select(
-        "nha","odrbom","stdpd","rowtype",
+        "dmd1","dmd10","dmd11","dmd12","dmd13","dmd14","dmd15","dmd16","dmd17","dmd18","dmd19",
+        "dmd2","dmd20","dmd21","dmd22","dmd23","dmd24","dmd25","dmd26",
+        "dmd3","dmd4","dmd5","dmd6","dmd7","dmd8","dmd9",
         "dmdpd",
-        *[f"dmd{i}" for i in range(1,27)]
+        "nha",
+        "odrbom",
+        "rowtype"
     )
     .write
     .mode("append")
-    .saveAsTable(tgt_odrbom_dmd_dtls)
+    .saveAsTable("eng_test.rpt_omat_odrbom_dmd_dtls")
 )
-
-
-
-
-
-
