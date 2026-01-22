@@ -1,87 +1,117 @@
-Cell 10 – Build MFGDMD (Manufacturing Demand per NHA)
+Cell 12 – Build 1-Year Manufacturing Consumption & Enrich Dataset
 
-This step calculates total manufacturing demand (MFG_DMD) at NHA level:
-Considers only manufacturing demand (ROWTYPE = '06')
-Rolls up order-BOM level demand into assembly (NHA) demand
-Forms the baseline demand metric used later with consumption, QOH, and PO
-In business terms:
-“What is the total forecasted manufacturing demand for each 571-series NHA?”
-
-
-
-
-
-
-mfgdmd_df = (
-    newlist_df.alias("a")
-    .join(
-        new_dmd_df.alias("b"),
-        F.col("a.nha") == F.col("b.nha"),
-        "left"
-    )
-    .filter(F.col("b.rowtype") == "06")
-    .groupBy(
-        F.col("a.nha").alias("nha")
-    )
-    .agg(
-        F.sum(F.col("b.dmd")).alias("mfg_dmd")
-    )
-)
-
-
-
-
-mfgdmd_df.createOrReplaceTempView("mfgdmd")
-
-
-
-
-
-
-
-
-
-Cell 11 – Build 5-Year Manufacturing Consumption & Join with Demand
 Business purpose
 This cell answers:
-“For each NHA, what was the actual manufacturing consumption over the last 5 years, and how does it align with manufacturing demand?”
-
+“For each NHA, how much was consumed in the last 12 months, and how does that compare with:
+Manufacturing demand
+5-year manufacturing consumption?”
+This creates the core demand vs consumption view used for obsolescence analysis.
 
 
 
 
 
 # --------------------------------------------------
-# 5-Year Manufacturing Consumption per NHA
+# 1-Year Manufacturing Consumption per NHA
 # --------------------------------------------------
 
-mfg_5yr_cons_df = (
+mfg_1yr_cons_df = (
     spark.read.table("eng_test.rpt_omat_odrbom_cons_dtls")
+    .filter(
+        (F.col("cons_date") > F.date_add(F.current_date(), -365)) &
+        (F.col("cons_date") < F.current_date())
+    )
     .groupBy("nha")
     .agg(
-        F.sum(F.col("menge")).alias("mfg_5yrs_cons")
+        F.sum(F.col("menge")).alias("mfg_1yrs_cons")
     )
 )
 
 # --------------------------------------------------
-# Join with Manufacturing Demand (MFGDMD)
+# Enrich existing dataset with 1-Year Consumption
 # --------------------------------------------------
 
-odrbom_5yr_cons_df = (
-    mfgdmd_df.alias("a")
+odrbom_1yr_cons_df = (
+    odrbom_5yr_cons_df.alias("a")
     .join(
-        mfg_5yr_cons_df.alias("b"),
+        mfg_1yr_cons_df.alias("b"),
         F.col("a.nha") == F.col("b.nha"),
         "left"
     )
     .select(
         F.col("a.nha").alias("nha"),
         F.col("a.mfg_dmd").alias("mfg_dmd"),
-        F.col("b.mfg_5yrs_cons").alias("mfg_5yrs_cons")
+        F.col("a.mfg_5yrs_cons").alias("mfg_5yrs_cons"),
+        F.col("b.mfg_1yrs_cons").alias("mfg_1yrs_cons")
     )
 )
 
 # Register for downstream steps
-odrbom_5yr_cons_df.createOrReplaceTempView("odrbom_5yr_cons")
+odrbom_1yr_cons_df.createOrReplaceTempView("odrbom_1yr_cons")
 
 
+
+
+
+
+
+odrbom_1yr_cons_df.count()
+odrbom_1yr_cons_df.show(10, truncate=False)
+
+
+
+
+Cell 13 – Calculate QOH (On-Hand Stock) & Restricted Stock per NHA
+
+
+Business purpose
+This cell computes inventory position per NHA:
+LAMQOH → unrestricted + quality inspection stock
+Restricted_All_Stock → all restricted categories
+Rolled up from Order BOM → NHA
+Used to understand available vs blocked inventory against demand.
+Technical intent (Spark / Fabric)
+Use MARD (new SAP logic)
+Join through Newlist (ODRBOM ↔ NHA)
+Aggregate once, reuse downstream
+Rename columns early to avoid ambiguity
+
+
+
+
+
+
+
+
+qoh_df = (
+    mard_df.alias("a")
+    .join(
+        newlist_df.alias("b"),
+        F.col("a.matnr") == F.col("b.odrbom"),
+        "inner"
+    )
+    .groupBy(
+        F.col("b.nha").alias("nha")
+    )
+    .agg(
+        F.sum(F.col("a.labst") + F.col("a.klabs")).alias("lamqoh"),
+        F.sum(
+            F.col("a.insme") +
+            F.col("a.umlme") +
+            F.col("a.einme") +
+            F.col("a.speme")
+        ).alias("restricted_all_stock")
+    )
+)
+
+# Register for downstream join
+qoh_df.createOrReplaceTempView("qoh")
+
+
+
+
+
+
+
+qoh_df.count()
+qoh_df.show(10, truncate=False)
