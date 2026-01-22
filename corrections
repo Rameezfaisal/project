@@ -1,1 +1,2 @@
-B.CPUDT_MKPF > ADD_DAYS(CURRENT_DATE, -365*5)
+mseg_df.select("cpudt_mkpf").printSchema()
+mkpf_df.select("bldat").printSchema()
