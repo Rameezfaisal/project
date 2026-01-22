@@ -1,117 +1,134 @@
-Cell 12 – Build 1-Year Manufacturing Consumption & Enrich Dataset
+🟦 Cell 14 – Calculate Open Purchase Order Quantity per NHA
 
-Business purpose
-This cell answers:
-“For each NHA, how much was consumed in the last 12 months, and how does that compare with:
-Manufacturing demand
-5-year manufacturing consumption?”
-This creates the core demand vs consumption view used for obsolescence analysis.
+This step calculates open purchase order quantity per NHA:
+Measures incoming supply not yet received
+Excludes:
+Inactive / deleted / completed POs
+Stock transfers, subcontracting, special item categories
+Artificial year-end due dates (04-01, 12-31)
+Rolled up from Order BOM → NHA
+In business terms:
+“What quantity is still expected to arrive from suppliers for each NHA?”
 
 
 
 
 
-# --------------------------------------------------
-# 1-Year Manufacturing Consumption per NHA
-# --------------------------------------------------
-
-mfg_1yr_cons_df = (
-    spark.read.table("eng_test.rpt_omat_odrbom_cons_dtls")
-    .filter(
-        (F.col("cons_date") > F.date_add(F.current_date(), -365)) &
-        (F.col("cons_date") < F.current_date())
+poqty_df = (
+    po_hstry_df.alias("a")
+    .join(
+        ekpo_df.alias("b"),
+        (F.col("a.ebeln") == F.col("b.ebeln")) &
+        (F.col("a.ebelp") == F.col("b.ebelp")),
+        "inner"
     )
-    .groupBy("nha")
+    .join(
+        newlist_df.alias("c"),
+        F.col("a.matnr") == F.col("c.odrbom"),
+        "inner"
+    )
+    .filter(
+        (F.substring(F.col("a.due_dt"), -5, 5) != "04-01") &
+        (F.substring(F.col("a.due_dt"), -5, 5) != "12-31") &
+        (F.col("a.status") != "INACT") &
+        (F.trim(F.col("a.matnr")) != "") &
+        (F.trim(F.col("a.loekz")) == "") &
+        (F.col("a.aussl") != "U3") &
+        (F.col("a.bsart") != "UB") &
+        (F.col("a.elikz") != "X") &
+        (~F.col("b.pstyp").isin("7", "9"))
+    )
+    .groupBy(
+        F.col("c.nha").alias("nha")
+    )
     .agg(
-        F.sum(F.col("menge")).alias("mfg_1yrs_cons")
+        F.sum(
+            F.col("a.menge") - F.col("a.wemng")
+        ).alias("open_po_qty")
     )
 )
 
-# --------------------------------------------------
-# Enrich existing dataset with 1-Year Consumption
-# --------------------------------------------------
+# Register for final assembly
+poqty_df.createOrReplaceTempView("poqty")
 
-odrbom_1yr_cons_df = (
-    odrbom_5yr_cons_df.alias("a")
+
+
+
+
+poqty_df.count()
+poqty_df.show(10, truncate=False)
+
+
+
+
+
+
+
+Cell 15 – Build FINALDATA (Demand + Consumption + Inventory + Supply)
+
+
+Business purpose
+This step creates the final analytical dataset per Buy Part + NHA:
+It combines:
+Demand (forecast)
+Consumption (1-year & 5-year actuals)
+Inventory (QOH + restricted stock)
+Supply (open PO quantity)
+And filters out:
+NHAs with no demand and no consumption activity
+In business terms:
+“Only keep NHAs that actually matter for obsolescence decisions.”
+
+
+
+
+
+finaldata_df = (
+    nhalist2_df.alias("a")
     .join(
-        mfg_1yr_cons_df.alias("b"),
+        odrbom_1yr_cons_df.alias("b"),
         F.col("a.nha") == F.col("b.nha"),
         "left"
     )
-    .select(
-        F.col("a.nha").alias("nha"),
-        F.col("a.mfg_dmd").alias("mfg_dmd"),
-        F.col("a.mfg_5yrs_cons").alias("mfg_5yrs_cons"),
-        F.col("b.mfg_1yrs_cons").alias("mfg_1yrs_cons")
-    )
-)
-
-# Register for downstream steps
-odrbom_1yr_cons_df.createOrReplaceTempView("odrbom_1yr_cons")
-
-
-
-
-
-
-
-odrbom_1yr_cons_df.count()
-odrbom_1yr_cons_df.show(10, truncate=False)
-
-
-
-
-Cell 13 – Calculate QOH (On-Hand Stock) & Restricted Stock per NHA
-
-
-Business purpose
-This cell computes inventory position per NHA:
-LAMQOH → unrestricted + quality inspection stock
-Restricted_All_Stock → all restricted categories
-Rolled up from Order BOM → NHA
-Used to understand available vs blocked inventory against demand.
-Technical intent (Spark / Fabric)
-Use MARD (new SAP logic)
-Join through Newlist (ODRBOM ↔ NHA)
-Aggregate once, reuse downstream
-Rename columns early to avoid ambiguity
-
-
-
-
-
-
-
-
-qoh_df = (
-    mard_df.alias("a")
     .join(
-        newlist_df.alias("b"),
-        F.col("a.matnr") == F.col("b.odrbom"),
-        "inner"
+        qoh_df.alias("c"),
+        F.col("a.nha") == F.col("c.nha"),
+        "left"
     )
-    .groupBy(
-        F.col("b.nha").alias("nha")
+    .join(
+        poqty_df.alias("d"),
+        F.col("a.nha") == F.col("d.nha"),
+        "left"
     )
-    .agg(
-        F.sum(F.col("a.labst") + F.col("a.klabs")).alias("lamqoh"),
-        F.sum(
-            F.col("a.insme") +
-            F.col("a.umlme") +
-            F.col("a.einme") +
-            F.col("a.speme")
-        ).alias("restricted_all_stock")
+    .select(
+        F.col("a.cmpprtno").alias("cmpprtno"),
+        F.col("a.nha").alias("nha"),
+
+        F.col("b.mfg_dmd").alias("mfg_dmd"),
+        F.col("b.mfg_5yrs_cons").alias("mfg_5yrs_cons"),
+        F.col("b.mfg_1yrs_cons").alias("mfg_1yrs_cons"),
+
+        F.col("c.lamqoh").alias("lamqoh"),
+        F.col("d.open_po_qty").alias("open_po_qty"),
+        F.col("c.restricted_all_stock").alias("restricted_all_stock")
+    )
+    .filter(
+        (
+            F.abs(F.coalesce(F.col("mfg_5yrs_cons"), F.lit(0))) +
+            F.abs(F.coalesce(F.col("mfg_dmd"), F.lit(0))) +
+            F.abs(F.coalesce(F.col("mfg_1yrs_cons"), F.lit(0)))
+        ) > 0
     )
 )
 
-# Register for downstream join
-qoh_df.createOrReplaceTempView("qoh")
+# Register for MERGE step
+finaldata_df.createOrReplaceTempView("finaldata")
 
 
 
 
 
 
+finaldata_df.count()
+finaldata_df.show(10, truncate=False)
 
-qoh_df.count()
-qoh_df.show(10, truncate=False)
