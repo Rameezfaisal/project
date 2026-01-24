@@ -1,7 +1,31 @@
-.filter(
-    ~F.concat(
-        F.substring(df_zpo.due_dt_cd, 5, 2),  # MM
-        F.lit("-"),
-        F.substring(df_zpo.due_dt_cd, 7, 2)   # DD
-    ).isin("04-01", "12-31")
+df_base = spark.table("stage3_deduped")
+
+df_lookup = df_base.select(
+    F.col("nha").alias("base_nha"),
+    *[F.col(c).alias(f"base_{c}") for c in df_base.columns if c != "nha"]
 )
+
+# Pattern-1
+df_p1 = (
+    df_base
+    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", "-"))
+    .join(df_lookup, "base_nha", "left")
+)
+
+# Fill from pattern-1
+df_filled = fill_from_base(df_p1)
+
+# Pattern-2 (ONLY for rows still missing suppliers)
+df_p2 = (
+    df_filled
+    .filter(F.col("suppcd_2000").isNull())   # key plant check
+    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", ""))
+    .join(df_lookup, "base_nha", "left")
+)
+
+# Final fill
+df_stage4 = fill_from_base(
+    df_filled.unionByName(df_p2.select(df_filled.columns))
+)
+
+df_stage4.createOrReplaceTempView("stage4_basepart_filled")
