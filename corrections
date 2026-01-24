@@ -1,1 +1,54 @@
-AnalysisException: [AMBIGUOUS_REFERENCE] Reference `lifnr_cd` is ambiguous, could be: [`lifnr_cd`, `lifnr_cd`].
+# ------------------------------------------------
+# STEP 8 — Open PO Suppliers (SAP-faithful, FIXED)
+# ------------------------------------------------
+
+# A = OMAT demand (OPEN_PO_QTY > 0)
+df_omat_po = (
+    df_omat
+    .filter(F.col("open_po_qty") > 0)
+    .select("nha")
+)
+
+df_po_base = (
+    df_omat_po
+    .join(df_zpo, df_zpo.matnr_cd == df_omat_po.nha, "inner")
+    .join(
+        df_ekpo,
+        (df_zpo.ebeln_cd == df_ekpo.ebeln_cd) &
+        (df_zpo.ebelp_cd == df_ekpo.ebelp_cd),
+        "inner"
+    )
+    .join(df_lfa1, df_zpo.lifnr_cd == df_lfa1.lifnr_cd, "inner")
+
+    # ---- SAP WHERE conditions ----
+    .filter(~F.substring(df_zpo.due_dt_cd, -5, 5).isin("04-01", "12-31"))
+    .filter(df_zpo.status_cd != "INACT")
+    .filter(F.length(F.trim(df_zpo.matnr_cd)) > 0)
+    .filter(F.trim(df_zpo.loekz_cd) == "")
+    .filter(df_zpo.discrd_cd != "X")
+    .filter(df_zpo.aussl_cd != "U3")
+    .filter(df_zpo.bsart_cd != "UB")
+    .filter(df_zpo.elikz_cd != "X")
+    .filter(~df_ekpo.pstyp_cd.isin("7", "9"))
+    .filter(F.length(df_zpo.lifnr_cd) == 10)
+
+    # SAP inner SELECT DISTINCT
+    .select(
+        df_omat_po.nha.alias("nha"),
+        df_zpo.lifnr_cd.alias("lifnr"),
+        df_lfa1.name1_cd.alias("name1")
+    )
+    .distinct()
+)
+
+df_posupp = (
+    df_po_base
+    .groupBy("nha")
+    .agg(
+        F.concat_ws(",", F.collect_set("lifnr")).alias("posuppcode"),
+        F.concat_ws(",", F.collect_set("name1")).alias("posuppname")
+    )
+    .orderBy("nha")
+)
+
+df_posupp.createOrReplaceTempView("posupp")
