@@ -1,57 +1,48 @@
-MERGE INTO eng_test.rpt_omat_dmd_consumption_dtls AS a
-USING finaldata AS b
-ON a.nha = b.nha
-AND a.cmpprtno = b.cmpprtno
+# #### Step-7 -- Insert ONLY new NHA's (SAP-faithful)
+# - Anti-join with target table
+# - Matches SAP: LEFT JOIN target WHERE target.NHA IS NULL
 
-WHEN MATCHED THEN
-  UPDATE SET
-    a.mfg_dmd                 = coalesce(a.mfg_dmd, 0) + coalesce(b.mfg_dmd, 0),
-    a.mfg_12mnths_consumption = coalesce(a.mfg_12mnths_consumption, 0) + coalesce(b.mfg_1yrs_cons, 0),
-    a.mfg_5yrs_consumption    = coalesce(a.mfg_5yrs_consumption, 0) + coalesce(b.mfg_5yrs_cons, 0),
-    a.lamqoh                  = coalesce(a.lamqoh, 0) + coalesce(b.lamqoh, 0),
-    a.open_po_qty             = coalesce(a.open_po_qty, 0) + coalesce(b.open_po_qty, 0),
-    a.restricted_all_stock    = coalesce(a.restricted_all_stock, 0) + coalesce(b.restricted_all_stock, 0),
-    a.last_modified_on        = current_date
+# Read existing target NHAs
+df_existing_nha = (
+    spark.read.table(tgt_suppliers)
+    .select("nha")
+    .distinct()
+)
 
-WHEN NOT MATCHED THEN
-  INSERT (
-    cmpprtno,
-    nha,
-    mfg_dmd,
-    mfg_12mnths_consumption,
-    mfg_5yrs_consumption,
-    lamqoh,
-    open_po_qty,
-    restricted_all_stock,
-    last_modified_on
-  )
-  VALUES (
-    b.cmpprtno,
-    b.nha,
-    b.mfg_dmd,
-    b.mfg_1yrs_cons,
-    b.mfg_5yrs_cons,
-    b.lamqoh,
-    b.open_po_qty,
-    b.restricted_all_stock,
-    current_date
-  );
+# Anti-join: NHAs not yet present in target
+df_sup_new = (
+    df_sup.alias("s")
+    .join(
+        df_existing_nha.alias("t"),
+        F.col("s.nha_cd") == F.col("t.nha"),
+        "left_anti"
+    )
+)
 
+# Prepare insert dataset
+df_insert = (
+    df_sup_new
+    .select(
+        F.col("nha_cd").alias("nha"),
 
+        "suppcd_1900","suppname_1900",
+        "suppcd_2000","suppname_2000",
+        "suppcd_3120","suppname_3120",
+        "suppcd_1050","suppname_1050",
+        "suppcd_1060","suppname_1060",
+        "suppcd_1090","suppname_1090"
+    )
+    .filter(F.col("nha").isNotNull())
+)
 
+# Optional but good for Fabric scale
+df_insert_balanced = df_insert.repartitionByRange(300, "nha")
 
-
-
-
-SELECT
-  cmpprtno,
-  nha,
-  mfg_dmd,
-  mfg_12mnths_consumption,
-  mfg_5yrs_consumption,
-  lamqoh,
-  open_po_qty,
-  restricted_all_stock,
-  last_modified_on
-FROM eng_test.rpt_omat_dmd_consumption_dtls
-LIMIT 20;
+# Insert
+(
+    df_insert_balanced
+    .write
+    .mode("append")
+    .format("delta")
+    .saveAsTable(tgt_suppliers)
+)
