@@ -1,11 +1,54 @@
+# ------------------------------------------------
+# STEP 9 — Attach Open-PO Suppliers (SAP-faithful)
+# ------------------------------------------------
 
 df_stage5 = (
     spark.table("stage4_basepart_filled")
     .join(spark.table("posupp"), "nha", "left")
-    .withColumn("suppcd_po1",F.split("posuppcode",",")[0])
-    .withColumn("suppcd_po2",F.split("posuppcode",",")[1])
-    .withColumn("suppname_po1",F.split("posuppname",",")[0])
-    .withColumn("suppname_po2",F.split("posuppname",",")[1])
+
+    # ---------- PO SUPPLIER 1 ----------
+    .withColumn(
+        "suppcd_po1",
+        F.when(
+            F.instr(F.col("posuppcode"), ",") > 0,
+            F.substring_index("posuppcode", ",", 1)
+        ).otherwise(
+            F.substring("posuppcode", 1, 10)
+        )
+    )
+
+    # ---------- PO SUPPLIER 2 ----------
+    .withColumn(
+        "suppcd_po2",
+        F.when(
+            (F.instr(F.col("posuppcode"), ",") > 0) &
+            (F.length(F.col("posuppcode")) <= 21),
+            F.substring_index("posuppcode", ",", -1)
+        ).otherwise(
+            F.substring("posuppcode", 12, 10)
+        )
+    )
+
+    # ---------- PO SUPPLIER 1 NAME ----------
+    .withColumn(
+        "suppname_po1",
+        F.when(
+            F.instr(F.col("posuppname"), ",") > 0,
+            F.substring_index("posuppname", ",", 1)
+        ).otherwise(
+            F.col("posuppname")
+        )
+    )
+
+    # ---------- PO SUPPLIER 2 NAME ----------
+    .withColumn(
+        "suppname_po2",
+        F.when(
+            (F.instr(F.col("posuppname"), ",") > 0) &
+            (F.length(F.col("posuppname")) <= 21),
+            F.substring_index("posuppname", ",", -1)
+        )
+    )
 )
 
 df_stage5.createOrReplaceTempView("stage5_with_po")
