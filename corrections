@@ -1,106 +1,140 @@
-from pyspark.sql import functions as F
 
-df_stage3 = spark.table("stage3_deduped")
+df_base = spark.table("stage3_deduped")
 
-# helper: check if ALL plant suppliers are missing
-def no_supplier(df):
-    return (
-        F.coalesce(
-            df.suppcd_1900,
-            df.suppcd_2000,
-            df.suppcd_3120,
-            df.suppcd_1050,
-            df.suppcd_1060,
-            df.suppcd_1090
-        ).isNull()
-    )
-
-# -----------------------------
-# Build EORD lookup once
-# -----------------------------
-df_eord_lkp = (
-    df_eord
-    .filter((F.col("autet_cd") == "1") & (F.col("flifn_cd") == "X"))
-    .join(df_lfa1, "lifnr_cd", "left")
-    .select(
-        F.col("matnr_cd").alias("base_nha"),
-        F.col("werks_cd"),
-        F.lpad(F.col("lifnr_cd"), 10, "0").alias("base_suppcd"),
-        F.col("name1_cd").alias("base_suppname")
-    )
+df_lookup = df_base.select(
+    F.col("nha").alias("base_nha"),
+    *[F.col(c).alias(f"base_{c}") for c in df_base.columns if c != "nha"]
 )
 
-# pivot EORD lookup to plant columns
-df_eord_pivot = (
-    df_eord_lkp
-    .groupBy("base_nha")
-    .pivot("werks_cd", ["1900","2000","3120","1050","1060","1090","1000","1010","1020"])
-    .agg(
-        F.first("base_suppcd").alias("suppcd"),
-        F.first("base_suppname").alias("suppname")
-    )
-)
-
-# flatten pivot column names
-for p in ["1900","2000","3120","1050","1060","1090","1000","1010","1020"]:
-    df_eord_pivot = (
-        df_eord_pivot
-        .withColumnRenamed(f"{p}_suppcd", f"eord_suppcd_{p}")
-        .withColumnRenamed(f"{p}_suppname", f"eord_suppname_{p}")
-    )
-
-# ======================================================
-# PASS-1 : Pattern R/S/C/X/D → '-'
-# ======================================================
+# Pattern-1
 df_p1 = (
-    df_stage3
-    .withColumn(
-        "base_nha",
-        F.regexp_replace("nha", "[RSCXD]", "-")
-    )
-    .join(df_eord_pivot, "base_nha", "left")
+    df_base
+    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", "-"))
+    .join(df_lookup, "base_nha", "left")
 )
 
-df_p1 = (
-    df_p1
-    .withColumn(
-        "suppcd_1900",
-        F.when(no_supplier(df_p1),
-               F.coalesce(df_p1.eord_suppcd_1900, df_p1.eord_suppcd_1020))
-        .otherwise(df_p1.suppcd_1900)
-    )
-    .withColumn(
-        "suppcd_2000",
-        F.when(no_supplier(df_p1),
-               F.coalesce(df_p1.eord_suppcd_2000, df_p1.eord_suppcd_1000))
-        .otherwise(df_p1.suppcd_2000)
-    )
-    .withColumn(
-        "suppcd_3120",
-        F.when(no_supplier(df_p1),
-               F.coalesce(df_p1.eord_suppcd_3120, df_p1.eord_suppcd_1010))
-        .otherwise(df_p1.suppcd_3120)
-    )
-)
+# Fill from pattern-1
+df_filled = fill_from_base(df_p1)
 
-# ======================================================
-# PASS-2 : Pattern remove R/S/C/X/D
-# ======================================================
+# Pattern-2 (ONLY for rows still missing suppliers)
 df_p2 = (
-    df_p1
-    .filter(no_supplier(df_p1))
-    .withColumn(
-        "base_nha",
-        F.regexp_replace("nha", "[RSCXD]", "")
-    )
-    .join(df_eord_pivot, "base_nha", "left")
+    df_filled
+    .filter(F.col("suppcd_2000").isNull())   # key plant check
+    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", ""))
+    .join(df_lookup, "base_nha", "left")
 )
+
+# Final fill
+df_stage4 = fill_from_base(
+    df_filled.unionByName(df_p2.select(df_filled.columns))
+)
+
+df_stage4.createOrReplaceTempView("stage4_basepart_filled")
+
+
+
+
+df_base = spark.table("stage3_deduped")
+
+# 1. Condition: ALL suppliers missing (SAP WHERE clause)
+no_supplier_cond = (
+    (F.length(F.trim("suppcd_1900")) == 0) &
+    (F.length(F.trim("suppcd_2000")) == 0) &
+    (F.length(F.trim("suppcd_3120")) == 0) &
+    (F.length(F.trim("suppcd_1050")) == 0) &
+    (F.length(F.trim("suppcd_1060")) == 0) &
+    (F.length(F.trim("suppcd_1090")) == 0)
+)
+
+# 2. Base lookup
+df_lookup = df_base.select(
+    F.col("nha").alias("base_nha"),
+    F.col("suppcd_1900").alias("base_suppcd_1900"),
+    F.col("suppname_1900").alias("base_suppname_1900"),
+    F.col("suppcd_2000").alias("base_suppcd_2000"),
+    F.col("suppname_2000").alias("base_suppname_2000"),
+    F.col("suppcd_3120").alias("base_suppcd_3120"),
+    F.col("suppname_3120").alias("base_suppname_3120"),
+    F.col("suppcd_1050").alias("base_suppcd_1050"),
+    F.col("suppname_1050").alias("base_suppname_1050"),
+    F.col("suppcd_1060").alias("base_suppcd_1060"),
+    F.col("suppname_1060").alias("base_suppname_1060"),
+    F.col("suppcd_1090").alias("base_suppcd_1090"),
+    F.col("suppname_1090").alias("base_suppname_1090")
+)
+
+# 3. Pattern-1: replace R,S,C,X,D with "-"
+df_p1 = (
+    df_base
+    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", "-"))
+    .join(df_lookup, "base_nha", "left")
+)
+
+# 4. Pattern-2: remove R,S,C,X,D
+df_p2 = (
+    df_base
+    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", ""))
+    .join(df_lookup, "base_nha", "left")
+)
+
+# 5. Apply SAP CASE logic (Pattern-1 first, then Pattern-2)
+def apply_base(col_main, col_p1, col_p2):
+    return (
+        F.when(
+            no_supplier_cond,
+            F.when(F.length(F.trim(col_p1)) > 0, F.col(col_p1))
+             .otherwise(F.col(col_p2))
+        ).otherwise(F.col(col_main))
+    )
 
 df_stage4 = (
-    df_p1
-    .unionByName(
-        df_p2.select(df_p1.columns),
-        allowMissingColumns=True
+    df_base
+    .join(
+        df_p1.select(
+            "nha",
+            "base_suppcd_1900","base_suppname_1900",
+            "base_suppcd_2000","base_suppname_2000",
+            "base_suppcd_3120","base_suppname_3120",
+            "base_suppcd_1050","base_suppname_1050",
+            "base_suppcd_1060","base_suppname_1060",
+            "base_suppcd_1090","base_suppname_1090"
+        ),
+        "nha",
+        "left"
+    )
+    .join(
+        df_p2.select(
+            "nha",
+            F.col("base_suppcd_1900").alias("p2_suppcd_1900"),
+            F.col("base_suppname_1900").alias("p2_suppname_1900"),
+            F.col("base_suppcd_2000").alias("p2_suppcd_2000"),
+            F.col("base_suppname_2000").alias("p2_suppname_2000"),
+            F.col("base_suppcd_3120").alias("p2_suppcd_3120"),
+            F.col("base_suppname_3120").alias("p2_suppname_3120"),
+            F.col("base_suppcd_1050").alias("p2_suppcd_1050"),
+            F.col("base_suppname_1050").alias("p2_suppname_1050"),
+            F.col("base_suppcd_1060").alias("p2_suppcd_1060"),
+            F.col("base_suppname_1060").alias("p2_suppname_1060"),
+            F.col("base_suppcd_1090").alias("p2_suppcd_1090"),
+            F.col("base_suppname_1090").alias("p2_suppname_1090")
+        ),
+        "nha",
+        "left"
+    )
+    .select(
+        "nha",
+        apply_base("suppcd_1900","base_suppcd_1900","p2_suppcd_1900").alias("suppcd_1900"),
+        apply_base("suppname_1900","base_suppname_1900","p2_suppname_1900").alias("suppname_1900"),
+        apply_base("suppcd_2000","base_suppcd_2000","p2_suppcd_2000").alias("suppcd_2000"),
+        apply_base("suppname_2000","base_suppname_2000","p2_suppname_2000").alias("suppname_2000"),
+        apply_base("suppcd_3120","base_suppcd_3120","p2_suppcd_3120").alias("suppcd_3120"),
+        apply_base("suppname_3120","base_suppname_3120","p2_suppname_3120").alias("suppname_3120"),
+        apply_base("suppcd_1050","base_suppcd_1050","p2_suppcd_1050").alias("suppcd_1050"),
+        apply_base("suppname_1050","base_suppname_1050","p2_suppname_1050").alias("suppname_1050"),
+        apply_base("suppcd_1060","base_suppcd_1060","p2_suppcd_1060").alias("suppcd_1060"),
+        apply_base("suppname_1060","base_suppname_1060","p2_suppname_1060").alias("suppname_1060"),
+        apply_base("suppcd_1090","base_suppcd_1090","p2_suppcd_1090").alias("suppcd_1090"),
+        apply_base("suppname_1090","base_suppname_1090","p2_suppname_1090").alias("suppname_1090")
     )
 )
 
