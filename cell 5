@@ -1,7 +1,17 @@
-+-----------+
-|isprocessed|
-+-----------+
-|          Y|
-+-----------+
-
-193392
+df_missing = (
+    spark.read.table(tgt_suppliers).alias("t")
+    .join(
+        df_nha.select(F.col("nha_cd").alias("nha")).alias("n"),
+        "nha",
+        "inner"
+    )
+    .filter(
+        (F.coalesce(F.length("suppcd_1900"),F.lit(0)) == 0) &
+        (F.coalesce(F.length("suppcd_2000"),F.lit(0)) == 0) &
+        (F.coalesce(F.length("suppcd_3120"),F.lit(0)) == 0) &
+        (F.coalesce(F.length("suppcd_1050"),F.lit(0)) == 0) &
+        (F.coalesce(F.length("suppcd_1060"),F.lit(0)) == 0) &
+        (F.coalesce(F.length("suppcd_1090"),F.lit(0)) == 0)
+    )
+    .select("nha")
+)
