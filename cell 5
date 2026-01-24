@@ -1,2 +1,7 @@
-df_nha_src.select("isprocessed").distinct().show()
-df_nha_src.count()
++-----------+
+|isprocessed|
++-----------+
+|          Y|
++-----------+
+
+193392
