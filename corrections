@@ -1,54 +1,80 @@
-# ------------------------------------------------
-# STEP 9 — Attach Open-PO Suppliers (SAP-faithful)
-# ------------------------------------------------
+df_pr = (
+    df_iplm
+    .filter(F.col("state_cd") != "CLOSED")
+    .filter(F.col("reason_cd") == "OBSOLETE COMPONENT")
+    .filter(
+        (F.col("state_cd").isin("CONFIRMED","IN REVIEW","IN WORK")) |
+        (F.col("disposition_cd").isin("CONFIRMED","DEFER"))
+    )
+    .withColumn("suppcd_pr",F.lpad("supplier_code_cd",10,"0"))
+    .join(df_lfa1, F.col("suppcd_pr")==df_lfa1.lifnr_cd, "left")
+    .select("part_name_cd","suppcd_pr","name1_cd")
+)
 
-df_stage5 = (
-    spark.table("stage4_basepart_filled")
-    .join(spark.table("posupp"), "nha", "left")
+df_stage6 = (
+    spark.table("stage5_with_po")
+    .join(df_pr, df_pr.part_name_cd==F.col("nha"), "left")
+    .drop("part_name_cd")
+    .withColumnRenamed("name1_cd","suppname_pr")
+)
 
-    # ---------- PO SUPPLIER 1 ----------
+df_stage6.createOrReplaceTempView("stage6_with_pr")
+
+
+
+
+
+
+
+
+
+
+def nz(c):
+    return F.when(F.trim(F.col(c)) == "", None).otherwise(F.col(c))
+
+df = spark.table("stage6_with_pr")
+
+df_final = (
+    df
     .withColumn(
-        "suppcd_po1",
-        F.when(
-            F.instr(F.col("posuppcode"), ",") > 0,
-            F.substring_index("posuppcode", ",", 1)
-        ).otherwise(
-            F.substring("posuppcode", 1, 10)
+        "omat_selected_suppliercd",
+        F.coalesce(
+            nz("suppcd_2000"),
+            nz("suppcd_1900"),
+            nz("suppcd_3120"),
+            nz("suppcd_1050"),
+            nz("suppcd_1060"),
+            nz("suppcd_1090"),
+            nz("suppcd_po1"),
+            nz("suppcd_po2"),
+            nz("suppcd_pr")
         )
     )
-
-    # ---------- PO SUPPLIER 2 ----------
     .withColumn(
-        "suppcd_po2",
-        F.when(
-            (F.instr(F.col("posuppcode"), ",") > 0) &
-            (F.length(F.col("posuppcode")) <= 21),
-            F.substring_index("posuppcode", ",", -1)
-        ).otherwise(
-            F.substring("posuppcode", 12, 10)
+        "omat_selected_supplier",
+        F.coalesce(
+            nz("suppname_2000"),
+            nz("suppname_1900"),
+            nz("suppname_3120"),
+            nz("suppname_1050"),
+            nz("suppname_1060"),
+            nz("suppname_1090"),
+            nz("suppname_po1"),
+            nz("suppname_po2"),
+            nz("suppname_pr")
         )
     )
-
-    # ---------- PO SUPPLIER 1 NAME ----------
     .withColumn(
-        "suppname_po1",
-        F.when(
-            F.instr(F.col("posuppname"), ",") > 0,
-            F.substring_index("posuppname", ",", 1)
-        ).otherwise(
-            F.col("posuppname")
-        )
-    )
-
-    # ---------- PO SUPPLIER 2 NAME ----------
-    .withColumn(
-        "suppname_po2",
-        F.when(
-            (F.instr(F.col("posuppname"), ",") > 0) &
-            (F.length(F.col("posuppname")) <= 21),
-            F.substring_index("posuppname", ",", -1)
-        )
+        "omat_selected_plant",
+        F.when(nz("suppcd_2000").isNotNull(),"2000")
+         .when(nz("suppcd_1900").isNotNull(),"1900")
+         .when(nz("suppcd_3120").isNotNull(),"3120")
+         .when(nz("suppcd_1050").isNotNull(),"1050")
+         .when(nz("suppcd_1060").isNotNull(),"1060")
+         .when(nz("suppcd_1090").isNotNull(),"1090")
+         .when(nz("suppcd_po1").isNotNull(),"2000")
+         .when(nz("suppcd_pr").isNotNull(),"2000")
     )
 )
 
-df_stage5.createOrReplaceTempView("stage5_with_po")
+df_final.createOrReplaceTempView("stage7_final_suppliers")
