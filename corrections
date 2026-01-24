@@ -1,48 +1,88 @@
-# #### Step-7 -- Insert ONLY new NHA's (SAP-faithful)
-# - Anti-join with target table
-# - Matches SAP: LEFT JOIN target WHERE target.NHA IS NULL
+from pyspark.sql import functions as F
 
-# Read existing target NHAs
-df_existing_nha = (
-    spark.read.table(tgt_suppliers)
-    .select("nha")
-    .distinct()
+df_stage2 = spark.table("stage1_mrp_suppliers") \
+    .join(eord_1900, "nha", "left") \
+    .join(eord_2000, "nha", "left") \
+    .join(eord_3120, "nha", "left") \
+    .join(eord_1050, "nha", "left") \
+    .join(eord_1060, "nha", "left") \
+    .join(eord_1090, "nha", "left") \
+    .join(eord_1000, "nha", "left") \
+    .join(eord_1010, "nha", "left") \
+    .join(eord_1020, "nha", "left")
+
+# SAP condition: all supplier columns empty
+eord_apply_cond = (
+    (F.length(F.trim("suppcd_1900")) == 0) &
+    (F.length(F.trim("suppcd_2000")) == 0) &
+    (F.length(F.trim("suppcd_3120")) == 0) &
+    (F.length(F.trim("suppcd_1050")) == 0) &
+    (F.length(F.trim("suppcd_1060")) == 0) &
+    (F.length(F.trim("suppcd_1090")) == 0)
 )
 
-# Anti-join: NHAs not yet present in target
-df_sup_new = (
-    df_sup.alias("s")
-    .join(
-        df_existing_nha.alias("t"),
-        F.col("s.nha_cd") == F.col("t.nha"),
-        "left_anti"
+df_stage2 = (
+    df_stage2
+    .withColumn(
+        "suppcd_1900",
+        F.when(eord_apply_cond,
+               F.coalesce("eord_suppcd_1900", "eord_suppcd_1020")
+        ).otherwise("suppcd_1900")
+    )
+    .withColumn(
+        "suppname_1900",
+        F.when(eord_apply_cond,
+               F.coalesce("eord_suppname_1900", "eord_suppname_1020")
+        ).otherwise("suppname_1900")
+    )
+    .withColumn(
+        "suppcd_2000",
+        F.when(eord_apply_cond,
+               F.coalesce("eord_suppcd_2000", "eord_suppcd_1000")
+        ).otherwise("suppcd_2000")
+    )
+    .withColumn(
+        "suppname_2000",
+        F.when(eord_apply_cond,
+               F.coalesce("eord_suppname_2000", "eord_suppname_1000")
+        ).otherwise("suppname_2000")
+    )
+    .withColumn(
+        "suppcd_3120",
+        F.when(eord_apply_cond,
+               F.coalesce("eord_suppcd_3120", "eord_suppcd_1010")
+        ).otherwise("suppcd_3120")
+    )
+    .withColumn(
+        "suppname_3120",
+        F.when(eord_apply_cond,
+               F.coalesce("eord_suppname_3120", "eord_suppname_1010")
+        ).otherwise("suppname_3120")
+    )
+    .withColumn(
+        "suppcd_1050",
+        F.when(eord_apply_cond, "eord_suppcd_1050").otherwise("suppcd_1050")
+    )
+    .withColumn(
+        "suppname_1050",
+        F.when(eord_apply_cond, "eord_suppname_1050").otherwise("suppname_1050")
+    )
+    .withColumn(
+        "suppcd_1060",
+        F.when(eord_apply_cond, "eord_suppcd_1060").otherwise("suppcd_1060")
+    )
+    .withColumn(
+        "suppname_1060",
+        F.when(eord_apply_cond, "eord_suppname_1060").otherwise("suppname_1060")
+    )
+    .withColumn(
+        "suppcd_1090",
+        F.when(eord_apply_cond, "eord_suppcd_1090").otherwise("suppcd_1090")
+    )
+    .withColumn(
+        "suppname_1090",
+        F.when(eord_apply_cond, "eord_suppname_1090").otherwise("suppname_1090")
     )
 )
 
-# Prepare insert dataset
-df_insert = (
-    df_sup_new
-    .select(
-        F.col("nha_cd").alias("nha"),
-
-        "suppcd_1900","suppname_1900",
-        "suppcd_2000","suppname_2000",
-        "suppcd_3120","suppname_3120",
-        "suppcd_1050","suppname_1050",
-        "suppcd_1060","suppname_1060",
-        "suppcd_1090","suppname_1090"
-    )
-    .filter(F.col("nha").isNotNull())
-)
-
-# Optional but good for Fabric scale
-df_insert_balanced = df_insert.repartitionByRange(300, "nha")
-
-# Insert
-(
-    df_insert_balanced
-    .write
-    .mode("append")
-    .format("delta")
-    .saveAsTable(tgt_suppliers)
-)
+df_stage2.createOrReplaceTempView("stage2_eord_filled")
