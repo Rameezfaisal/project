@@ -1,2 +1,1 @@
-spark.table("stage3_deduped").count()
-spark.table("stage4_basepart_filled").count()
+AnalysisException: [AMBIGUOUS_REFERENCE] Reference `suppcd_1900` is ambiguous, could be: [`stage3_deduped`.`suppcd_1900`, `stage3_deduped`.`suppcd_1900`].; line 1 pos 0
