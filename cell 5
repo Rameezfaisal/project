@@ -1,17 +1,36 @@
-df_missing = (
-    spark.read.table(tgt_suppliers).alias("t")
-    .join(
-        df_nha.select(F.col("nha_cd").alias("nha")).alias("n"),
-        "nha",
-        "inner"
+def nz_str(c):
+    return F.when(F.length(F.trim(F.col(c))) > 0, F.col(c))
+
+df_stage1 = (
+    df_stage1
+    .withColumn(
+        "suppcd_1900",
+        F.when(nz_str("suppcd_1900").isNotNull(), F.col("suppcd_1900"))
+         .otherwise(F.col("suppcd_1020"))
     )
-    .filter(
-        (F.coalesce(F.length("suppcd_1900"),F.lit(0)) == 0) &
-        (F.coalesce(F.length("suppcd_2000"),F.lit(0)) == 0) &
-        (F.coalesce(F.length("suppcd_3120"),F.lit(0)) == 0) &
-        (F.coalesce(F.length("suppcd_1050"),F.lit(0)) == 0) &
-        (F.coalesce(F.length("suppcd_1060"),F.lit(0)) == 0) &
-        (F.coalesce(F.length("suppcd_1090"),F.lit(0)) == 0)
+    .withColumn(
+        "suppname_1900",
+        F.when(nz_str("suppcd_1900").isNotNull(), F.col("suppname_1900"))
+         .otherwise(F.col("suppname_1020"))
     )
-    .select("nha")
+    .withColumn(
+        "suppcd_2000",
+        F.when(nz_str("suppcd_2000").isNotNull(), F.col("suppcd_2000"))
+         .otherwise(F.col("suppcd_1000"))
+    )
+    .withColumn(
+        "suppname_2000",
+        F.when(nz_str("suppcd_2000").isNotNull(), F.col("suppname_2000"))
+         .otherwise(F.col("suppname_1000"))
+    )
+    .withColumn(
+        "suppcd_3120",
+        F.when(nz_str("suppcd_3120").isNotNull(), F.col("suppcd_3120"))
+         .otherwise(F.col("suppcd_1010"))
+    )
+    .withColumn(
+        "suppname_3120",
+        F.when(nz_str("suppcd_3120").isNotNull(), F.col("suppname_3120"))
+         .otherwise(F.col("suppname_1010"))
+    )
 )
