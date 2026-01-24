@@ -1,28 +1,32 @@
+# ------------------------------------------------
+# STEP 4 — Build MRP-Preferred Supplier Matrix
+# (100% SAP-faithful)
+# ------------------------------------------------
 
-
-
-# filter only MRP preferred rows
+# Filter only MRP preferred rows
 df_inforec_mrp = df_inforec.filter(F.col("mrp_cd") == valid_mrp)
 
-# helper to pad supplier codes to 10 chars
-def pad10(col):
+# Safe padding (only when value exists)
+def pad10_safe(c):
     return F.when(
-        F.length(F.trim(col)) > 0,
-        F.lpad(col, 10, "0")
+        F.length(F.trim(c)) > 0,
+        F.lpad(c, 10, "0")
     )
 
-# create plant specific filtered datasets
+# Create plant-specific INFOREC datasets
 def plant_inforec(plant):
     return (
         df_inforec_mrp
         .filter(F.col("plant_cd") == plant)
         .select(
             F.col("material_cd").alias("nha"),
-            pad10(F.col("supcode_cd")).alias(f"suppcd_{plant}"),
+            F.col("supcode_cd").alias(f"raw_suppcd_{plant}"),   # raw SUPCODE (SAP check)
+            pad10_safe(F.col("supcode_cd")).alias(f"suppcd_{plant}"),
             F.col("suppliername_cd").alias(f"suppname_{plant}")
         )
     )
 
+# Procurement plants
 inf_1900 = plant_inforec("1900")
 inf_2000 = plant_inforec("2000")
 inf_3120 = plant_inforec("3120")
@@ -30,14 +34,15 @@ inf_1050 = plant_inforec("1050")
 inf_1060 = plant_inforec("1060")
 inf_1090 = plant_inforec("1090")
 
-# fallback plants
+# Fallback plants
 inf_1000 = plant_inforec("1000")
 inf_1010 = plant_inforec("1010")
 inf_1020 = plant_inforec("1020")
 
-# join OMAT NHA with all plants
-df_nha = df_omat.select("nha")
+# DISTINCT NHA (SAP SELECT DISTINCT)
+df_nha = df_omat.select("nha").distinct()
 
+# Join all plant datasets
 df_stage1 = (
     df_nha
     .join(inf_1900, "nha", "left")
@@ -51,45 +56,50 @@ df_stage1 = (
     .join(inf_1020, "nha", "left")
 )
 
-# apply SAP fallback logic
-def nz_str(c):
-    return F.when(F.length(F.trim(F.col(c))) > 0, F.col(c))
+# ------------------------------------------------
+# SAP CASE-WHEN fallback logic (RAW SUPCODE based)
+# ------------------------------------------------
 
 df_stage1 = (
     df_stage1
+    # 1900 ← 1020
     .withColumn(
         "suppcd_1900",
-        F.when(nz_str("suppcd_1900").isNotNull(), F.col("suppcd_1900"))
+        F.when(F.length(F.trim("raw_suppcd_1900")) > 0, F.col("suppcd_1900"))
          .otherwise(F.col("suppcd_1020"))
     )
     .withColumn(
         "suppname_1900",
-        F.when(nz_str("suppcd_1900").isNotNull(), F.col("suppname_1900"))
+        F.when(F.length(F.trim("raw_suppcd_1900")) > 0, F.col("suppname_1900"))
          .otherwise(F.col("suppname_1020"))
     )
+
+    # 2000 ← 1000
     .withColumn(
         "suppcd_2000",
-        F.when(nz_str("suppcd_2000").isNotNull(), F.col("suppcd_2000"))
+        F.when(F.length(F.trim("raw_suppcd_2000")) > 0, F.col("suppcd_2000"))
          .otherwise(F.col("suppcd_1000"))
     )
     .withColumn(
         "suppname_2000",
-        F.when(nz_str("suppcd_2000").isNotNull(), F.col("suppname_2000"))
+        F.when(F.length(F.trim("raw_suppcd_2000")) > 0, F.col("suppname_2000"))
          .otherwise(F.col("suppname_1000"))
     )
+
+    # 3120 ← 1010
     .withColumn(
         "suppcd_3120",
-        F.when(nz_str("suppcd_3120").isNotNull(), F.col("suppcd_3120"))
+        F.when(F.length(F.trim("raw_suppcd_3120")) > 0, F.col("suppcd_3120"))
          .otherwise(F.col("suppcd_1010"))
     )
     .withColumn(
         "suppname_3120",
-        F.when(nz_str("suppcd_3120").isNotNull(), F.col("suppname_3120"))
+        F.when(F.length(F.trim("raw_suppcd_3120")) > 0, F.col("suppname_3120"))
          .otherwise(F.col("suppname_1010"))
     )
 )
 
-# keep only required columns
+# Final projection (drop raw columns)
 df_stage1 = df_stage1.select(
     "nha",
     "suppcd_1900", "suppname_1900",
