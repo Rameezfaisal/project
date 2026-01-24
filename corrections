@@ -1,37 +1,37 @@
-# ===============================
-# Identify NHAs that have duplicates
-# ===============================
+# ------------------------------------------------
+# STEP 6 — Remove non-preferred suppliers (SAP-faithful)
+# ------------------------------------------------
+
+from pyspark.sql.window import Window
+
+df_base = spark.table("stage2_eord_filled")
+
+# 1. SAP ROW_NUMBER logic (not simple count)
+w = Window.partitionBy("nha").orderBy("nha")
+
+df_with_rn = df_base.withColumn("rn", F.row_number().over(w))
+
 df_dups = (
-    spark.table("stage2_eord_filled")
-    .groupBy("nha")
-    .count()
-    .filter(F.col("count") > 1)
-    .select(F.col("nha").alias("dup_nha"))
+    df_with_rn
+    .filter(F.col("rn") > 1)
+    .select("nha")
+    .distinct()
 )
 
-# ===============================
-# Prepare EORD flags
-# ===============================
-df_eord_flag = (
-    df_eord
-    .select(
-        F.col("matnr_cd").alias("eord_nha"),
-        F.col("werks_cd").alias("eord_plant"),
-        F.col("lifnr_cd").alias("eord_lifnr"),
-        F.col("flifn_cd").alias("eord_flifn"),
-        F.col("autet_cd").alias("eord_autet")
-    )
+# 2. Prepare EORD flags
+df_eord_flag = df_eord.select(
+    F.col("matnr_cd").alias("eord_nha"),
+    F.col("werks_cd").alias("eord_plant"),
+    F.col("lifnr_cd").alias("eord_lifnr"),
+    F.col("flifn_cd").alias("eord_flifn"),
+    F.col("autet_cd").alias("eord_autet")
 )
 
-base = spark.table("stage2_eord_filled")
-
-# ===============================
-# Apply SAP delete logic per plant
-# ===============================
+# 3. SAP delete logic per plant
 def dedup_plant(df, plant):
     return (
         df
-        .join(df_dups, df.nha == df_dups.dup_nha, "left")
+        .join(df_dups, "nha", "left")
         .join(
             df_eord_flag,
             (df.nha == df_eord_flag.eord_nha) &
@@ -41,15 +41,15 @@ def dedup_plant(df, plant):
         )
         .filter(
             ~(
-                F.col("dup_nha").isNotNull() &
-                F.col("eord_autet").isNotNull() &
-                (F.col("eord_flifn") != preferred_flag)
+                F.col("nha").isNotNull() &           # duplicate NHA
+                (F.col("eord_flifn") != preferred_flag) &
+                F.col("eord_autet").isNotNull()      # forces SAP join semantics
             )
         )
-        .drop("dup_nha","eord_nha","eord_plant","eord_lifnr","eord_flifn","eord_autet")
+        .drop("rn","eord_nha","eord_plant","eord_lifnr","eord_flifn","eord_autet")
     )
 
-df_stage3 = base
+df_stage3 = df_with_rn.drop("rn")
 for p in procurement_plants:
     df_stage3 = dedup_plant(df_stage3, p)
 
