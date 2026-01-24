@@ -1,59 +1,11 @@
-
-# 1. Final dataset
-
-df_final = spark.table("stage7_final_suppliers")
-
-
-# 2. Replace target table (full refresh)
-
-(
-    df_final
-    .select(
-        "nha",
-        "omat_selected_plant",
-        "omat_selected_supplier",
-        "omat_selected_suppliercd",
-        "suppcd_1050",
-        "suppcd_1060",
-        "suppcd_1090",
-        "suppcd_1900",
-        "suppcd_2000",
-        "suppcd_3120",
-        "suppcd_po1",
-        "suppcd_po2",
-        "suppcd_pr",
-        "suppname_1050",
-        "suppname_1060",
-        "suppname_1090",
-        "suppname_1900",
-        "suppname_2000",
-        "suppname_3120",
-        "suppname_po1",
-        "suppname_po2",
-        "suppname_pr"
-    )
-    .write
-    .mode("overwrite")
-    .format("delta")
-    .option("overwriteSchema", "true")
-    .saveAsTable(tgt_suppliers_tbl)
-)
-
-
-# 3. Insert execution log
-
-
-log_schema = StructType([
-    StructField("executed_on", TimestampType(), True),
-    StructField("obprtno_cnt", IntegerType(), True),
-    StructField("obprtno_nha_cnt", IntegerType(), True),
-    StructField("obpr_cnt", IntegerType(), True),
-    StructField("program_name", StringType(), True)
-])
-
 log_df = spark.createDataFrame(
-    [(None, None, None, None, program_name)],
-    schema=log_schema
+    [(0, 0, 0, program_name)],
+    schema=StructType([
+        StructField("obprtno_cnt", IntegerType(), False),
+        StructField("obprtno_nha_cnt", IntegerType(), False),
+        StructField("obpr_cnt", IntegerType(), False),
+        StructField("program_name", StringType(), False)
+    ])
 ).withColumn("executed_on", F.current_timestamp())
 
 (
