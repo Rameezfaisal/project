@@ -1,43 +1,9 @@
+from pyspark.sql import functions as F
 
-df_base = spark.table("stage3_deduped")
+df = spark.table("stage3_deduped")
 
-df_lookup = df_base.select(
-    F.col("nha").alias("base_nha"),
-    *[F.col(c).alias(f"base_{c}") for c in df_base.columns if c != "nha"]
-)
-
-# Pattern-1
-df_p1 = (
-    df_base
-    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", "-"))
-    .join(df_lookup, "base_nha", "left")
-)
-
-# Fill from pattern-1
-df_filled = fill_from_base(df_p1)
-
-# Pattern-2 (ONLY for rows still missing suppliers)
-df_p2 = (
-    df_filled
-    .filter(F.col("suppcd_2000").isNull())   # key plant check
-    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", ""))
-    .join(df_lookup, "base_nha", "left")
-)
-
-# Final fill
-df_stage4 = fill_from_base(
-    df_filled.unionByName(df_p2.select(df_filled.columns))
-)
-
-df_stage4.createOrReplaceTempView("stage4_basepart_filled")
-
-
-
-
-df_base = spark.table("stage3_deduped")
-
-# 1. Condition: ALL suppliers missing (SAP WHERE clause)
-no_supplier_cond = (
+# SAP WHERE condition: all suppliers missing
+no_supplier = (
     (F.length(F.trim("suppcd_1900")) == 0) &
     (F.length(F.trim("suppcd_2000")) == 0) &
     (F.length(F.trim("suppcd_3120")) == 0) &
@@ -46,95 +12,77 @@ no_supplier_cond = (
     (F.length(F.trim("suppcd_1090")) == 0)
 )
 
-# 2. Base lookup
-df_lookup = df_base.select(
-    F.col("nha").alias("base_nha"),
-    F.col("suppcd_1900").alias("base_suppcd_1900"),
-    F.col("suppname_1900").alias("base_suppname_1900"),
-    F.col("suppcd_2000").alias("base_suppcd_2000"),
-    F.col("suppname_2000").alias("base_suppname_2000"),
-    F.col("suppcd_3120").alias("base_suppcd_3120"),
-    F.col("suppname_3120").alias("base_suppname_3120"),
-    F.col("suppcd_1050").alias("base_suppcd_1050"),
-    F.col("suppname_1050").alias("base_suppname_1050"),
-    F.col("suppcd_1060").alias("base_suppcd_1060"),
-    F.col("suppname_1060").alias("base_suppname_1060"),
-    F.col("suppcd_1090").alias("base_suppcd_1090"),
-    F.col("suppname_1090").alias("base_suppname_1090")
+# Build base lookup ONCE (acts like correlated subquery)
+base_lookup = (
+    df.select(
+        F.col("nha").alias("base_nha"),
+        "suppcd_1900","suppname_1900",
+        "suppcd_2000","suppname_2000",
+        "suppcd_3120","suppname_3120",
+        "suppcd_1050","suppname_1050",
+        "suppcd_1060","suppname_1060",
+        "suppcd_1090","suppname_1090"
+    )
 )
 
-# 3. Pattern-1: replace R,S,C,X,D with "-"
-df_p1 = (
-    df_base
+# Pattern-1: replace R/S/C/X/D → '-'
+p1 = (
+    df
     .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", "-"))
-    .join(df_lookup, "base_nha", "left")
+    .join(base_lookup, "base_nha", "left")
 )
 
-# 4. Pattern-2: remove R,S,C,X,D
-df_p2 = (
-    df_base
+# Pattern-2: remove R/S/C/X/D
+p2 = (
+    df
     .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", ""))
-    .join(df_lookup, "base_nha", "left")
+    .join(base_lookup, "base_nha", "left")
 )
 
-# 5. Apply SAP CASE logic (Pattern-1 first, then Pattern-2)
-def apply_base(col_main, col_p1, col_p2):
+# Apply SAP CASE logic column-by-column
+def sap_update(main, p1c, p2c):
     return (
         F.when(
-            no_supplier_cond,
-            F.when(F.length(F.trim(col_p1)) > 0, F.col(col_p1))
-             .otherwise(F.col(col_p2))
-        ).otherwise(F.col(col_main))
+            no_supplier,
+            F.when(F.length(F.trim(p1c)) > 0, p1c)
+             .otherwise(p2c)
+        ).otherwise(main)
     )
 
 df_stage4 = (
-    df_base
-    .join(
-        df_p1.select(
-            "nha",
-            "base_suppcd_1900","base_suppname_1900",
-            "base_suppcd_2000","base_suppname_2000",
-            "base_suppcd_3120","base_suppname_3120",
-            "base_suppcd_1050","base_suppname_1050",
-            "base_suppcd_1060","base_suppname_1060",
-            "base_suppcd_1090","base_suppname_1090"
-        ),
+    df
+    .join(p1.selectExpr(
         "nha",
-        "left"
-    )
-    .join(
-        df_p2.select(
-            "nha",
-            F.col("base_suppcd_1900").alias("p2_suppcd_1900"),
-            F.col("base_suppname_1900").alias("p2_suppname_1900"),
-            F.col("base_suppcd_2000").alias("p2_suppcd_2000"),
-            F.col("base_suppname_2000").alias("p2_suppname_2000"),
-            F.col("base_suppcd_3120").alias("p2_suppcd_3120"),
-            F.col("base_suppname_3120").alias("p2_suppname_3120"),
-            F.col("base_suppcd_1050").alias("p2_suppcd_1050"),
-            F.col("base_suppname_1050").alias("p2_suppname_1050"),
-            F.col("base_suppcd_1060").alias("p2_suppcd_1060"),
-            F.col("base_suppname_1060").alias("p2_suppname_1060"),
-            F.col("base_suppcd_1090").alias("p2_suppcd_1090"),
-            F.col("base_suppname_1090").alias("p2_suppname_1090")
-        ),
+        "suppcd_1900 as p1_suppcd_1900", "suppname_1900 as p1_suppname_1900",
+        "suppcd_2000 as p1_suppcd_2000", "suppname_2000 as p1_suppname_2000",
+        "suppcd_3120 as p1_suppcd_3120", "suppname_3120 as p1_suppname_3120",
+        "suppcd_1050 as p1_suppcd_1050", "suppname_1050 as p1_suppname_1050",
+        "suppcd_1060 as p1_suppcd_1060", "suppname_1060 as p1_suppname_1060",
+        "suppcd_1090 as p1_suppcd_1090", "suppname_1090 as p1_suppname_1090"
+    ), "nha", "left")
+    .join(p2.selectExpr(
         "nha",
-        "left"
-    )
+        "suppcd_1900 as p2_suppcd_1900", "suppname_1900 as p2_suppname_1900",
+        "suppcd_2000 as p2_suppcd_2000", "suppname_2000 as p2_suppname_2000",
+        "suppcd_3120 as p2_suppcd_3120", "suppname_3120 as p2_suppname_3120",
+        "suppcd_1050 as p2_suppcd_1050", "suppname_1050 as p2_suppname_1050",
+        "suppcd_1060 as p2_suppcd_1060", "suppname_1060 as p2_suppname_1060",
+        "suppcd_1090 as p2_suppcd_1090", "suppname_1090 as p2_suppname_1090"
+    ), "nha", "left")
     .select(
         "nha",
-        apply_base("suppcd_1900","base_suppcd_1900","p2_suppcd_1900").alias("suppcd_1900"),
-        apply_base("suppname_1900","base_suppname_1900","p2_suppname_1900").alias("suppname_1900"),
-        apply_base("suppcd_2000","base_suppcd_2000","p2_suppcd_2000").alias("suppcd_2000"),
-        apply_base("suppname_2000","base_suppname_2000","p2_suppname_2000").alias("suppname_2000"),
-        apply_base("suppcd_3120","base_suppcd_3120","p2_suppcd_3120").alias("suppcd_3120"),
-        apply_base("suppname_3120","base_suppname_3120","p2_suppname_3120").alias("suppname_3120"),
-        apply_base("suppcd_1050","base_suppcd_1050","p2_suppcd_1050").alias("suppcd_1050"),
-        apply_base("suppname_1050","base_suppname_1050","p2_suppname_1050").alias("suppname_1050"),
-        apply_base("suppcd_1060","base_suppcd_1060","p2_suppcd_1060").alias("suppcd_1060"),
-        apply_base("suppname_1060","base_suppname_1060","p2_suppname_1060").alias("suppname_1060"),
-        apply_base("suppcd_1090","base_suppcd_1090","p2_suppcd_1090").alias("suppcd_1090"),
-        apply_base("suppname_1090","base_suppname_1090","p2_suppname_1090").alias("suppname_1090")
+        sap_update("suppcd_1900","p1_suppcd_1900","p2_suppcd_1900").alias("suppcd_1900"),
+        sap_update("suppname_1900","p1_suppname_1900","p2_suppname_1900").alias("suppname_1900"),
+        sap_update("suppcd_2000","p1_suppcd_2000","p2_suppcd_2000").alias("suppcd_2000"),
+        sap_update("suppname_2000","p1_suppname_2000","p2_suppname_2000").alias("suppname_2000"),
+        sap_update("suppcd_3120","p1_suppcd_3120","p2_suppcd_3120").alias("suppcd_3120"),
+        sap_update("suppname_3120","p1_suppname_3120","p2_suppname_3120").alias("suppname_3120"),
+        sap_update("suppcd_1050","p1_suppcd_1050","p2_suppcd_1050").alias("suppcd_1050"),
+        sap_update("suppname_1050","p1_suppname_1050","p2_suppname_1050").alias("suppname_1050"),
+        sap_update("suppcd_1060","p1_suppcd_1060","p2_suppcd_1060").alias("suppcd_1060"),
+        sap_update("suppname_1060","p1_suppname_1060","p2_suppname_1060").alias("suppname_1060"),
+        sap_update("suppcd_1090","p1_suppcd_1090","p2_suppcd_1090").alias("suppcd_1090"),
+        sap_update("suppname_1090","p1_suppname_1090","p2_suppname_1090").alias("suppname_1090")
     )
 )
 
