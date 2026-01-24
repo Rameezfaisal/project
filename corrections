@@ -1,112 +1,56 @@
-# ------------------------------------------------
-# STEP 10 — OB PR Supplier (SAP-faithful)
-# ------------------------------------------------
+# ===============================
+# Identify NHAs that have duplicates
+# ===============================
+df_dups = (
+    spark.table("stage2_eord_filled")
+    .groupBy("nha")
+    .count()
+    .filter(F.col("count") > 1)
+    .select(F.col("nha").alias("dup_nha"))
+)
 
-df_pr = (
-    df_iplm
-    .filter(F.col("part_name_cd") != "NA")          # ✅ missing in notebook
-    .filter(F.col("state_cd") != "CLOSED")
-    .filter(F.col("reason_cd") == "OBSOLETE COMPONENT")
-    .filter(
-        (F.col("state_cd").isin("CONFIRMED", "IN REVIEW", "IN WORK")) |
-        (F.col("disposition_cd").isin("CONFIRMED", "DEFER"))
-    )
-    .withColumn(
-        "suppcd_pr",
-        F.when(
-            F.length(F.trim("supplier_code_cd")) > 0,
-            F.lpad("supplier_code_cd", 10, "0")
-        )
-    )
-    .join(df_lfa1, F.col("suppcd_pr") == df_lfa1.lifnr_cd, "left")
+# ===============================
+# Prepare EORD flags
+# ===============================
+df_eord_flag = (
+    df_eord
     .select(
-        F.col("part_name_cd"),
-        F.col("suppcd_pr"),
-        F.col("name1_cd").alias("suppname_pr")
+        F.col("matnr_cd").alias("eord_nha"),
+        F.col("werks_cd").alias("eord_plant"),
+        F.col("lifnr_cd").alias("eord_lifnr"),
+        F.col("flifn_cd").alias("eord_flifn"),
+        F.col("autet_cd").alias("eord_autet")
     )
 )
 
-df_stage6 = (
-    spark.table("stage5_with_po")
-    .join(df_pr, df_pr.part_name_cd == F.col("nha"), "left")
-    .drop("part_name_cd")
-)
+base = spark.table("stage2_eord_filled")
 
-df_stage6.createOrReplaceTempView("stage6_with_pr")
-
-
-
-
-
-
-
-
-
-
-
-# ------------------------------------------------
-# STEP 11 — Final OMAT Supplier & Plant Selection
-# (100% SAP-faithful)
-# ------------------------------------------------
-
-df = spark.table("stage6_with_pr")
-
-def has_val(c):
-    return F.length(F.trim(F.col(c))) > 0
-
-df_final = (
-    df
-
-    # -------------------------------
-    # Selected Supplier Code
-    # -------------------------------
-    .withColumn(
-        "omat_selected_suppliercd",
-        F.when(has_val("suppcd_2000"), F.col("suppcd_2000"))
-         .when(has_val("suppcd_1900"), F.col("suppcd_1900"))
-         .when(has_val("suppcd_3120"), F.col("suppcd_3120"))
-         .when(has_val("suppcd_1050"), F.col("suppcd_1050"))
-         .when(has_val("suppcd_1060"), F.col("suppcd_1060"))
-         .when(has_val("suppcd_1090"), F.col("suppcd_1090"))
-         .when(F.length(F.trim("suppcd_po1")) == 10, F.col("suppcd_po1"))
-         .when(F.length(F.trim("suppcd_po2")) == 10, F.col("suppcd_po2"))
-         .when(has_val("suppcd_pr"), F.col("suppcd_pr"))
+# ===============================
+# Apply SAP delete logic per plant
+# ===============================
+def dedup_plant(df, plant):
+    return (
+        df
+        .join(df_dups, df.nha == df_dups.dup_nha, "left")
+        .join(
+            df_eord_flag,
+            (df.nha == df_eord_flag.eord_nha) &
+            (df_eord_flag.eord_plant == plant) &
+            (df_eord_flag.eord_lifnr == df[f"suppcd_{plant}"]),
+            "left"
+        )
+        .filter(
+            ~(
+                F.col("dup_nha").isNotNull() &
+                F.col("eord_autet").isNotNull() &
+                (F.col("eord_flifn") != preferred_flag)
+            )
+        )
+        .drop("dup_nha","eord_nha","eord_plant","eord_lifnr","eord_flifn","eord_autet")
     )
 
-    # -------------------------------
-    # Selected Supplier Name
-    # -------------------------------
-    .withColumn(
-        "omat_selected_supplier",
-        F.when(has_val("suppcd_2000"), F.col("suppname_2000"))
-         .when(has_val("suppcd_1900"), F.col("suppname_1900"))
-         .when(has_val("suppcd_3120"), F.col("suppname_3120"))
-         .when(has_val("suppcd_1050"), F.col("suppname_1050"))
-         .when(has_val("suppcd_1060"), F.col("suppname_1060"))
-         .when(has_val("suppcd_1090"), F.col("suppname_1090"))
-         .when(F.length(F.trim("suppcd_po1")) == 10, F.col("suppname_po1"))
-         .when(F.length(F.trim("suppcd_po2")) == 10, F.col("suppname_po2"))
-         .when(has_val("suppcd_pr"), F.col("suppname_pr"))
-    )
+df_stage3 = base
+for p in procurement_plants:
+    df_stage3 = dedup_plant(df_stage3, p)
 
-    # -------------------------------
-    # Selected Plant
-    # -------------------------------
-    .withColumn(
-        "omat_selected_plant",
-        F.when(has_val("suppcd_2000"), F.lit("2000"))
-         .when(has_val("suppcd_1900"), F.lit("1900"))
-         .when(has_val("suppcd_3120"), F.lit("3120"))
-         .when(has_val("suppcd_1050"), F.lit("1050"))
-         .when(has_val("suppcd_1060"), F.lit("1060"))
-         .when(has_val("suppcd_1090"), F.lit("1090"))
-         .when(F.length(F.trim("suppcd_po1")) == 10, F.lit("2000"))
-         .when(has_val("suppcd_pr"), F.lit("2000"))
-    )
-)
-
-df_final.createOrReplaceTempView("stage7_final_suppliers")
-
-
-
-
+df_stage3.createOrReplaceTempView("stage3_deduped")
