@@ -1,6 +1,8 @@
     F.col("ordertype").alias("ordertype"),
-    
-    # CORRECTED: Strictly use deliveryduedate to match SAP "DeliveryDueDate" filter
-    F.col("deliveryduedate").alias("demand_date"),
-    
+    # use the same “best available date” logic, but still filter on the 26-week window
+    F.coalesce(
+        F.col("deliveryduedate"),
+        F.col("requestdate"),
+        F.col("firmcommitdate")
+    ).alias("demand_date"),
     F.col("openqty").alias("openqty")
