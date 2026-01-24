@@ -1,8 +1,20 @@
+# ------------------------------------------------
+# STEP 7 — Base-part supplier inheritance (SAP-faithful)
+# ------------------------------------------------
+
 df_base = spark.table("stage3_deduped")
 
-# -------------------------------
-# Create base lookup with renamed columns
-# -------------------------------
+# 1. Condition: ALL suppliers missing (SAP WHERE clause)
+no_supplier_cond = (
+    (F.length(F.trim("suppcd_1900")) == 0) &
+    (F.length(F.trim("suppcd_2000")) == 0) &
+    (F.length(F.trim("suppcd_3120")) == 0) &
+    (F.length(F.trim("suppcd_1050")) == 0) &
+    (F.length(F.trim("suppcd_1060")) == 0) &
+    (F.length(F.trim("suppcd_1090")) == 0)
+)
+
+# 2. Base lookup
 df_lookup = df_base.select(
     F.col("nha").alias("base_nha"),
     F.col("suppcd_1900").alias("base_suppcd_1900"),
@@ -19,55 +31,79 @@ df_lookup = df_base.select(
     F.col("suppname_1090").alias("base_suppname_1090")
 )
 
-# -------------------------------
-# Pattern 1: replace R,S,C,X,D with "-"
-# -------------------------------
+# 3. Pattern-1: replace R,S,C,X,D with "-"
 df_p1 = (
     df_base
     .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", "-"))
     .join(df_lookup, "base_nha", "left")
 )
 
-# -------------------------------
-# Pattern 2: remove R,S,C,X,D
-# -------------------------------
+# 4. Pattern-2: remove R,S,C,X,D
 df_p2 = (
     df_base
     .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", ""))
     .join(df_lookup, "base_nha", "left")
 )
 
-# -------------------------------
-# Fill missing suppliers from base part
-# -------------------------------
-def fill_from_base(df):
+# 5. Apply SAP CASE logic (Pattern-1 first, then Pattern-2)
+def apply_base(col_main, col_p1, col_p2):
     return (
-        df
-        .withColumn("suppcd_1900", F.coalesce("suppcd_1900", "base_suppcd_1900"))
-        .withColumn("suppname_1900", F.coalesce("suppname_1900", "base_suppname_1900"))
-        .withColumn("suppcd_2000", F.coalesce("suppcd_2000", "base_suppcd_2000"))
-        .withColumn("suppname_2000", F.coalesce("suppname_2000", "base_suppname_2000"))
-        .withColumn("suppcd_3120", F.coalesce("suppcd_3120", "base_suppcd_3120"))
-        .withColumn("suppname_3120", F.coalesce("suppname_3120", "base_suppname_3120"))
-        .withColumn("suppcd_1050", F.coalesce("suppcd_1050", "base_suppcd_1050"))
-        .withColumn("suppname_1050", F.coalesce("suppname_1050", "base_suppname_1050"))
-        .withColumn("suppcd_1060", F.coalesce("suppcd_1060", "base_suppcd_1060"))
-        .withColumn("suppname_1060", F.coalesce("suppname_1060", "base_suppname_1060"))
-        .withColumn("suppcd_1090", F.coalesce("suppcd_1090", "base_suppcd_1090"))
-        .withColumn("suppname_1090", F.coalesce("suppname_1090", "base_suppname_1090"))
+        F.when(
+            no_supplier_cond,
+            F.when(F.length(F.trim(col_p1)) > 0, F.col(col_p1))
+             .otherwise(F.col(col_p2))
+        ).otherwise(F.col(col_main))
     )
 
-df_stage4 = fill_from_base(df_p1)
-df_stage4 = fill_from_base(df_stage4.join(df_p2.select("nha"), "nha", "left"))
-
-df_stage4 = df_stage4.select(
-    "nha",
-    "suppcd_1900","suppname_1900",
-    "suppcd_2000","suppname_2000",
-    "suppcd_3120","suppname_3120",
-    "suppcd_1050","suppname_1050",
-    "suppcd_1060","suppname_1060",
-    "suppcd_1090","suppname_1090"
+df_stage4 = (
+    df_base
+    .join(
+        df_p1.select(
+            "nha",
+            "base_suppcd_1900","base_suppname_1900",
+            "base_suppcd_2000","base_suppname_2000",
+            "base_suppcd_3120","base_suppname_3120",
+            "base_suppcd_1050","base_suppname_1050",
+            "base_suppcd_1060","base_suppname_1060",
+            "base_suppcd_1090","base_suppname_1090"
+        ),
+        "nha",
+        "left"
+    )
+    .join(
+        df_p2.select(
+            "nha",
+            F.col("base_suppcd_1900").alias("p2_suppcd_1900"),
+            F.col("base_suppname_1900").alias("p2_suppname_1900"),
+            F.col("base_suppcd_2000").alias("p2_suppcd_2000"),
+            F.col("base_suppname_2000").alias("p2_suppname_2000"),
+            F.col("base_suppcd_3120").alias("p2_suppcd_3120"),
+            F.col("base_suppname_3120").alias("p2_suppname_3120"),
+            F.col("base_suppcd_1050").alias("p2_suppcd_1050"),
+            F.col("base_suppname_1050").alias("p2_suppname_1050"),
+            F.col("base_suppcd_1060").alias("p2_suppcd_1060"),
+            F.col("base_suppname_1060").alias("p2_suppname_1060"),
+            F.col("base_suppcd_1090").alias("p2_suppcd_1090"),
+            F.col("base_suppname_1090").alias("p2_suppname_1090")
+        ),
+        "nha",
+        "left"
+    )
+    .select(
+        "nha",
+        apply_base("suppcd_1900","base_suppcd_1900","p2_suppcd_1900").alias("suppcd_1900"),
+        apply_base("suppname_1900","base_suppname_1900","p2_suppname_1900").alias("suppname_1900"),
+        apply_base("suppcd_2000","base_suppcd_2000","p2_suppcd_2000").alias("suppcd_2000"),
+        apply_base("suppname_2000","base_suppname_2000","p2_suppname_2000").alias("suppname_2000"),
+        apply_base("suppcd_3120","base_suppcd_3120","p2_suppcd_3120").alias("suppcd_3120"),
+        apply_base("suppname_3120","base_suppname_3120","p2_suppname_3120").alias("suppname_3120"),
+        apply_base("suppcd_1050","base_suppcd_1050","p2_suppcd_1050").alias("suppcd_1050"),
+        apply_base("suppname_1050","base_suppname_1050","p2_suppname_1050").alias("suppname_1050"),
+        apply_base("suppcd_1060","base_suppcd_1060","p2_suppcd_1060").alias("suppcd_1060"),
+        apply_base("suppname_1060","base_suppname_1060","p2_suppname_1060").alias("suppname_1060"),
+        apply_base("suppcd_1090","base_suppcd_1090","p2_suppcd_1090").alias("suppcd_1090"),
+        apply_base("suppname_1090","base_suppname_1090","p2_suppname_1090").alias("suppname_1090")
+    )
 )
 
 df_stage4.createOrReplaceTempView("stage4_basepart_filled")
