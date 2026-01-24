@@ -1,25 +1,4 @@
-df_po_valid = (
-    df_zpo
-    .join(df_ekpo, ["ebeln_cd","ebelp_cd"])
-    .filter(F.col("status_cd") != "INACT")
-    .filter(F.col("loekz_cd") == "")
-    .filter(F.col("discrd_cd") != "X")
-    .filter(F.col("aussl_cd") != "U3")
-    .filter(F.col("bsart_cd") != "UB")
-    .filter(F.col("elikz_cd") != "X")
-    .filter(~F.col("pstyp_cd").isin("7","9"))
-    .filter(F.length("lifnr_cd") == 10)
-    .filter(~F.substring("due_dt_cd",-5,5).isin("04-01","12-31"))
-)
-
-df_posupp = (
-    df_po_valid
-    .join(df_lfa1,"lifnr_cd","left")
-    .groupBy(F.col("matnr_cd").alias("nha"))
-    .agg(
-        F.expr("concat_ws(',', array_sort(collect_set(lifnr_cd)))").alias("posuppcode"),
-        F.expr("concat_ws(',', array_sort(collect_set(name1_cd)))").alias("posuppname")
-    )
-)
-
-df_posupp.createOrReplaceTempView("posupp")
+-- How many OMAT NHAs actually have OPEN_PO_QTY > 0?
+SELECT COUNT(DISTINCT nha)
+FROM src_omat_dmd_tbl
+WHERE open_po_qty > 0;
