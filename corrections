@@ -1,18 +1,3 @@
-# ===============================
-# OMAT demand / consumption
-# ===============================
-df_omat = (
-    spark.read.table(src_omat_dmd_tbl)
-         .select(
-             F.col("nha").alias("nha"),
-             F.col("open_po_qty").cast("int").alias("open_po_qty")
-         )
-         .dropDuplicates(["nha"])
-)
-
-# ===============================
-# INFOREC
-# ===============================
 df_inforec = (
     spark.read.table(src_inforec_tbl)
          .select(
@@ -24,76 +9,8 @@ df_inforec = (
              F.col("supcat").alias("supcat_cd")
          )
          .filter(F.col("supcode_cd").isNotNull())
+         .filter(F.length(F.trim(F.col("supcode_cd"))) > 0)   # ✅ ADD
          .filter(~F.col("supcat_cd").isin(excluded_supcats))
 )
 
-# ===============================
-# EORD
-# ===============================
-df_eord = (
-    spark.read.table(src_eord_tbl)
-         .select(
-             F.col("matnr").alias("matnr_cd"),
-             F.col("werks").alias("werks_cd"),
-             F.col("lifnr").alias("lifnr_cd"),
-             F.col("autet").alias("autet_cd"),
-             F.col("flifn").alias("flifn_cd")
-         )
-)
 
-# ===============================
-# LFA1 (Supplier master)
-# ===============================
-df_lfa1 = (
-    spark.read.table(src_lfa1_tbl)
-         .select(
-             F.col("lifnr").alias("lifnr_cd"),
-             F.col("name1").alias("name1_cd")
-         )
-)
-
-# ===============================
-# ZPO history (Open PO logic)
-# ===============================
-df_zpo = (
-    spark.read.table(src_zpo_hist_tbl)
-         .select(
-             F.col("matnr").alias("matnr_cd"),
-             F.col("lifnr").alias("lifnr_cd"),
-             F.col("ebeln").alias("ebeln_cd"),
-             F.col("ebelp").alias("ebelp_cd"),
-             F.col("due_dt").alias("due_dt_cd"),
-             F.col("status").alias("status_cd"),
-             F.col("loekz").alias("loekz_cd"),
-             F.col("discrd").alias("discrd_cd"),
-             F.col("aussl").alias("aussl_cd"),
-             F.col("bsart").alias("bsart_cd"),
-             F.col("elikz").alias("elikz_cd")
-         )
-)
-
-# ===============================
-# EKPO
-# ===============================
-df_ekpo = (
-    spark.read.table(src_ekpo_tbl)
-         .select(
-             F.col("ebeln").alias("ebeln_cd"),
-             F.col("ebelp").alias("ebelp_cd"),
-             F.col("pstyp").alias("pstyp_cd")
-         )
-)
-
-# ===============================
-# IPLM OB PR
-# ===============================
-df_iplm = (
-    spark.read.table(src_iplm_tbl)
-         .select(
-             F.col("part_name").alias("part_name_cd"),
-             F.col("supplier_code").alias("supplier_code_cd"),
-             F.upper(F.col("state")).alias("state_cd"),
-             F.upper(F.col("disposition")).alias("disposition_cd"),
-             F.upper(F.col("reason")).alias("reason_cd")
-         )
-)
