@@ -1,1 +1,95 @@
-AnalysisException: [AMBIGUOUS_REFERENCE] Reference `suppcd_1900` is ambiguous, could be: [`stage3_deduped`.`suppcd_1900`, `stage3_deduped`.`suppcd_1900`].; line 1 pos 0
+df = spark.table("stage3_deduped").alias("cur")
+
+
+
+
+
+p1 = (
+    df
+    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", "-"))
+    .join(
+        df.selectExpr(
+            "nha as base_nha",
+            "suppcd_1900 as p1_suppcd_1900", "suppname_1900 as p1_suppname_1900",
+            "suppcd_2000 as p1_suppcd_2000", "suppname_2000 as p1_suppname_2000",
+            "suppcd_3120 as p1_suppcd_3120", "suppname_3120 as p1_suppname_3120",
+            "suppcd_1050 as p1_suppcd_1050", "suppname_1050 as p1_suppname_1050",
+            "suppcd_1060 as p1_suppcd_1060", "suppname_1060 as p1_suppname_1060",
+            "suppcd_1090 as p1_suppcd_1090", "suppname_1090 as p1_suppname_1090"
+        ),
+        "base_nha",
+        "left"
+    )
+)
+
+
+
+
+
+
+
+
+p2 = (
+    df
+    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", ""))
+    .join(
+        df.selectExpr(
+            "nha as base_nha",
+            "suppcd_1900 as p2_suppcd_1900", "suppname_1900 as p2_suppname_1900",
+            "suppcd_2000 as p2_suppcd_2000", "suppname_2000 as p2_suppname_2000",
+            "suppcd_3120 as p2_suppcd_3120", "suppname_3120 as p2_suppname_3120",
+            "suppcd_1050 as p2_suppcd_1050", "suppname_1050 as p2_suppname_1050",
+            "suppcd_1060 as p2_suppcd_1060", "suppname_1060 as p2_suppname_1060",
+            "suppcd_1090 as p2_suppcd_1090", "suppname_1090 as p2_suppname_1090"
+        ),
+        "base_nha",
+        "left"
+    )
+)
+
+
+
+
+
+
+
+
+no_supplier = (
+    (F.length(F.trim("cur.suppcd_1900")) == 0) &
+    (F.length(F.trim("cur.suppcd_2000")) == 0) &
+    (F.length(F.trim("cur.suppcd_3120")) == 0) &
+    (F.length(F.trim("cur.suppcd_1050")) == 0) &
+    (F.length(F.trim("cur.suppcd_1060")) == 0) &
+    (F.length(F.trim("cur.suppcd_1090")) == 0)
+)
+
+
+
+
+
+
+
+df_stage4 = (
+    df.alias("cur")
+    .join(p1.alias("p1"), "nha", "left")
+    .join(p2.alias("p2"), "nha", "left")
+    .select(
+        "nha",
+        F.when(no_supplier,
+               F.coalesce("p1.p1_suppcd_1900","p2.p2_suppcd_1900"))
+         .otherwise("cur.suppcd_1900").alias("suppcd_1900"),
+
+        F.when(no_supplier,
+               F.coalesce("p1.p1_suppname_1900","p2.p2_suppname_1900"))
+         .otherwise("cur.suppname_1900").alias("suppname_1900"),
+
+        # repeat same pattern for 2000 / 3120 / 1050 / 1060 / 1090
+    )
+)
+
+df_stage4.createOrReplaceTempView("stage4_basepart_filled")
+
+
+
+
+
