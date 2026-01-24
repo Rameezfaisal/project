@@ -1,15 +1,43 @@
-df = spark.table("stage3_deduped").alias("cur")
+from pyspark.sql import functions as F
 
+# =========================================
+# Base data
+# =========================================
+cur = spark.table("stage3_deduped").alias("cur")
 
+# SAP WHERE condition:
+# update only when ALL plant suppliers are missing
+no_supplier = (
+    (F.length(F.trim(F.col("cur.suppcd_1900"))) == 0) &
+    (F.length(F.trim(F.col("cur.suppcd_2000"))) == 0) &
+    (F.length(F.trim(F.col("cur.suppcd_3120"))) == 0) &
+    (F.length(F.trim(F.col("cur.suppcd_1050"))) == 0) &
+    (F.length(F.trim(F.col("cur.suppcd_1060"))) == 0) &
+    (F.length(F.trim(F.col("cur.suppcd_1090"))) == 0)
+)
 
+# =========================================
+# Base lookup (acts like correlated subquery)
+# =========================================
+base_lookup = cur.select(
+    F.col("nha").alias("base_nha"),
+    "suppcd_1900","suppname_1900",
+    "suppcd_2000","suppname_2000",
+    "suppcd_3120","suppname_3120",
+    "suppcd_1050","suppname_1050",
+    "suppcd_1060","suppname_1060",
+    "suppcd_1090","suppname_1090"
+)
 
-
+# =========================================
+# Pattern-1 : R,S,C,X,D → '-'
+# =========================================
 p1 = (
-    df
+    cur
     .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", "-"))
     .join(
-        df.selectExpr(
-            "nha as base_nha",
+        base_lookup.selectExpr(
+            "base_nha",
             "suppcd_1900 as p1_suppcd_1900", "suppname_1900 as p1_suppname_1900",
             "suppcd_2000 as p1_suppcd_2000", "suppname_2000 as p1_suppname_2000",
             "suppcd_3120 as p1_suppcd_3120", "suppname_3120 as p1_suppname_3120",
@@ -20,21 +48,18 @@ p1 = (
         "base_nha",
         "left"
     )
+    .select("nha", *[c for c in cur.columns if c != "nha"], *[c for c in p1.columns if c.startswith("p1_")])
 )
 
-
-
-
-
-
-
-
+# =========================================
+# Pattern-2 : remove R,S,C,X,D
+# =========================================
 p2 = (
-    df
+    cur
     .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", ""))
     .join(
-        df.selectExpr(
-            "nha as base_nha",
+        base_lookup.selectExpr(
+            "base_nha",
             "suppcd_1900 as p2_suppcd_1900", "suppname_1900 as p2_suppname_1900",
             "suppcd_2000 as p2_suppcd_2000", "suppname_2000 as p2_suppname_2000",
             "suppcd_3120 as p2_suppcd_3120", "suppname_3120 as p2_suppname_3120",
@@ -45,51 +70,43 @@ p2 = (
         "base_nha",
         "left"
     )
+    .select("nha", *[c for c in p2.columns if c.startswith("p2_")])
 )
 
+# =========================================
+# SAP CASE logic helper
+# =========================================
+def sap_update(main, p1c, p2c):
+    return (
+        F.when(
+            no_supplier,
+            F.when(F.length(F.trim(F.col(p1c))) > 0, F.col(p1c))
+             .otherwise(F.col(p2c))
+        ).otherwise(F.col(main))
+    )
 
-
-
-
-
-
-
-no_supplier = (
-    (F.length(F.trim("cur.suppcd_1900")) == 0) &
-    (F.length(F.trim("cur.suppcd_2000")) == 0) &
-    (F.length(F.trim("cur.suppcd_3120")) == 0) &
-    (F.length(F.trim("cur.suppcd_1050")) == 0) &
-    (F.length(F.trim("cur.suppcd_1060")) == 0) &
-    (F.length(F.trim("cur.suppcd_1090")) == 0)
-)
-
-
-
-
-
-
-
+# =========================================
+# Final UPDATE-style projection
+# =========================================
 df_stage4 = (
-    df.alias("cur")
-    .join(p1.alias("p1"), "nha", "left")
-    .join(p2.alias("p2"), "nha", "left")
+    cur
+    .join(p1, "nha", "left")
+    .join(p2, "nha", "left")
     .select(
         "nha",
-        F.when(no_supplier,
-               F.coalesce("p1.p1_suppcd_1900","p2.p2_suppcd_1900"))
-         .otherwise("cur.suppcd_1900").alias("suppcd_1900"),
-
-        F.when(no_supplier,
-               F.coalesce("p1.p1_suppname_1900","p2.p2_suppname_1900"))
-         .otherwise("cur.suppname_1900").alias("suppname_1900"),
-
-        # repeat same pattern for 2000 / 3120 / 1050 / 1060 / 1090
+        sap_update("cur.suppcd_1900","p1_suppcd_1900","p2_suppcd_1900").alias("suppcd_1900"),
+        sap_update("cur.suppname_1900","p1_suppname_1900","p2_suppname_1900").alias("suppname_1900"),
+        sap_update("cur.suppcd_2000","p1_suppcd_2000","p2_suppcd_2000").alias("suppcd_2000"),
+        sap_update("cur.suppname_2000","p1_suppname_2000","p2_suppname_2000").alias("suppname_2000"),
+        sap_update("cur.suppcd_3120","p1_suppcd_3120","p2_suppcd_3120").alias("suppcd_3120"),
+        sap_update("cur.suppname_3120","p1_suppname_3120","p2_suppname_3120").alias("suppname_3120"),
+        sap_update("cur.suppcd_1050","p1_suppcd_1050","p2_suppcd_1050").alias("suppcd_1050"),
+        sap_update("cur.suppname_1050","p1_suppname_1050","p2_suppname_1050").alias("suppname_1050"),
+        sap_update("cur.suppcd_1060","p1_suppcd_1060","p2_suppcd_1060").alias("suppcd_1060"),
+        sap_update("cur.suppname_1060","p1_suppname_1060","p2_suppname_1060").alias("suppname_1060"),
+        sap_update("cur.suppcd_1090","p1_suppcd_1090","p2_suppcd_1090").alias("suppcd_1090"),
+        sap_update("cur.suppname_1090","p1_suppname_1090","p2_suppname_1090").alias("suppname_1090")
     )
 )
 
 df_stage4.createOrReplaceTempView("stage4_basepart_filled")
-
-
-
-
-
