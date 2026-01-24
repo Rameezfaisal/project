@@ -1,29 +1,11 @@
-
-df_po_valid = (
-    df_zpo
-    # Join EKPO (item category)
-    .join(df_ekpo, ["ebeln_cd", "ebelp_cd"], "inner")
-
-    # Join OMAT to apply OPEN_PO_QTY > 0
-    .join(
-        df_omat,
-        df_zpo.matnr_cd == df_omat.nha,
-        "inner"
+df_omat = (
+    spark.read.table(src_omat_dmd_tbl)
+    .select(
+        F.col("nha"),
+        F.col("open_po_qty").cast("int").alias("open_po_qty")
     )
-
-    # SAP filters
-    .filter(F.col("open_po_qty") > 0)
-    .filter(F.length(F.trim("matnr_cd")) > 0)
-    .filter(F.col("status_cd") != "INACT")
-    .filter(F.trim("loekz_cd") == "")
-    .filter(F.col("discrd_cd") != "X")
-    .filter(F.col("aussl_cd") != "U3")
-    .filter(F.col("bsart_cd") != "UB")
-    .filter(F.col("elikz_cd") != "X")
-    .filter(~F.col("pstyp_cd").isin("7", "9"))
-    .filter(F.length(F.trim("lifnr_cd")) == 10)
-    .filter(~F.substring("due_dt_cd", -5, 5).isin("04-01", "12-31"))
-
-    # Keep only required columns
-    .select("matnr_cd", "lifnr_cd")
+    .groupBy("nha")
+    .agg(
+        F.max("open_po_qty").alias("open_po_qty")  # SAP semantics
+    )
 )
