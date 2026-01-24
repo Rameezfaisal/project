@@ -1,18 +1,68 @@
-from pyspark.sql import functions as F
+# ------------------------------------------------
+# STEP 5 — Fill Missing Suppliers from SAP EORD
+# (SAP-faithful UPDATE ... WHERE logic)
+# ------------------------------------------------
 
-df_stage2 = spark.table("stage1_mrp_suppliers") \
-    .join(eord_1900, "nha", "left") \
-    .join(eord_2000, "nha", "left") \
-    .join(eord_3120, "nha", "left") \
-    .join(eord_1050, "nha", "left") \
-    .join(eord_1060, "nha", "left") \
-    .join(eord_1090, "nha", "left") \
-    .join(eord_1000, "nha", "left") \
-    .join(eord_1010, "nha", "left") \
+# 1. Filter valid fixed EORD suppliers (AUTET = '1' AND FLIFN = 'X')
+df_eord_valid = (
+    df_eord
+    .filter(
+        (F.col("autet_cd") == valid_autet) &
+        (F.col("flifn_cd") == preferred_flag)
+    )
+)
+
+# 2. Join supplier names
+df_eord_named = df_eord_valid.join(df_lfa1, "lifnr_cd", "left")
+
+# 3. Safe padding (SAP-style)
+def pad10_safe(c):
+    return F.when(
+        F.length(F.trim(c)) > 0,
+        F.lpad(c, 10, "0")
+    )
+
+# 4. Extract EORD per plant
+def eord_by_plant(plant):
+    return (
+        df_eord_named
+        .filter(F.col("werks_cd") == plant)
+        .select(
+            F.col("matnr_cd").alias("nha"),
+            pad10_safe(F.col("lifnr_cd")).alias(f"eord_suppcd_{plant}"),
+            F.col("name1_cd").alias(f"eord_suppname_{plant}")
+        )
+    )
+
+eord_1900 = eord_by_plant("1900")
+eord_2000 = eord_by_plant("2000")
+eord_3120 = eord_by_plant("3120")
+eord_1050 = eord_by_plant("1050")
+eord_1060 = eord_by_plant("1060")
+eord_1090 = eord_by_plant("1090")
+
+# fallback plants
+eord_1000 = eord_by_plant("1000")
+eord_1010 = eord_by_plant("1010")
+eord_1020 = eord_by_plant("1020")
+
+# 5. Join EORD to Stage-1
+df_stage2 = (
+    spark.table("stage1_mrp_suppliers")
+    .join(eord_1900, "nha", "left")
+    .join(eord_2000, "nha", "left")
+    .join(eord_3120, "nha", "left")
+    .join(eord_1050, "nha", "left")
+    .join(eord_1060, "nha", "left")
+    .join(eord_1090, "nha", "left")
+    .join(eord_1000, "nha", "left")
+    .join(eord_1010, "nha", "left")
     .join(eord_1020, "nha", "left")
+)
 
-# SAP condition: all supplier columns empty
-eord_apply_cond = (
+# 6. SAP WHERE condition:
+# Apply EORD ONLY when ALL supplier columns are empty
+no_supplier_cond = (
     (F.length(F.trim("suppcd_1900")) == 0) &
     (F.length(F.trim("suppcd_2000")) == 0) &
     (F.length(F.trim("suppcd_3120")) == 0) &
@@ -21,68 +71,98 @@ eord_apply_cond = (
     (F.length(F.trim("suppcd_1090")) == 0)
 )
 
+# 7. SAP CASE-WHEN logic (not COALESCE)
 df_stage2 = (
     df_stage2
     .withColumn(
         "suppcd_1900",
-        F.when(eord_apply_cond,
-               F.coalesce("eord_suppcd_1900", "eord_suppcd_1020")
-        ).otherwise("suppcd_1900")
+        F.when(
+            no_supplier_cond,
+            F.when(F.length(F.trim("eord_suppcd_1900")) > 0, F.col("eord_suppcd_1900"))
+             .otherwise(F.col("eord_suppcd_1020"))
+        ).otherwise(F.col("suppcd_1900"))
     )
     .withColumn(
         "suppname_1900",
-        F.when(eord_apply_cond,
-               F.coalesce("eord_suppname_1900", "eord_suppname_1020")
-        ).otherwise("suppname_1900")
+        F.when(
+            no_supplier_cond,
+            F.when(F.length(F.trim("eord_suppcd_1900")) > 0, F.col("eord_suppname_1900"))
+             .otherwise(F.col("eord_suppname_1020"))
+        ).otherwise(F.col("suppname_1900"))
     )
     .withColumn(
         "suppcd_2000",
-        F.when(eord_apply_cond,
-               F.coalesce("eord_suppcd_2000", "eord_suppcd_1000")
-        ).otherwise("suppcd_2000")
+        F.when(
+            no_supplier_cond,
+            F.when(F.length(F.trim("eord_suppcd_2000")) > 0, F.col("eord_suppcd_2000"))
+             .otherwise(F.col("eord_suppcd_1000"))
+        ).otherwise(F.col("suppcd_2000"))
     )
     .withColumn(
         "suppname_2000",
-        F.when(eord_apply_cond,
-               F.coalesce("eord_suppname_2000", "eord_suppname_1000")
-        ).otherwise("suppname_2000")
+        F.when(
+            no_supplier_cond,
+            F.when(F.length(F.trim("eord_suppcd_2000")) > 0, F.col("eord_suppname_2000"))
+             .otherwise(F.col("eord_suppname_1000"))
+        ).otherwise(F.col("suppname_2000"))
     )
     .withColumn(
         "suppcd_3120",
-        F.when(eord_apply_cond,
-               F.coalesce("eord_suppcd_3120", "eord_suppcd_1010")
-        ).otherwise("suppcd_3120")
+        F.when(
+            no_supplier_cond,
+            F.when(F.length(F.trim("eord_suppcd_3120")) > 0, F.col("eord_suppcd_3120"))
+             .otherwise(F.col("eord_suppcd_1010"))
+        ).otherwise(F.col("suppcd_3120"))
     )
     .withColumn(
         "suppname_3120",
-        F.when(eord_apply_cond,
-               F.coalesce("eord_suppname_3120", "eord_suppname_1010")
-        ).otherwise("suppname_3120")
+        F.when(
+            no_supplier_cond,
+            F.when(F.length(F.trim("eord_suppcd_3120")) > 0, F.col("eord_suppname_3120"))
+             .otherwise(F.col("eord_suppname_1010"))
+        ).otherwise(F.col("suppname_3120"))
     )
     .withColumn(
         "suppcd_1050",
-        F.when(eord_apply_cond, "eord_suppcd_1050").otherwise("suppcd_1050")
+        F.when(no_supplier_cond, F.col("eord_suppcd_1050"))
+         .otherwise(F.col("suppcd_1050"))
     )
     .withColumn(
         "suppname_1050",
-        F.when(eord_apply_cond, "eord_suppname_1050").otherwise("suppname_1050")
+        F.when(no_supplier_cond, F.col("eord_suppname_1050"))
+         .otherwise(F.col("suppname_1050"))
     )
     .withColumn(
         "suppcd_1060",
-        F.when(eord_apply_cond, "eord_suppcd_1060").otherwise("suppcd_1060")
+        F.when(no_supplier_cond, F.col("eord_suppcd_1060"))
+         .otherwise(F.col("suppcd_1060"))
     )
     .withColumn(
         "suppname_1060",
-        F.when(eord_apply_cond, "eord_suppname_1060").otherwise("suppname_1060")
+        F.when(no_supplier_cond, F.col("eord_suppname_1060"))
+         .otherwise(F.col("suppname_1060"))
     )
     .withColumn(
         "suppcd_1090",
-        F.when(eord_apply_cond, "eord_suppcd_1090").otherwise("suppcd_1090")
+        F.when(no_supplier_cond, F.col("eord_suppcd_1090"))
+         .otherwise(F.col("suppcd_1090"))
     )
     .withColumn(
         "suppname_1090",
-        F.when(eord_apply_cond, "eord_suppname_1090").otherwise("suppname_1090")
+        F.when(no_supplier_cond, F.col("eord_suppname_1090"))
+         .otherwise(F.col("suppname_1090"))
     )
+)
+
+# 8. Final projection
+df_stage2 = df_stage2.select(
+    "nha",
+    "suppcd_1900","suppname_1900",
+    "suppcd_2000","suppname_2000",
+    "suppcd_3120","suppname_3120",
+    "suppcd_1050","suppname_1050",
+    "suppcd_1060","suppname_1060",
+    "suppcd_1090","suppname_1090"
 )
 
 df_stage2.createOrReplaceTempView("stage2_eord_filled")
