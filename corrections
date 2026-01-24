@@ -1,8 +1,30 @@
-CREATE TABLE IF NOT EXISTS eng_test.rpt_omat_log_dtls (
-  executed_on        TIMESTAMP,  -- SECONDDATE
-  obprtno_cnt        INT,
-  obprtno_nha_cnt    INT,
-  obpr_cnt           INT,
-  program_name       STRING
+# ------------------------------------------------
+# STEP 12 — Execution Log (SAP-faithful)
+# ------------------------------------------------
+
+log_df = spark.createDataFrame(
+    [
+        (
+            None,   # executed_on (set below)
+            0,      # obprtno_cnt
+            0,      # obprtno_nha_cnt
+            0,      # obpr_cnt
+            program_name
+        )
+    ],
+    schema=StructType([
+        StructField("executed_on", TimestampType(), True),
+        StructField("obprtno_cnt", IntegerType(), True),
+        StructField("obprtno_nha_cnt", IntegerType(), True),
+        StructField("obpr_cnt", IntegerType(), True),
+        StructField("program_name", StringType(), True)
+    ])
+).withColumn("executed_on", F.current_timestamp())
+
+(
+    log_df
+    .write
+    .mode("append")
+    .format("delta")
+    .saveAsTable(tgt_log_tbl)
 )
-USING DELTA;
