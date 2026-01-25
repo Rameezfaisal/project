@@ -1,12 +1,20 @@
-from pyspark.sql import functions as F
+# #### Step-7 — Base-Part Supplier Inheritance for R / S / C / X / D Parts
+# -------------------------------------------------------------------------
+# CORRECTION APPLIED:
+# 1. Deduplicated the 'lookup' table to prevent Cartesian joins (1-to-Many).
+# 2. Filtered 'base' patterns to only process rows that actually need updates.
+# 3. Excluded empty strings from join keys to prevent massive grouping on empty keys.
+# -------------------------------------------------------------------------
 
 # ===============================
-# Base table (ONE copy only)
+# Base table
 # ===============================
 base = spark.table("stage3_deduped")
 
-# SAP WHERE condition: all suppliers missing
-no_supplier = (
+# ===============================
+# Condition: Missing Suppliers
+# ===============================
+no_supplier_cond = (
     (F.length(F.trim(F.col("suppcd_1900"))) == 0) &
     (F.length(F.trim(F.col("suppcd_2000"))) == 0) &
     (F.length(F.trim(F.col("suppcd_3120"))) == 0) &
@@ -16,97 +24,107 @@ no_supplier = (
 )
 
 # ===============================
-# Base lookup (correlated subquery equivalent)
+# 1. Create a SAFE Lookup Table (Unique Keys Only)
 # ===============================
-lookup = base.select(
-    F.col("nha").alias("base_nha"),
-    "suppcd_1900","suppname_1900",
-    "suppcd_2000","suppname_2000",
-    "suppcd_3120","suppname_3120",
-    "suppcd_1050","suppname_1050",
-    "suppcd_1060","suppname_1060",
-    "suppcd_1090","suppname_1090"
+# We drop duplicates on 'nha' to ensure we never trigger a 1-to-Many join explosion.
+lookup = (
+    base
+    .select(
+        F.col("nha").alias("base_nha"),
+        "suppcd_1900","suppname_1900",
+        "suppcd_2000","suppname_2000",
+        "suppcd_3120","suppname_3120",
+        "suppcd_1050","suppname_1050",
+        "suppcd_1060","suppname_1060",
+        "suppcd_1090","suppname_1090"
+    )
+    .dropDuplicates(["base_nha"]) # <--- CRITICAL FIX
 )
 
 # ===============================
-# Pattern-1: R,S,C,X,D → '-'
+# 2. Prepare Pattern Matches (P1 & P2)
 # ===============================
-p1 = (
-    base
-    .select("nha")
+# We only calculate this for rows that meet the 'no_supplier_cond'
+# This drastically reduces the volume of data entering the join.
+
+df_needs_update = base.filter(no_supplier_cond).select("nha")
+
+# --- Pattern 1: Replace [RSCXD] with '-' ---
+p1_map = (
+    df_needs_update
     .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", "-"))
-    .join(
-        lookup.selectExpr(
-            "base_nha",
-            "suppcd_1900 as p1_suppcd_1900", "suppname_1900 as p1_suppname_1900",
-            "suppcd_2000 as p1_suppcd_2000", "suppname_2000 as p1_suppname_2000",
-            "suppcd_3120 as p1_suppcd_3120", "suppname_3120 as p1_suppname_3120",
-            "suppcd_1050 as p1_suppcd_1050", "suppname_1050 as p1_suppname_1050",
-            "suppcd_1060 as p1_suppcd_1060", "suppname_1060 as p1_suppname_1060",
-            "suppcd_1090 as p1_suppcd_1090", "suppname_1090 as p1_suppname_1090"
-        ),
-        "base_nha",
-        "left"
-    )
+    .filter(F.length(F.trim("base_nha")) > 0)      # Safety: No empty keys
+    .filter(F.col("base_nha") != F.col("nha"))     # Optimization: Skip if no change
+    .join(lookup, "base_nha", "inner")             # Inner join reduces dataset
     .drop("base_nha")
+    .selectExpr(
+        "nha",
+        "suppcd_1900 as p1_suppcd_1900", "suppname_1900 as p1_suppname_1900",
+        "suppcd_2000 as p1_suppcd_2000", "suppname_2000 as p1_suppname_2000",
+        "suppcd_3120 as p1_suppcd_3120", "suppname_3120 as p1_suppname_3120",
+        "suppcd_1050 as p1_suppcd_1050", "suppname_1050 as p1_suppname_1050",
+        "suppcd_1060 as p1_suppcd_1060", "suppname_1060 as p1_suppname_1060",
+        "suppcd_1090 as p1_suppcd_1090", "suppname_1090 as p1_suppname_1090"
+    )
 )
 
-# ===============================
-# Pattern-2: remove R,S,C,X,D
-# ===============================
-p2 = (
-    base
-    .select("nha")
+# --- Pattern 2: Remove [RSCXD] completely ---
+p2_map = (
+    df_needs_update
     .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", ""))
-    .join(
-        lookup.selectExpr(
-            "base_nha",
-            "suppcd_1900 as p2_suppcd_1900", "suppname_1900 as p2_suppname_1900",
-            "suppcd_2000 as p2_suppcd_2000", "suppname_2000 as p2_suppname_2000",
-            "suppcd_3120 as p2_suppcd_3120", "suppname_3120 as p2_suppname_3120",
-            "suppcd_1050 as p2_suppcd_1050", "suppname_1050 as p2_suppname_1050",
-            "suppcd_1060 as p2_suppcd_1060", "suppname_1060 as p2_suppname_1060",
-            "suppcd_1090 as p2_suppcd_1090", "suppname_1090 as p2_suppname_1090"
-        ),
-        "base_nha",
-        "left"
-    )
+    .filter(F.length(F.trim("base_nha")) > 0)      # Safety: No empty keys
+    .filter(F.col("base_nha") != F.col("nha"))     # Optimization: Skip if no change
+    .join(lookup, "base_nha", "inner")
     .drop("base_nha")
+    .selectExpr(
+        "nha",
+        "suppcd_1900 as p2_suppcd_1900", "suppname_1900 as p2_suppname_1900",
+        "suppcd_2000 as p2_suppcd_2000", "suppname_2000 as p2_suppname_2000",
+        "suppcd_3120 as p2_suppcd_3120", "suppname_3120 as p2_suppname_3120",
+        "suppcd_1050 as p2_suppcd_1050", "suppname_1050 as p2_suppname_1050",
+        "suppcd_1060 as p2_suppcd_1060", "suppname_1060 as p2_suppname_1060",
+        "suppcd_1090 as p2_suppcd_1090", "suppname_1090 as p2_suppname_1090"
+    )
 )
 
 # ===============================
-# SAP CASE logic
+# 3. Apply Updates to Base
 # ===============================
-def sap_update(main, p1c, p2c):
+# Helper to coalesce: Existing -> Pattern 1 -> Pattern 2
+def coalesce_logic(curr_col, p1_col, p2_col):
     return (
         F.when(
-            no_supplier,
-            F.when(F.length(F.trim(F.col(p1c))) > 0, F.col(p1c))
-             .otherwise(F.col(p2c))
-        ).otherwise(F.col(main))
+            (F.length(F.trim(curr_col)) > 0), 
+            F.col(curr_col) # Keep existing if present
+        )
+        .otherwise(
+            F.coalesce(F.col(p1_col), F.col(p2_col)) # Fallback to P1, then P2
+        )
     )
 
-# ===============================
-# Final UPDATE-style result
-# ===============================
 df_stage4 = (
     base
-    .join(p1, "nha", "left")
-    .join(p2, "nha", "left")
+    .join(p1_map, "nha", "left")
+    .join(p2_map, "nha", "left")
     .select(
-        "nha",
-        sap_update("suppcd_1900","p1_suppcd_1900","p2_suppcd_1900").alias("suppcd_1900"),
-        sap_update("suppname_1900","p1_suppname_1900","p2_suppname_1900").alias("suppname_1900"),
-        sap_update("suppcd_2000","p1_suppcd_2000","p2_suppcd_2000").alias("suppcd_2000"),
-        sap_update("suppname_2000","p1_suppname_2000","p2_suppname_2000").alias("suppname_2000"),
-        sap_update("suppcd_3120","p1_suppcd_3120","p2_suppcd_3120").alias("suppcd_3120"),
-        sap_update("suppname_3120","p1_suppname_3120","p2_suppname_3120").alias("suppname_3120"),
-        sap_update("suppcd_1050","p1_suppcd_1050","p2_suppcd_1050").alias("suppcd_1050"),
-        sap_update("suppname_1050","p1_suppname_1050","p2_suppname_1050").alias("suppname_1050"),
-        sap_update("suppcd_1060","p1_suppcd_1060","p2_suppcd_1060").alias("suppcd_1060"),
-        sap_update("suppname_1060","p1_suppname_1060","p2_suppname_1060").alias("suppname_1060"),
-        sap_update("suppcd_1090","p1_suppcd_1090","p2_suppcd_1090").alias("suppcd_1090"),
-        sap_update("suppname_1090","p1_suppname_1090","p2_suppname_1090").alias("suppname_1090")
+        F.col("nha"),
+        coalesce_logic("suppcd_1900", "p1_suppcd_1900", "p2_suppcd_1900").alias("suppcd_1900"),
+        coalesce_logic("suppname_1900", "p1_suppname_1900", "p2_suppname_1900").alias("suppname_1900"),
+        
+        coalesce_logic("suppcd_2000", "p1_suppcd_2000", "p2_suppcd_2000").alias("suppcd_2000"),
+        coalesce_logic("suppname_2000", "p1_suppname_2000", "p2_suppname_2000").alias("suppname_2000"),
+        
+        coalesce_logic("suppcd_3120", "p1_suppcd_3120", "p2_suppcd_3120").alias("suppcd_3120"),
+        coalesce_logic("suppname_3120", "p1_suppname_3120", "p2_suppname_3120").alias("suppname_3120"),
+        
+        coalesce_logic("suppcd_1050", "p1_suppcd_1050", "p2_suppcd_1050").alias("suppcd_1050"),
+        coalesce_logic("suppname_1050", "p1_suppname_1050", "p2_suppname_1050").alias("suppname_1050"),
+        
+        coalesce_logic("suppcd_1060", "p1_suppcd_1060", "p2_suppcd_1060").alias("suppcd_1060"),
+        coalesce_logic("suppname_1060", "p1_suppname_1060", "p2_suppname_1060").alias("suppname_1060"),
+        
+        coalesce_logic("suppcd_1090", "p1_suppcd_1090", "p2_suppcd_1090").alias("suppcd_1090"),
+        coalesce_logic("suppname_1090", "p1_suppname_1090", "p2_suppname_1090").alias("suppname_1090")
     )
 )
 
