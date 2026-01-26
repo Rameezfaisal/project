@@ -1,8 +1,30 @@
-    F.col("ordertype").alias("ordertype"),
-    # use the same “best available date” logic, but still filter on the 26-week window
-    F.coalesce(
-        F.col("deliveryduedate"),
-        F.col("requestdate"),
-        F.col("firmcommitdate")
-    ).alias("demand_date"),
-    F.col("openqty").alias("openqty")
+# #### Step-11 — Update rpt_omat_rscxd_dtls with selected supplier
+# Correction: Added deduplication logic (Window function) to fix "MULTIPLE_SOURCE_ROW_MATCHING_TARGET" error.
+
+# 1. Define the deduplication window
+# We partition by 'nha' and order by 'omat_selected_suppliercd' to ensure deterministic selection
+w = Window.partitionBy("nha").orderBy(F.col("omat_selected_suppliercd").desc())
+
+# 2. Read the source table and filter to get only 1 row per NHA
+unique_source_df = (
+    spark.read.table(tgt_supplier_plants)
+    .withColumn("rn", F.row_number().over(w))
+    .filter(F.col("rn") == 1)
+    .drop("rn")
+)
+
+# 3. Register this unique dataframe as a temporary view
+unique_source_df.createOrReplaceTempView("unique_source_view")
+
+# 4. Perform the MERGE using the unique view
+spark.sql(f"""
+MERGE INTO {tgt_rscxd_dtls} AS a
+USING unique_source_view AS b
+ON a.nha = b.nha
+WHEN MATCHED THEN
+  UPDATE SET
+    a.vencode = b.omat_selected_suppliercd,
+    a.venname = b.omat_selected_supplier,
+    a.po_supplier_code = b.suppcd_po1,
+    a.po_supplier = b.suppname_po1
+""")
