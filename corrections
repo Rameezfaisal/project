@@ -1,76 +1,66 @@
-# #### Step-4 -- Creating NHALIST Temp table
-# Correction: Added INNER JOIN to 'rscxd_cons' to match SAP scope
-# SAP Ref: INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_RSCXD_DMD_CONS" B ON A.NHA = B.NHA
+---------------------------------------------------------------------------
+AnalysisException                         Traceback (most recent call last)
+Cell In[109], line 7
+      1 po_base = (
+      2     nhalist
+      3     .join(rscxd_cons.select("nha", "open_po_qty"), nhalist.nha_cd == rscxd_cons.nha)
+      4     .join(po_hstry, po_hstry.matnr == nhalist.nha_cd)
+      5     .join(ekpo, (po_hstry.ebeln == ekpo.ebeln) & (po_hstry.ebelp == ekpo.ebelp))
+      6     .join(lfa1, lfa1.lifnr == po_hstry.lifnr)
+----> 7     .filter(
+      8         (rscxd_cons.open_po_qty > 0) &
+      9         (~F.substring(po_hstry.due_dt, -5, 5).isin("04-01", "12-31")) &
+     10         (po_hstry.status != "INACT") &
+     11         (F.trim(po_hstry.matnr) != "") &
+     12         (F.trim(po_hstry.loekz) == "") &
+     13         (po_hstry.discrd != "X") &
+     14         (po_hstry.aussl != "U3") &
+     15         (po_hstry.bsart != "UB") &
+     16         (po_hstry.elikz != "X") &
+     17         (~ekpo.pstyp.isin("7", "9"))
+     18     )
+     19     .select(
+     20         nhalist.nha_cd.alias("nha_cd"),
+     21         po_hstry.lifnr.alias("lifnr_cd"),
+     22         lfa1.name1.alias("name1_cd")
+     23     )
+     24     .distinct()
+     25 )
+     27 posupp = (
+     28     po_base
+     29     .groupBy("nha_cd")
+   (...)
+     33     )
+     34 )
 
-nhalist = (
-    rscxd_dtls.alias("a")
-    .join(rscxd_cons.alias("b"), F.col("a.nha") == F.col("b.nha"), "inner")
-    .filter(F.col("a.type").isin("R", "S"))
-    .select(F.col("a.nha").alias("nha_cd"))
-    .distinct()
-)
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3331, in DataFrame.filter(self, condition)
+   3329     jdf = self._jdf.filter(condition)
+   3330 elif isinstance(condition, Column):
+-> 3331     jdf = self._jdf.filter(condition._jc)
+   3332 else:
+   3333     raise PySparkTypeError(
+   3334         error_class="NOT_COLUMN_OR_STR",
+   3335         message_parameters={"arg_name": "condition", "arg_type": type(condition).__name__},
+   3336     )
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-
-
-
-
-# #### Step-10 -- Insert into rpt_omat_buynha_suppliers_plants
-# Correction: Replaced 'append' with MERGE to mimic SAP's "WHEN NOT MATCHED THEN INSERT" logic.
-
-# 1. Prepare the dataframe with correct column aliases first
-final_df_mapped = final_df.select(
-    F.col("nha_cd").alias("nha"),
-    "omat_selected_plant",
-    "omat_selected_supplier",
-    "omat_selected_suppliercd",
-    
-    # Null columns explicit in SAP merge
-    F.lit(None).cast("string").alias("suppcd_1050"),
-    F.lit(None).cast("string").alias("suppcd_1060"),
-    F.lit(None).cast("string").alias("suppcd_1090"),
-    F.lit(None).cast("string").alias("suppcd_1900"),
-    F.col("supplierid_cd").alias("suppcd_2000"),
-    F.lit(None).cast("string").alias("suppcd_3120"),
-
-    F.col("suppcd_po1"),
-    F.col("suppcd_po2"),
-    F.col("suppcd_pr"),
-
-    F.lit(None).cast("string").alias("suppname_1050"),
-    F.lit(None).cast("string").alias("suppname_1060"),
-    F.lit(None).cast("string").alias("suppname_1090"),
-    F.lit(None).cast("string").alias("suppname_1900"),
-    F.col("supplier_nm").alias("suppname_2000"),
-    F.lit(None).cast("string").alias("suppname_3120"),
-
-    F.col("suppname_po1"),
-    F.col("suppname_po2"),
-    F.col("suppname_pr")
-)
-
-# 2. Register as Temp View to use in Spark SQL
-final_df_mapped.createOrReplaceTempView("source_view")
-
-# 3. Execute MERGE (Faithful reproduction of SAP MERGE statement)
-spark.sql(f"""
-MERGE INTO {tgt_supplier_plants} AS t
-USING source_view AS s
-ON t.nha = s.nha
-WHEN NOT MATCHED THEN
-  INSERT (
-    nha, suppcd_1900, suppname_1900, suppcd_2000, suppname_2000,
-    suppcd_3120, suppname_3120, suppcd_1050, suppname_1050,
-    suppcd_1060, suppname_1060, suppcd_1090, suppname_1090,
-    suppcd_po1, suppname_po1, suppcd_po2, suppname_po2, suppcd_pr, suppname_pr,
-    omat_selected_plant, omat_selected_suppliercd, omat_selected_supplier
-  )
-  VALUES (
-    s.nha, s.suppcd_1900, s.suppname_1900, s.suppcd_2000, s.suppname_2000,
-    s.suppcd_3120, s.suppname_3120, s.suppcd_1050, s.suppname_1050,
-    s.suppcd_1060, s.suppname_1060, s.suppcd_1090, s.suppname_1090,
-    s.suppcd_po1, s.suppname_po1, s.suppcd_po2, s.suppname_po2, s.suppcd_pr, s.suppname_pr,
-    s.omat_selected_plant, s.omat_selected_suppliercd, s.omat_selected_supplier
-  )
-""")
+AnalysisException: Column open_po_qty#25800 are ambiguous. It's probably because you joined several Datasets together, and some of these Datasets are the same. This column points to one of the Datasets but Spark is unable to figure out which one. Please alias the Datasets with different names via `Dataset.as` before joining them, and specify the column using qualified name, e.g. `df.as("a").join(df.as("b"), $"a.id" > $"b.id")`. You can also set spark.sql.analyzer.failAmbiguousSelfJoin to false to disable this check.
