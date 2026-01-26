@@ -1,9 +1,31 @@
-# Check which NHAs are duplicated and see the differences
-duplicates_check = spark.sql(f"""
-    SELECT * FROM {tgt_supplier_plants} 
-    WHERE nha IN (
-        SELECT nha FROM {tgt_supplier_plants} GROUP BY nha HAVING count(*) > 1
-    )
-    ORDER BY nha
+# #### Step-11 — Update rpt_omat_rscxd_dtls with selected supplier
+# Correction: Added .dropDuplicates() for identical rows and Window rank on 'suppcd_pr' for edge cases.
+
+# 1. Define the deduplication window
+# We partition by 'nha' and order by 'suppcd_pr' to strictly handle the PR supplier conflicts found in your data.
+w = Window.partitionBy("nha").orderBy(F.col("suppcd_pr").desc())
+
+# 2. Read, Drop exact duplicates, then Window filter
+unique_source_df = (
+    spark.read.table(tgt_supplier_plants)
+    .dropDuplicates()  # Efficiently removes the 99% identical rows first
+    .withColumn("rn", F.row_number().over(w))
+    .filter(F.col("rn") == 1)
+    .drop("rn")
+)
+
+# 3. Register this unique dataframe as a temporary view
+unique_source_df.createOrReplaceTempView("unique_source_view")
+
+# 4. Perform the MERGE using the unique view
+spark.sql(f"""
+MERGE INTO {tgt_rscxd_dtls} AS a
+USING unique_source_view AS b
+ON a.nha = b.nha
+WHEN MATCHED THEN
+  UPDATE SET
+    a.vencode = b.omat_selected_suppliercd,
+    a.venname = b.omat_selected_supplier,
+    a.po_supplier_code = b.suppcd_po1,
+    a.po_supplier = b.suppname_po1
 """)
-display(duplicates_check)
