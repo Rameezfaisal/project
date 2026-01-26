@@ -1,131 +1,172 @@
-# #### Step-7 — Base-Part Supplier Inheritance for R / S / C / X / D Parts
-# -------------------------------------------------------------------------
-# CORRECTION APPLIED:
-# 1. Deduplicated the 'lookup' table to prevent Cartesian joins (1-to-Many).
-# 2. Filtered 'base' patterns to only process rows that actually need updates.
-# 3. Excluded empty strings from join keys to prevent massive grouping on empty keys.
-# -------------------------------------------------------------------------
+# Create aliases for the Code Master table which is joined 4 times in SQL
+code_g = code_df.alias("g")  # Commodity
+code_h = code_df.alias("h")  # SMG Group
+code_i = code_df.alias("i")  # SMG Head
+code_j = code_df.alias("j")  # SBM
 
-# ===============================
-# Base table
-# ===============================
-base = spark.table("stage3_deduped")
+final_dtls = (
+    lstdata.alias("a")
 
-# ===============================
-# Condition: Missing Suppliers
-# ===============================
-no_supplier_cond = (
-    (F.length(F.trim(F.col("suppcd_1900"))) == 0) &
-    (F.length(F.trim(F.col("suppcd_2000"))) == 0) &
-    (F.length(F.trim(F.col("suppcd_3120"))) == 0) &
-    (F.length(F.trim(F.col("suppcd_1050"))) == 0) &
-    (F.length(F.trim(F.col("suppcd_1060"))) == 0) &
-    (F.length(F.trim(F.col("suppcd_1090"))) == 0)
-)
+    # 1. Material description
+    .join(makt_df.alias("m"), F.col("m.matnr") == F.col("a.nha"), "left")
 
-# ===============================
-# 1. Create a SAFE Lookup Table (Unique Keys Only)
-# ===============================
-# We drop duplicates on 'nha' to ensure we never trigger a 1-to-Many join explosion.
-lookup = (
-    base
+    # 2. Supplier per NHA (includes Plant info needed for Cost join)
+    .join(sup_df.alias("s"), F.col("s.nha") == F.col("a.nha"), "left")
+
+    # 3. Part ecosystem (CMPQPA)
+    .join(
+        eco_df.alias("e"),
+        (F.col("e.nha") == F.col("a.dash")) &
+        (F.col("e.obprtno") == F.col("a.cmpprtno")),
+        "left"
+    )
+
+    # 4. Material master (status + commodity)
+    .join(mara_df.alias("ma"), F.col("ma.matnr") == F.col("a.nha"), "left")
+
+    # 5. Plant-specific planning (LEAD TIME)
+    .join(
+        marc_df.alias("mc"),
+        (F.col("mc.matnr") == F.col("a.nha")) &
+        (F.col("mc.werks") == F.col("s.omat_selected_plant")),
+        "left"
+    )
+
+    # --- MISSING JOINS ADDED BELOW ---
+
+    # 6. Costs (MBEW) - Joins on NHA and Selected Plant
+    .join(
+        mbew_df.alias("c_mbew"),
+        (F.col("c_mbew.matnr") == F.col("a.nha")) &
+        (F.col("c_mbew.bwkey") == F.col("s.omat_selected_plant")),
+        "left"
+    )
+
+    # 7. Criticality (AUSP) - Filter specific ATINN for Criticality
+    .join(
+        ausp_df.alias("d_ausp"),
+        (F.col("d_ausp.objek") == F.col("a.nha")) &
+        (F.col("d_ausp.atinn") == "0000006193"),
+        "left"
+    )
+
+    # 8. Control Effect (AUSP) - Filter specific ATINN + Value 'Y'
+    .join(
+        ausp_df.alias("e_ausp"),
+        (F.col("e_ausp.objek") == F.col("a.nha")) &
+        (F.col("e_ausp.atinn") == "0000015276") &
+        (F.col("e_ausp.atwrt") == "Y"),
+        "left"
+    )
+
+    # 9. Supplier XREF (Link Supplier to Commodity Codes)
+    .join(
+        xref_df.alias("f_xref"),
+        F.col("f_xref.lifnr") == F.col("s.omat_selected_suppliercd"),
+        "left"
+    )
+
+    # 10. Commodity Hierarchy Joins (4x Joins to ZSUPP_CODE_MSTR)
+    .join(code_g, F.col("g.zcode") == F.col("f_xref.zcommcod"), "left")
+    .join(code_h, F.col("h.zcode") == F.col("f_xref.zgrpsmg"), "left")
+    .join(code_i, F.col("i.zcode") == F.col("f_xref.zsmgcd"), "left")
+    .join(code_j, F.col("j.zcode") == F.col("f_xref.zprimmcd"), "left")
+
+    # Exclude obsolete & out-of-scope parts
+    .filter(~F.col("ma.mstae").isin("OB", "OS", "OP"))
+
+    # Select all required columns
     .select(
-        F.col("nha").alias("base_nha"),
-        "suppcd_1900","suppname_1900",
-        "suppcd_2000","suppname_2000",
-        "suppcd_3120","suppname_3120",
-        "suppcd_1050","suppname_1050",
-        "suppcd_1060","suppname_1060",
-        "suppcd_1090","suppname_1090"
+        F.col("a.cmpprtno"),
+        F.col("a.nha"),
+        F.col("a.type"),
+        F.col("a.dash"),
+        F.col("m.maktx").alias("description"),
+        F.col("e.cmpqpa"),
+        F.col("ma.matkl"),
+        F.col("ma.mstae"),
+        F.col("s.omat_selected_suppliercd").alias("vencode"),
+        F.col("s.omat_selected_supplier").alias("venname"),
+        F.col("s.suppcd_po1").alias("po_supplier_code"),
+        F.col("s.suppname_po1").alias("po_supplier"),
+        F.col("mc.plifz").alias("lead_time"),
+        # New Columns
+        F.col("c_mbew.stprs").alias("std_cost"),
+        F.col("c_mbew.zplp2").alias("curr_cost"),
+        F.col("d_ausp.atwrt").alias("critical"),
+        F.col("e_ausp.atwrt").alias("ce"),
+        F.col("g.zdesc").alias("commodity"),
+        F.col("h.zdesc").alias("smg_group"),
+        F.col("i.zdesc").alias("smg_head"),
+        F.col("j.zdesc").alias("sbm")
     )
-    .dropDuplicates(["base_nha"]) # <--- CRITICAL FIX
-)
+).distinct()
 
-# ===============================
-# 2. Prepare Pattern Matches (P1 & P2)
-# ===============================
-# We only calculate this for rows that meet the 'no_supplier_cond'
-# This drastically reduces the volume of data entering the join.
 
-df_needs_update = base.filter(no_supplier_cond).select("nha")
 
-# --- Pattern 1: Replace [RSCXD] with '-' ---
-p1_map = (
-    df_needs_update
-    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", "-"))
-    .filter(F.length(F.trim("base_nha")) > 0)      # Safety: No empty keys
-    .filter(F.col("base_nha") != F.col("nha"))     # Optimization: Skip if no change
-    .join(lookup, "base_nha", "inner")             # Inner join reduces dataset
-    .drop("base_nha")
-    .selectExpr(
-        "nha",
-        "suppcd_1900 as p1_suppcd_1900", "suppname_1900 as p1_suppname_1900",
-        "suppcd_2000 as p1_suppcd_2000", "suppname_2000 as p1_suppname_2000",
-        "suppcd_3120 as p1_suppcd_3120", "suppname_3120 as p1_suppname_3120",
-        "suppcd_1050 as p1_suppcd_1050", "suppname_1050 as p1_suppname_1050",
-        "suppcd_1060 as p1_suppcd_1060", "suppname_1060 as p1_suppname_1060",
-        "suppcd_1090 as p1_suppcd_1090", "suppname_1090 as p1_suppname_1090"
-    )
-)
 
-# --- Pattern 2: Remove [RSCXD] completely ---
-p2_map = (
-    df_needs_update
-    .withColumn("base_nha", F.regexp_replace("nha", "[RSCXD]", ""))
-    .filter(F.length(F.trim("base_nha")) > 0)      # Safety: No empty keys
-    .filter(F.col("base_nha") != F.col("nha"))     # Optimization: Skip if no change
-    .join(lookup, "base_nha", "inner")
-    .drop("base_nha")
-    .selectExpr(
-        "nha",
-        "suppcd_1900 as p2_suppcd_1900", "suppname_1900 as p2_suppname_1900",
-        "suppcd_2000 as p2_suppcd_2000", "suppname_2000 as p2_suppname_2000",
-        "suppcd_3120 as p2_suppcd_3120", "suppname_3120 as p2_suppname_3120",
-        "suppcd_1050 as p2_suppcd_1050", "suppname_1050 as p2_suppname_1050",
-        "suppcd_1060 as p2_suppcd_1060", "suppname_1060 as p2_suppname_1060",
-        "suppcd_1090 as p2_suppcd_1090", "suppname_1090 as p2_suppname_1090"
-    )
-)
 
-# ===============================
-# 3. Apply Updates to Base
-# ===============================
-# Helper to coalesce: Existing -> Pattern 1 -> Pattern 2
-def coalesce_logic(curr_col, p1_col, p2_col):
-    return (
-        F.when(
-            (F.length(F.trim(curr_col)) > 0), 
-            F.col(curr_col) # Keep existing if present
-        )
-        .otherwise(
-            F.coalesce(F.col(p1_col), F.col(p2_col)) # Fallback to P1, then P2
-        )
-    )
 
-df_stage4 = (
-    base
-    .join(p1_map, "nha", "left")
-    .join(p2_map, "nha", "left")
+
+
+
+
+
+
+final_dtls_insert = (
+    final_dtls
     .select(
+        F.col("ce"),                     # Now populated
+        F.col("cmpprtno"),
+        F.col("cmpqpa"),
+        F.col("commodity"),              # Now populated
+        F.col("critical"),               # Now populated
+        F.col("curr_cost"),              # Now populated
+        F.col("dash"),
+        F.col("description"),
+        F.col("lead_time"),
+        F.col("matkl"),
+        F.col("mstae"),
         F.col("nha"),
-        coalesce_logic("suppcd_1900", "p1_suppcd_1900", "p2_suppcd_1900").alias("suppcd_1900"),
-        coalesce_logic("suppname_1900", "p1_suppname_1900", "p2_suppname_1900").alias("suppname_1900"),
-        
-        coalesce_logic("suppcd_2000", "p1_suppcd_2000", "p2_suppcd_2000").alias("suppcd_2000"),
-        coalesce_logic("suppname_2000", "p1_suppname_2000", "p2_suppname_2000").alias("suppname_2000"),
-        
-        coalesce_logic("suppcd_3120", "p1_suppcd_3120", "p2_suppcd_3120").alias("suppcd_3120"),
-        coalesce_logic("suppname_3120", "p1_suppname_3120", "p2_suppname_3120").alias("suppname_3120"),
-        
-        coalesce_logic("suppcd_1050", "p1_suppcd_1050", "p2_suppcd_1050").alias("suppcd_1050"),
-        coalesce_logic("suppname_1050", "p1_suppname_1050", "p2_suppname_1050").alias("suppname_1050"),
-        
-        coalesce_logic("suppcd_1060", "p1_suppcd_1060", "p2_suppcd_1060").alias("suppcd_1060"),
-        coalesce_logic("suppname_1060", "p1_suppname_1060", "p2_suppname_1060").alias("suppname_1060"),
-        
-        coalesce_logic("suppcd_1090", "p1_suppcd_1090", "p2_suppcd_1090").alias("suppcd_1090"),
-        coalesce_logic("suppname_1090", "p1_suppname_1090", "p2_suppname_1090").alias("suppname_1090")
+        F.col("po_supplier"),            # Now populated
+        F.col("po_supplier_code"),       # Now populated
+        F.col("sbm"),                    # Now populated
+        F.col("smg_group"),              # Now populated
+        F.col("smg_head"),               # Now populated
+        F.col("std_cost"),               # Now populated
+        F.col("type"),
+        F.col("vencode"),
+        F.col("venname")
     )
 )
 
-df_stage4.createOrReplaceTempView("stage4_basepart_filled")
+final_dtls_insert.write.insertInto(tgt_dtls)
+
+
+
+
+
+
+
+
+
+partcons = (
+    rscxd_df.alias("a")
+    .join(dmd_df.alias("b"), F.col("a.nha") == F.col("b.hostpartid"))
+    .filter(F.col("b.ordertype").isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP"))
+    
+    # --- ADDED 5-YEAR LOOKBACK FILTER TO MATCH SQL ---
+    .filter(F.col("b.historybegdate") >= F.date_add(F.current_date(), -365*5))
+    
+    .groupBy("a.nha")
+    .agg(F.sum("b.historyamount").cast("int").alias("sprs_cons"))
+)
+
+
+
+
+
+
+
+
+
