@@ -1,66 +1,41 @@
----------------------------------------------------------------------------
-AnalysisException                         Traceback (most recent call last)
-Cell In[109], line 7
-      1 po_base = (
-      2     nhalist
-      3     .join(rscxd_cons.select("nha", "open_po_qty"), nhalist.nha_cd == rscxd_cons.nha)
-      4     .join(po_hstry, po_hstry.matnr == nhalist.nha_cd)
-      5     .join(ekpo, (po_hstry.ebeln == ekpo.ebeln) & (po_hstry.ebelp == ekpo.ebelp))
-      6     .join(lfa1, lfa1.lifnr == po_hstry.lifnr)
-----> 7     .filter(
-      8         (rscxd_cons.open_po_qty > 0) &
-      9         (~F.substring(po_hstry.due_dt, -5, 5).isin("04-01", "12-31")) &
-     10         (po_hstry.status != "INACT") &
-     11         (F.trim(po_hstry.matnr) != "") &
-     12         (F.trim(po_hstry.loekz) == "") &
-     13         (po_hstry.discrd != "X") &
-     14         (po_hstry.aussl != "U3") &
-     15         (po_hstry.bsart != "UB") &
-     16         (po_hstry.elikz != "X") &
-     17         (~ekpo.pstyp.isin("7", "9"))
-     18     )
-     19     .select(
-     20         nhalist.nha_cd.alias("nha_cd"),
-     21         po_hstry.lifnr.alias("lifnr_cd"),
-     22         lfa1.name1.alias("name1_cd")
-     23     )
-     24     .distinct()
-     25 )
-     27 posupp = (
-     28     po_base
-     29     .groupBy("nha_cd")
-   (...)
-     33     )
-     34 )
+# #### Step-6 — POSUPP (Open PO Supplier Discovery)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:3331, in DataFrame.filter(self, condition)
-   3329     jdf = self._jdf.filter(condition)
-   3330 elif isinstance(condition, Column):
--> 3331     jdf = self._jdf.filter(condition._jc)
-   3332 else:
-   3333     raise PySparkTypeError(
-   3334         error_class="NOT_COLUMN_OR_STR",
-   3335         message_parameters={"arg_name": "condition", "arg_type": type(condition).__name__},
-   3336     )
+# 1. Create a distinct alias for the consumption table to avoid ambiguity
+cons_check = rscxd_cons.select("nha", "open_po_qty").alias("cons_check")
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
+po_base = (
+    nhalist.alias("root")
+    # Join using the explicit alias 'cons_check'
+    .join(cons_check, F.col("root.nha_cd") == F.col("cons_check.nha"))
+    .join(po_hstry, po_hstry.matnr == F.col("root.nha_cd"))
+    .join(ekpo, (po_hstry.ebeln == ekpo.ebeln) & (po_hstry.ebelp == ekpo.ebelp))
+    .join(lfa1, lfa1.lifnr == po_hstry.lifnr)
+    .filter(
+        # Use the ALIAS column for the filter
+        (F.col("cons_check.open_po_qty") > 0) &
+        (~F.substring(po_hstry.due_dt, -5, 5).isin("04-01", "12-31")) &
+        (po_hstry.status != "INACT") &
+        (F.trim(po_hstry.matnr) != "") &
+        (F.trim(po_hstry.loekz) == "") &
+        (po_hstry.discrd != "X") &
+        (po_hstry.aussl != "U3") &
+        (po_hstry.bsart != "UB") &
+        (po_hstry.elikz != "X") &
+        (~ekpo.pstyp.isin("7", "9"))
+    )
+    .select(
+        F.col("root.nha_cd").alias("nha_cd"),
+        po_hstry.lifnr.alias("lifnr_cd"),
+        lfa1.name1.alias("name1_cd")
+    )
+    .distinct()
+)
 
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
-
-AnalysisException: Column open_po_qty#25800 are ambiguous. It's probably because you joined several Datasets together, and some of these Datasets are the same. This column points to one of the Datasets but Spark is unable to figure out which one. Please alias the Datasets with different names via `Dataset.as` before joining them, and specify the column using qualified name, e.g. `df.as("a").join(df.as("b"), $"a.id" > $"b.id")`. You can also set spark.sql.analyzer.failAmbiguousSelfJoin to false to disable this check.
+posupp = (
+    po_base
+    .groupBy("nha_cd")
+    .agg(
+        F.concat_ws(",", F.collect_list("lifnr_cd")).alias("posuppcode_cd"),
+        F.concat_ws(",", F.collect_list("name1_cd")).alias("posuppname_cd")
+    )
+)
