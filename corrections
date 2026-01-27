@@ -1,11 +1,4 @@
-# Target table path (already parameterized earlier)
-target_table = tbl_target_supplier_inv
-
-# Write as FULL LOAD (overwrite each run)
-final_output_df.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .option("overwriteSchema", "true") \
-    .saveAsTable(target_table)
-
-print(f"Table {target_table} created/refreshed successfully")
+F.when(F.upper(F.col("is_ltb_avail")).isin("Y", "YES"), "YES")
+ .when(F.upper(F.col("is_ltb_avail")).isin("N", "NO"), "NO")
+ .otherwise("NA")
+ .alias("is_ltb_avail"), 
