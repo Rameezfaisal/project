@@ -17,3 +17,63 @@ if duplicate_check.count() > 0:
     duplicate_check.show(10, truncate=False)
 else:
     print("✅ SAFE: No duplicates found. The current Spark logic matches SAP results.")
+
+
+
+
+
+
+
+
+
+# ... [Keep the Window definition and initial Level 1 setup from Step 8] ...
+w = Window.partitionBy("level").orderBy("nha", "childpn")
+df_nhalist = df_nhalist.withColumn("rowno", F.row_number().over(w))
+
+# Level 1 CMPQPA = BOMQPA
+df_nhalist = df_nhalist.withColumn(
+    "cmpqpa",
+    F.when(F.col("level") == 1, F.col("bomqpa")).otherwise(F.col("cmpqpa"))
+)
+
+# Get max level
+row = df_nhalist.select(F.max("level").alias("maxlvl")).collect()[0]
+max_level = row["maxlvl"]
+
+if max_level is not None and max_level >= 2:
+    for lvl in range(2, max_level + 1):
+        
+        # --- SAP FAITHFUL LOGIC START ---
+        # SAP: SELECT DISTINCT X.BOMQPA * SUM(Y.CMPQPA) ... GROUP BY Y.NHA
+        
+        # 1. Aggregate the Parent Level first (Mimic SAP SUM)
+        parent_agg = (
+            df_nhalist
+            .filter(F.col("level") == lvl - 1)
+            .groupBy("nha")  # Group by Parent NHA
+            .agg(F.sum("cmpqpa").alias("parent_total_cmpqpa")) # Sum the quantity
+        )
+
+        # 2. Join the Aggregated Parent to the Current Level
+        df_nhalist = (
+            df_nhalist.alias("x")
+            .join(
+                parent_agg.alias("y"),
+                (F.col("x.childpn") == F.col("y.nha")) & # Join Child to Parent NHA
+                (F.col("x.level") == lvl),
+                "left"
+            )
+            .withColumn(
+                "cmpqpa",
+                F.when(
+                    F.col("x.level") == lvl,
+                    # Multiply BOM Qty by the SUMMED Parent Qty
+                    F.col("x.bomqpa") * F.coalesce(F.col("y.parent_total_cmpqpa"), F.lit(0))
+                ).otherwise(F.col("x.cmpqpa"))
+            )
+            .select("x.*") # Keep original structure
+        )
+        # --- SAP FAITHFUL LOGIC END ---
+
+# Refresh temp view
+df_nhalist.createOrReplaceTempView("nhalist")
