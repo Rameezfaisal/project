@@ -1,1 +1,41 @@
-OBPRNO	OBPRTNO	NHA	VENCODE	VENNAME	IS_LTB_AVAIL	LTBDATE	LTBQTY	QTY_LIABLE_SUPPLIER	QTY_AVAILABLE_SUPPLIER	LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY	LAMQOH	OPEN_PO_QTY	Refresh_Frequency	Supply_Last_Updated	Last_Request_Date	Next_Request_Date	OBSupplier	RESTRICTED_ALL_STOCK
+CELL 16 — Final Column Standardization (SAP Output Schema)
+🧠 Business Meaning
+We now format the dataset so that:
+✔ Column names match SAP output
+✔ Column order matches SAP output
+✔ Data types are safe for Delta
+✔ No empty strings in numeric/date fields
+This is the materialized result of the procedure.
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+
+final_output_df = final_supplier_inventory_df.select(
+    F.col("obprno").alias("obprno"),
+    F.col("obprtno").alias("obprtno"),
+    F.col("nha").alias("nha"),
+    F.col("vencode").alias("vencode"),
+    F.col("venname").alias("venname"),
+    F.col("is_ltb_avail").alias("is_ltb_avail"),
+    F.col("ltbdate").cast("date").alias("ltbdate"),
+    F.col("ltbqty").cast("int").alias("ltbqty"),
+    F.col("qty_liable_supplier").cast("int").alias("qty_liable_supplier"),
+    F.col("qty_available_supplier").cast("int").alias("qty_available_supplier"),
+    F.col("lrc_suppliers_date_to_zero_inventory").cast("date").alias("lrc_suppliers_date_to_zero_inventory"),
+    F.col("lamqoh").cast("int").alias("lamqoh"),
+    F.col("open_po_qty").cast("int").alias("open_po_qty"),
+    F.col("refresh_frequency").cast("int").alias("refresh_frequency"),
+    F.col("supply_last_updated").cast("date").alias("supply_last_updated"),
+    F.col("last_request_date").cast("date").alias("last_request_date"),
+    F.col("next_request_date").cast("date").alias("next_request_date"),
+    F.col("obsupplier").alias("obsupplier"),
+    F.col("restricted_all_stock").cast("int").alias("restricted_all_stock")
+)
+
+final_output_df.printSchema()
+final_output_df.show(truncate=False)
