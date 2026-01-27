@@ -1,4 +1,60 @@
-F.when(F.upper(F.col("is_ltb_avail")).isin("Y", "YES"), "YES")
- .when(F.upper(F.col("is_ltb_avail")).isin("N", "NO"), "NO")
- .otherwise("NA")
- .alias("is_ltb_avail"), 
+# ================
+# Alias base tables
+# ================
+tt = temp_table_df.alias("tt")
+dmd = dmd_df.alias("d")
+part = part_dtls_df.alias("p")
+
+# -------------------------------------------------------
+# CASE 1: Component part where CMPPRTNO ≠ NHA
+# -------------------------------------------------------
+del_case1 = tt \
+    .join(dmd, F.col("d.cmpprtno_dmd") == F.col("tt.material_tt")) \
+    .filter(F.col("d.nha_dmd") != F.col("d.cmpprtno_dmd")) \
+    .join(part,
+          (F.col("p.cmpprtno_part") == F.col("d.cmpprtno_dmd")) &
+          (F.col("p.nha_part") == F.col("d.nha_dmd"))
+    ) \
+    .select(F.col("p.vencode_part").alias("vencode_del"))
+
+# -------------------------------------------------------
+# CASE 2: Component part where CMPPRTNO = NHA
+# -------------------------------------------------------
+del_case2 = tt \
+    .join(dmd, F.col("d.cmpprtno_dmd") == F.col("tt.material_tt")) \
+    .filter(F.col("d.nha_dmd") == F.col("d.cmpprtno_dmd")) \
+    .join(part,
+          (F.col("p.cmpprtno_part") == F.col("d.cmpprtno_dmd")) &
+          (F.col("p.nha_part") == F.col("d.nha_dmd")) &
+          (F.col("p.cmpprtno_part") == F.col("p.nha_part"))
+    ) \
+    .select(F.col("p.vencode_part").alias("vencode_del"))
+
+# -------------------------------------------------------
+# CASE 3: Supplier linked through NHA alternate path
+# -------------------------------------------------------
+del_case3 = tt \
+    .join(dmd, F.col("d.cmpprtno_dmd") == F.col("tt.material_tt")) \
+    .filter(F.col("d.nha_dmd") != F.col("d.cmpprtno_dmd")) \
+    .join(part,
+          (F.col("p.cmpprtno_part") == F.col("tt.material_tt")) &
+          (F.col("p.nha_part") == F.col("d.nha_dmd"))
+    ) \
+    .select(F.col("p.vencode_part").alias("vencode_del"))
+
+# -------------------------------------------------------
+# Union all delete suppliers
+# -------------------------------------------------------
+delete_suppliers_df = del_case1.union(del_case2).union(del_case3).distinct()
+
+# -------------------------------------------------------
+# Apply DELETE (anti join)
+# -------------------------------------------------------
+temp_table_df = temp_table_df.alias("tt") \
+    .join(delete_suppliers_df.alias("ds"),
+          F.col("tt.vencode_tt") == F.col("ds.vencode_del"),
+          "left_anti"
+    )
+
+temp_table_df.cache()
+temp_table_df.count()
