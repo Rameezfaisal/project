@@ -1,22 +1,62 @@
 # ==============================================================================
-# Step-12 & 13 (CORRECTED): All Suppliers (Part & NHA Level) with Anti-Join
+# Correction 4: World Wide Supplier (Missing Block) & Corrected Step 14
 # ==============================================================================
 
-# 1. Create Exclusion Reference
-#    Combine the "Preferred" vendors we already found in Steps 8 & 9.
-#    If a vendor is here, we must NOT list them again in the "Catch-all" sections.
-#    (Note: Since Step 8 count was 0, this might be empty now, but it is crucial for full data).
-already_found_vendors_df = ob_supplier_df.select("obprno", "obprtno", "vencode") \
-    .unionByName(nha_supplier_df.select("obprno", "obprtno", "vencode")) \
+# ------------------------------------------------------------------------------
+# NEW BLOCK: World Wide Supplier (Hardcoded logic from SAP)
+# ------------------------------------------------------------------------------
+ww_supplier_df = ob_base_df.alias("o") \
+    .join(
+        dmd_df.alias("c"),
+        (F.col("c.cmpprtno_dmd") == F.col("o.obprtno")) &
+        (F.col("c.nha_dmd") == F.col("c.cmpprtno_dmd")),
+        "inner"
+    ) \
+    .join(
+        part_dtls_df.alias("b"),
+        (F.col("b.cmpprtno_part") == F.col("c.cmpprtno_dmd")) &
+        (F.col("b.nha_part") == F.col("c.nha_dmd")) &
+        (F.col("b.cmpprtno_part") == F.col("b.nha_part")),
+        "inner"
+    ) \
+    .select(
+        F.col("o.obprno"),
+        F.col("o.obprtno"),
+        F.col("o.obprtno").alias("nha"),
+        F.lit("0001000000").alias("vencode"),
+        F.lit("WW Supplier").alias("venname"),
+        F.lit("No").alias("is_ltb_avail"),
+        F.lit(None).cast("date").alias("ltbdate"),
+        F.lit(0).alias("ltbqty"),
+        F.lit(0).alias("qty_liable_supplier"),
+        F.lit(None).cast("int").alias("qty_available_supplier"),
+        F.lit(None).cast("date").alias("lrc_suppliers_date_to_zero_inventory"),
+        F.lit(0).alias("lamqoh"),
+        F.lit(0).alias("open_po_qty"),
+        F.lit(None).cast("int").alias("refresh_frequency"),
+        F.lit("").alias("supply_last_updated"),
+        F.current_date().alias("last_request_date"),
+        F.lit(None).cast("date").alias("next_request_date"),
+        F.lit("N").alias("obsupplier"),
+        F.lit(0).alias("restricted_all_stock")
+    ) \
     .distinct()
 
 # ------------------------------------------------------------------------------
-# CORRECTED Step-12: All Suppliers (Direct Part Match)
+# CORRECTED Step-14: Component Backfill (with Anti-Join)
 # ------------------------------------------------------------------------------
-all_suppliers_part_df = ob_base_df.alias("o") \
+# We reuse 'already_found_vendors_df' from the previous step to exclude duplicates.
+
+all_suppliers_component_df = ob_base_df.alias("o") \
+    .join(
+        dmd_df.alias("d"),
+        (F.col("d.cmpprtno_dmd") == F.col("o.obprtno")) &
+        (F.col("d.nha_dmd") != F.col("d.cmpprtno_dmd")),
+        "inner"
+    ) \
     .join(
         nha_supp_df.alias("s"),
-        F.col("s.material_ns") == F.col("o.obprtno"),
+        F.col("s.material_ns") == F.col("d.nha_dmd"),
         "inner"
     ) \
     .join(
@@ -40,62 +80,17 @@ all_suppliers_part_df = ob_base_df.alias("o") \
         F.lit(None).cast("date").alias("lrc_suppliers_date_to_zero_inventory"),
         F.lit(0).alias("lamqoh"),
         F.lit(0).alias("open_po_qty"),
-        F.lit(refresh_frequency_days).alias("refresh_frequency"),
-        F.lit(None).cast("date").alias("supply_last_updated"),
+        F.lit(42).alias("refresh_frequency"),
+        F.lit("").alias("supply_last_updated"),
         F.current_date().alias("last_request_date"),
-        F.date_add(F.current_date(), refresh_frequency_days).alias("next_request_date"),
+        F.date_add(F.current_date(), 42).alias("next_request_date"),
         F.lit("N").alias("obsupplier"),
         F.lit(0).alias("restricted_all_stock")
     ) \
     .distinct()
 
-# ------------------------------------------------------------------------------
-# CORRECTED Step-13: All Suppliers (NHA Level Match)
-# ------------------------------------------------------------------------------
-all_suppliers_nha_df = ob_base_df.alias("o") \
-    .join(
-        dmd_df.alias("d"),
-        (F.col("d.cmpprtno_dmd") == F.col("o.obprtno")) &
-        (F.col("d.nha_dmd") != F.col("d.cmpprtno_dmd")),
-        "inner"
-    ) \
-    .join(
-        nha_supp_df.alias("s"),
-        F.col("s.material_ns") == F.col("d.nha_dmd"),
-        "inner"
-    ) \
-    .join(
-        already_found_vendors_df.alias("ex"),
-        (F.col("o.obprno") == F.col("ex.obprno")) &
-        (F.col("o.obprtno") == F.col("ex.obprtno")) &
-        (F.col("s.supcode_ns") == F.col("ex.vencode")),
-        "left_anti"  # <--- CRITICAL FIX: Exclude if already found
-    ) \
-    .select(
-        F.col("o.obprno"),
-        F.col("o.obprtno"),
-        F.col("d.nha_dmd").alias("nha"),
-        F.col("s.supcode_ns").alias("vencode"),
-        F.col("s.suppliername_ns").alias("venname"),
-        F.lit("NA").alias("is_ltb_avail"),
-        F.lit(None).cast("date").alias("ltbdate"),
-        F.lit(0).alias("ltbqty"),
-        F.lit(0).alias("qty_liable_supplier"),
-        F.lit(None).cast("int").alias("qty_available_supplier"),
-        F.lit(None).cast("date").alias("lrc_suppliers_date_to_zero_inventory"),
-        F.lit(0).alias("lamqoh"),
-        F.lit(0).alias("open_po_qty"),
-        F.lit(refresh_frequency_days).alias("refresh_frequency"),
-        F.lit(None).cast("date").alias("supply_last_updated"),
-        F.current_date().alias("last_request_date"),
-        F.date_add(F.current_date(), refresh_frequency_days).alias("next_request_date"),
-        F.lit("N").alias("obsupplier"),
-        F.lit(0).alias("restricted_all_stock")
-    ) \
-    .distinct()
+ww_supplier_df.cache()
+all_suppliers_component_df.cache()
 
-all_suppliers_part_df.cache()
-all_suppliers_nha_df.cache()
-
-print(f"Step 12 Count: {all_suppliers_part_df.count()}")
-print(f"Step 13 Count: {all_suppliers_nha_df.count()}")
+print(f"WW Supplier Count: {ww_supplier_df.count()}")
+print(f"Step 14 Count: {all_suppliers_component_df.count()}")
