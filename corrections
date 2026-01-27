@@ -1,37 +1,29 @@
-ob_supplier_df = ob_base_df.alias("o") \
-    .join(
-        dmd_df.alias("d"),
-        F.col("o.obprtno") == F.col("d.cmpprtno_dmd"),
-        "inner"
-    ) \
-    .join(
-        part_dtls_df.alias("p"),
-        (F.col("p.cmpprtno_part") == F.col("d.cmpprtno_dmd")) &
-        (F.col("p.nha_part") == F.col("d.nha_dmd")),
-        "inner"
-    ) \
-    .select(
-        F.col("o.obprno"),
-        F.col("o.obprtno"),
-        F.col("d.nha_dmd").alias("nha"),
-        F.col("p.vencode_part").alias("vencode"),
-        F.col("p.venname_part").alias("venname"),
-        F.col("o.is_ltb_avail"),
-        F.col("o.ltb_date").alias("ltbdate"),
-        F.col("o.ltb_qty").cast("int").alias("ltbqty"),
-        F.lit(0).alias("qty_liable_supplier"),
-        F.lit(None).cast("int").alias("qty_available_supplier"),
-        F.col("o.supplier_date_to_zero").alias("lrc_suppliers_date_to_zero_inventory"),
-        F.col("d.lamqoh_dmd").cast("int").alias("lamqoh"),
-        F.col("d.open_po_qty_dmd").cast("int").alias("open_po_qty"),
-        F.lit(refresh_frequency_days).alias("refresh_frequency"),
-        F.lit(None).cast("date").alias("supply_last_updated"),
-        F.current_date().alias("last_request_date"),
-        F.date_add(F.current_date(), refresh_frequency_days).alias("next_request_date"),
-        F.lit("Y").alias("obsupplier"),
-        F.col("d.restricted_all_stock_dmd").cast("int").alias("restricted_all_stock")
-    ) \
-    .distinct()
+from pyspark.sql import functions as F
 
-ob_supplier_df.cache()
-ob_supplier_df.count()
+# Distinct OB parts
+ob_parts = ob_base_df.select("obprtno").distinct()
+
+# Distinct demand parts
+dmd_parts = dmd_df.select("cmpprtno_dmd").distinct()
+
+print("OB Parts Count:", ob_parts.count())
+print("Demand Parts Count:", dmd_parts.count())
+
+# Direct match
+direct_match = ob_parts.join(dmd_parts, ob_parts.obprtno == dmd_parts.cmpprtno_dmd)
+print("Direct Matches:", direct_match.count())
+
+# Trimmed match
+trim_match = ob_parts.join(
+    dmd_parts,
+    F.trim(ob_parts.obprtno) == F.trim(dmd_parts.cmpprtno_dmd)
+)
+print("Trim Matches:", trim_match.count())
+
+# Leading zero removed match
+lz_match = ob_parts.join(
+    dmd_parts,
+    F.regexp_replace(ob_parts.obprtno, "^0+", "") ==
+    F.regexp_replace(dmd_parts.cmpprtno_dmd, "^0+", "")
+)
+print("Leading Zero Trim Matches:", lz_match.count())
