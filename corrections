@@ -1,22 +1,18 @@
-CELL 15 — Final UNION (Materialized Result Set)
-🧠 Business Meaning
-We now combine all supplier discovery paths into a single result — just like the SAP procedure does with UNIONs.
-In your dataset, only Cell 12 (All Suppliers – Part Line) produced rows, but we still union everything to keep logic faithful and future-proof.
-
-
-
-
-
-
-final_supplier_inventory_df = (
-    ob_supplier_df
-    .unionByName(nha_supplier_df)
-    .unionByName(ltb_supplier_df)
-    .unionByName(rscxd_supplier_df)
-    .unionByName(all_suppliers_part_df)
-    .unionByName(all_suppliers_nha_df)
-    .unionByName(all_suppliers_component_df)
+obpr_info_df = spark.table(tbl_obpr_info).select(
+    F.col("obprno").alias("obprno_info"),
+    F.col("obprtno").alias("obprtno_info")
 ).distinct()
 
-final_supplier_inventory_df.cache()
-final_supplier_inventory_df.count()
+# Enforce SAP join condition
+ob_base_df = ob_base_df.alias("o") \
+    .join(
+        obpr_info_df.alias("i"),
+        (F.col("o.obprno") == F.col("i.obprno_info")) &
+        (F.col("o.obprtno") == F.col("i.obprtno_info")),
+        "inner"
+    ) \
+    .select("o.*") \
+    .distinct()
+
+ob_base_df.cache()
+ob_base_df.count()
