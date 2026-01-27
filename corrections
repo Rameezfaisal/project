@@ -1,29 +1,5 @@
-from pyspark.sql import functions as F
-
-# Distinct OB parts
-ob_parts = ob_base_df.select("obprtno").distinct()
-
-# Distinct demand parts
-dmd_parts = dmd_df.select("cmpprtno_dmd").distinct()
-
-print("OB Parts Count:", ob_parts.count())
-print("Demand Parts Count:", dmd_parts.count())
-
-# Direct match
-direct_match = ob_parts.join(dmd_parts, ob_parts.obprtno == dmd_parts.cmpprtno_dmd)
-print("Direct Matches:", direct_match.count())
-
-# Trimmed match
-trim_match = ob_parts.join(
-    dmd_parts,
-    F.trim(ob_parts.obprtno) == F.trim(dmd_parts.cmpprtno_dmd)
-)
-print("Trim Matches:", trim_match.count())
-
-# Leading zero removed match
-lz_match = ob_parts.join(
-    dmd_parts,
-    F.regexp_replace(ob_parts.obprtno, "^0+", "") ==
-    F.regexp_replace(dmd_parts.cmpprtno_dmd, "^0+", "")
-)
-print("Leading Zero Trim Matches:", lz_match.count())
+OB Parts Count: 1
+Demand Parts Count: 816
+Direct Matches: 0
+Trim Matches: 0
+Leading Zero Trim Matches: 0
