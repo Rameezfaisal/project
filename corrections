@@ -1,3 +1,10 @@
+
+Only OB parts that truly belong to a valid OB Problem Report should proceed.
+
+
+
+
+
 obpr_info_df = spark.table(tbl_obpr_info).select(
     F.col("obprno").alias("obprno_info"),
     F.col("obprtno").alias("obprtno_info")
