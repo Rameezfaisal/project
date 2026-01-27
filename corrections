@@ -1,79 +1,121 @@
 from pyspark.sql import functions as F
+from pyspark.sql import types as T
 
-# Check for duplicates in any level that would affect the join
-# SAP groups by NHA, so we check if NHA is unique per level
-duplicate_check = (
-    df_nhalist
-    .groupBy("level", "nha")
-    .agg(F.count("*").alias("cnt"))
-    .filter(F.col("cnt") > 1)
-    .orderBy(F.col("cnt").desc())
+
+
+
+
+
+
+
+# =========================
+# Source Tables
+# =========================
+tbl_buynha_suppliers      = "lakehouse.w_omat_zt_omat_buynha_suppliers_plants"
+tbl_eord                  = "lakehouse.cv_eord"
+tbl_lfa1                  = "lakehouse.cv_lfa1"
+tbl_eban                  = "lakehouse.cv_eban"
+tbl_zpo_hist              = "lakehouse.cv_zpo_hstry"
+tbl_zpo_hist_arch         = "lakehouse.cv_zpo_hstry_arch"
+
+tbl_dmd                   = "lakehouse.cv_omat_dmd_consumption_dtls"
+tbl_part_dtls             = "lakehouse.cv_omat_part_dtls"
+tbl_obprtno_dtls          = "lakehouse.cv_omat_obprtno_dtls"
+tbl_obpr_info             = "lakehouse.cv_omat_obpr_info_dtls"
+
+tbl_rscxd_dmd             = "lakehouse.cv_omat_rscxd_dmd_cons"
+tbl_rscxd_dtls            = "lakehouse.cv_omat_rscxd_dtls"
+
+# =========================
+# Target Tables
+# =========================
+tbl_target_supplier_inv   = "lakehouse.omat_supplier_inventory"
+tbl_audit_log             = "lakehouse.omat_refresh_audit"
+
+# =========================
+# Control Parameters
+# =========================
+refresh_frequency_days = 42
+valid_states = ["CONFIRMED","IN REVIEW","IN WORK"]
+
+
+
+
+
+
+
+
+
+buynha_suppliers_df = spark.table(tbl_buynha_suppliers) \
+    .select(
+        F.col("nha").alias("nha"),
+        F.col("omat_selected_suppliercd").alias("supcode")
+    ).distinct()
+
+eord_df = spark.table(tbl_eord) \
+    .select(
+        F.col("matnr").alias("material"),
+        F.lpad(F.col("lifnr"),10,"0").alias("supcode_eord")
+    )
+
+lfa1_df = spark.table(tbl_lfa1) \
+    .select(
+        F.col("lifnr").alias("lifnr_lfa1"),
+        F.col("name1").alias("suppliername_lfa1")
+    )
+
+dmd_df = spark.table(tbl_dmd).selectExpr(
+    "cmpprtno as cmpprtno_dmd",
+    "nha as nha_dmd",
+    "lamqoh as lamqoh_dmd",
+    "open_po_qty as open_po_qty_dmd",
+    "restricted_all_stock as restricted_all_stock_dmd"
 )
 
-print("--- Duplicate Parent NHA Report ---")
-if duplicate_check.count() > 0:
-    print("⚠️ ALERT: Duplicates found! The current Spark logic is DIFFERENT from SAP.")
-    print("SAP sums these quantities; Spark creates multiple rows.")
-    duplicate_check.show(10, truncate=False)
-else:
-    print("✅ SAFE: No duplicates found. The current Spark logic matches SAP results.")
-
-
-
-
-
-
-
-
-
-# ... [Keep the Window definition and initial Level 1 setup from Step 8] ...
-w = Window.partitionBy("level").orderBy("nha", "childpn")
-df_nhalist = df_nhalist.withColumn("rowno", F.row_number().over(w))
-
-# Level 1 CMPQPA = BOMQPA
-df_nhalist = df_nhalist.withColumn(
-    "cmpqpa",
-    F.when(F.col("level") == 1, F.col("bomqpa")).otherwise(F.col("cmpqpa"))
+part_dtls_df = spark.table(tbl_part_dtls).selectExpr(
+    "cmpprtno as cmpprtno_part",
+    "nha as nha_part",
+    "vencode as vencode_part",
+    "venname as venname_part"
 )
 
-# Get max level
-row = df_nhalist.select(F.max("level").alias("maxlvl")).collect()[0]
-max_level = row["maxlvl"]
+obprt_df = spark.table(tbl_obprtno_dtls).selectExpr(
+    "obprno","obprtno",
+    "upper(obpr_state) as obpr_state",
+    "is_ltb_avail","ltb_date","ltb_qty",
+    "supplier_date_to_zero as supplier_date_to_zero"
+)
 
-if max_level is not None and max_level >= 2:
-    for lvl in range(2, max_level + 1):
-        
-        # --- SAP FAITHFUL LOGIC START ---
-        # SAP: SELECT DISTINCT X.BOMQPA * SUM(Y.CMPQPA) ... GROUP BY Y.NHA
-        
-        # 1. Aggregate the Parent Level first (Mimic SAP SUM)
-        parent_agg = (
-            df_nhalist
-            .filter(F.col("level") == lvl - 1)
-            .groupBy("nha")  # Group by Parent NHA
-            .agg(F.sum("cmpqpa").alias("parent_total_cmpqpa")) # Sum the quantity
-        )
+rscxd_dmd_df = spark.table(tbl_rscxd_dmd).selectExpr(
+    "cmpprtno as cmpprtno_r",
+    "nha as nha_r",
+    "lamqoh as lamqoh_r",
+    "open_po_qty as open_po_qty_r",
+    "restricted_all_stock as restricted_all_stock_r"
+)
 
-        # 2. Join the Aggregated Parent to the Current Level
-        df_nhalist = (
-            df_nhalist.alias("x")
-            .join(
-                parent_agg.alias("y"),
-                (F.col("x.childpn") == F.col("y.nha")) & # Join Child to Parent NHA
-                (F.col("x.level") == lvl),
-                "left"
-            )
-            .withColumn(
-                "cmpqpa",
-                F.when(
-                    F.col("x.level") == lvl,
-                    # Multiply BOM Qty by the SUMMED Parent Qty
-                    F.col("x.bomqpa") * F.coalesce(F.col("y.parent_total_cmpqpa"), F.lit(0))
-                ).otherwise(F.col("x.cmpqpa"))
-            )
-            .select("x.*") # Keep original structure
-        )
-        # --- SAP FAITHFUL LOGIC END ---
+rscxd_dtls_df = spark.table(tbl_rscxd_dtls).selectExpr(
+    "cmpprtno as cmpprtno_rd",
+    "nha as nha_rd",
+    "vencode as vencode_rd",
+    "venname as venname_rd"
+)
 
-# Refresh temp view
-df_nhalist.createOrReplaceTempView("nhalist")
+
+
+
+
+
+
+
+base_data_df = buynha_suppliers_df.groupBy("nha","supcode").count().drop("count")
+
+
+
+
+
+
+
+
+
+
