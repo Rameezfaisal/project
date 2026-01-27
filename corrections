@@ -1,31 +1,19 @@
-# #### Step-11 — Update rpt_omat_rscxd_dtls with selected supplier
-# Correction: Added .dropDuplicates() for identical rows and Window rank on 'suppcd_pr' for edge cases.
+from pyspark.sql import functions as F
 
-# 1. Define the deduplication window
-# We partition by 'nha' and order by 'suppcd_pr' to strictly handle the PR supplier conflicts found in your data.
-w = Window.partitionBy("nha").orderBy(F.col("suppcd_pr").desc())
-
-# 2. Read, Drop exact duplicates, then Window filter
-unique_source_df = (
-    spark.read.table(tgt_supplier_plants)
-    .dropDuplicates()  # Efficiently removes the 99% identical rows first
-    .withColumn("rn", F.row_number().over(w))
-    .filter(F.col("rn") == 1)
-    .drop("rn")
+# Check for duplicates in any level that would affect the join
+# SAP groups by NHA, so we check if NHA is unique per level
+duplicate_check = (
+    df_nhalist
+    .groupBy("level", "nha")
+    .agg(F.count("*").alias("cnt"))
+    .filter(F.col("cnt") > 1)
+    .orderBy(F.col("cnt").desc())
 )
 
-# 3. Register this unique dataframe as a temporary view
-unique_source_df.createOrReplaceTempView("unique_source_view")
-
-# 4. Perform the MERGE using the unique view
-spark.sql(f"""
-MERGE INTO {tgt_rscxd_dtls} AS a
-USING unique_source_view AS b
-ON a.nha = b.nha
-WHEN MATCHED THEN
-  UPDATE SET
-    a.vencode = b.omat_selected_suppliercd,
-    a.venname = b.omat_selected_supplier,
-    a.po_supplier_code = b.suppcd_po1,
-    a.po_supplier = b.suppname_po1
-""")
+print("--- Duplicate Parent NHA Report ---")
+if duplicate_check.count() > 0:
+    print("⚠️ ALERT: Duplicates found! The current Spark logic is DIFFERENT from SAP.")
+    print("SAP sums these quantities; Spark creates multiple rows.")
+    duplicate_check.show(10, truncate=False)
+else:
+    print("✅ SAFE: No duplicates found. The current Spark logic matches SAP results.")
