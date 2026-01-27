@@ -1,9 +1,9 @@
-CELL 12 — All Suppliers (OB Part Direct Suppliers)
+CELL 13 — All Suppliers (NHA Level Suppliers)
 🧠 Business Meaning
-This block says:
-Even if no demand exists,
-list ALL known suppliers of this OB part
-so procurement can still reach out.
+If the OB part is used in a higher-level assembly (NHA),
+SAP also pulls all suppliers of that NHA.
+Even if no demand exists.
+This broadens supplier outreach for potential alternates.
 
 
 
@@ -12,16 +12,22 @@ so procurement can still reach out.
 
 
 
-all_suppliers_part_df = ob_base_df.alias("o") \
+all_suppliers_nha_df = ob_base_df.alias("o") \
+    .join(
+        dmd_df.alias("d"),
+        (F.col("d.cmpprtno_dmd") == F.col("o.obprtno")) &
+        (F.col("d.nha_dmd") != F.col("d.cmpprtno_dmd")),
+        "inner"
+    ) \
     .join(
         nha_supp_df.alias("s"),
-        F.col("s.material_ns") == F.col("o.obprtno"),
+        F.col("s.material_ns") == F.col("d.nha_dmd"),
         "inner"
     ) \
     .select(
         F.col("o.obprno"),
         F.col("o.obprtno"),
-        F.col("o.obprtno").alias("nha"),
+        F.col("d.nha_dmd").alias("nha"),
         F.col("s.supcode_ns").alias("vencode"),
         F.col("s.suppliername_ns").alias("venname"),
         F.lit("NA").alias("is_ltb_avail"),
@@ -41,7 +47,5 @@ all_suppliers_part_df = ob_base_df.alias("o") \
     ) \
     .distinct()
 
-all_suppliers_part_df.cache()
-all_suppliers_part_df.count()
-
-
+all_suppliers_nha_df.cache()
+all_suppliers_nha_df.count()
