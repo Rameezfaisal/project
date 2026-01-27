@@ -1,10 +1,22 @@
+# ==============================================================================
+# Step-8 (CORRECTED): OB Part Supplier Logic & Base Definition
+# ==============================================================================
+
+# 1. Define the GLOBAL Base DataFrame (Used in ALL Steps 8-15)
+#    This represents table "A" in SAP (CV_OMAT_OBPRTNO_DTLS) filtered by State.
+#    We do this ONCE here so all subsequent steps can use it.
+ob_base_df = obprt_df.filter(F.col("obpr_state").isin(valid_states))
+
+# 2. Prepare the Info Table (Used ONLY in Step 8)
 obpr_info_df = spark.table(tbl_obpr_info).select(
     F.col("obprno").alias("obprno_info"),
     F.col("obprtno").alias("obprtno_info")
 ).distinct()
 
-# Enforce SAP join condition
-ob_base_df = ob_base_df.alias("o") \
+# 3. Create Step-8 Specific Base
+#    SAP Logic: INNER JOIN to OBPR_INFO_DTLS
+#    (We save this as a NEW dataframe so we don't corrupt the global base for later steps)
+step8_base_df = ob_base_df.alias("o") \
     .join(
         obpr_info_df.alias("i"),
         (F.col("o.obprno") == F.col("i.obprno_info")) &
@@ -14,5 +26,44 @@ ob_base_df = ob_base_df.alias("o") \
     .select("o.*") \
     .distinct()
 
-ob_base_df.cache()
-ob_base_df.count()
+# 4. Generate Final Step-8 Result (OB Supplier)
+ob_supplier_df = step8_base_df.alias("o") \
+    .join(
+        dmd_df.alias("d"),
+        F.col("o.obprtno") == F.col("d.cmpprtno_dmd"),
+        "inner"
+    ) \
+    .join(
+        part_dtls_df.alias("p"),
+        (F.col("p.cmpprtno_part") == F.col("d.cmpprtno_dmd")) &
+        (F.col("p.nha_part") == F.col("d.nha_dmd")),
+        "inner"
+    ) \
+    .select(
+        F.col("o.obprno"),
+        F.col("o.obprtno"),
+        F.col("d.nha_dmd").alias("nha"),
+        F.col("p.vencode_part").alias("vencode"),
+        F.col("p.venname_part").alias("venname"),
+        F.col("o.is_ltb_avail"),
+        F.col("o.ltb_date").alias("ltbdate"),
+        F.col("o.ltb_qty").cast("int").alias("ltbqty"),
+        F.lit(0).alias("qty_liable_supplier"),
+        F.lit(None).cast("int").alias("qty_available_supplier"),
+        F.col("o.supplier_date_to_zero").alias("lrc_suppliers_date_to_zero_inventory"),
+        F.col("d.lamqoh_dmd").cast("int").alias("lamqoh"),
+        F.col("d.open_po_qty_dmd").cast("int").alias("open_po_qty"),
+        F.lit(refresh_frequency_days).alias("refresh_frequency"),
+        F.lit(None).cast("date").alias("supply_last_updated"),
+        F.current_date().alias("last_request_date"),
+        F.date_add(F.current_date(), refresh_frequency_days).alias("next_request_date"),
+        F.lit("Y").alias("obsupplier"),
+        F.col("d.restricted_all_stock_dmd").cast("int").alias("restricted_all_stock")
+    ) \
+    .distinct()
+
+ob_base_df.cache()      # Cache the global base for later steps
+ob_supplier_df.cache()  # Cache the result of this step
+
+print(f"Global Base Count (Rows available for all steps): {ob_base_df.count()}")
+print(f"Step 8 Result Count (OB Suppliers found): {ob_supplier_df.count()}")
