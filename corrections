@@ -1,157 +1,56 @@
-# ================
-# Alias base tables
-# ================
-tt = temp_table_df.alias("tt")
-dmd = dmd_df.alias("d")
-part = part_dtls_df.alias("p")
+# ==============================================================================
+# Step-7 (CORRECTED): Build TEMP Supplier Table & Apply DELETE Logic
+# ==============================================================================
 
-# -------------------------------------------------------
-# CASE 1: Component part where CMPPRTNO ≠ NHA
-# -------------------------------------------------------
-del_case1 = tt \
-    .join(dmd, F.col("d.cmpprtno_dmd") == F.col("tt.material_tt")) \
-    .filter(F.col("d.nha_dmd") != F.col("d.cmpprtno_dmd")) \
-    .join(part,
-          (F.col("p.cmpprtno_part") == F.col("d.cmpprtno_dmd")) &
-          (F.col("p.nha_part") == F.col("d.nha_dmd"))
-    ) \
-    .select(F.col("p.vencode_part").alias("vencode_del"))
-
-# -------------------------------------------------------
-# CASE 2: Component part where CMPPRTNO = NHA
-# -------------------------------------------------------
-del_case2 = tt \
-    .join(dmd, F.col("d.cmpprtno_dmd") == F.col("tt.material_tt")) \
-    .filter(F.col("d.nha_dmd") == F.col("d.cmpprtno_dmd")) \
-    .join(part,
-          (F.col("p.cmpprtno_part") == F.col("d.cmpprtno_dmd")) &
-          (F.col("p.nha_part") == F.col("d.nha_dmd")) &
-          (F.col("p.cmpprtno_part") == F.col("p.nha_part"))
-    ) \
-    .select(F.col("p.vencode_part").alias("vencode_del"))
-
-# -------------------------------------------------------
-# CASE 3: Supplier linked through NHA alternate path
-# -------------------------------------------------------
-del_case3 = tt \
-    .join(dmd, F.col("d.cmpprtno_dmd") == F.col("tt.material_tt")) \
-    .filter(F.col("d.nha_dmd") != F.col("d.cmpprtno_dmd")) \
-    .join(part,
-          (F.col("p.cmpprtno_part") == F.col("tt.material_tt")) &
-          (F.col("p.nha_part") == F.col("d.nha_dmd"))
-    ) \
-    .select(F.col("p.vencode_part").alias("vencode_del"))
-
-# -------------------------------------------------------
-# Union all delete suppliers
-# -------------------------------------------------------
-delete_suppliers_df = del_case1.union(del_case2).union(del_case3).distinct()
-
-# -------------------------------------------------------
-# Apply DELETE (anti join)
-# -------------------------------------------------------
-temp_table_df = temp_table_df.alias("tt") \
-    .join(delete_suppliers_df.alias("ds"),
-          F.col("tt.vencode_tt") == F.col("ds.vencode_del"),
-          "left_anti"
-    )
-
-temp_table_df.cache()
-temp_table_df.count()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Aliases
-o = ob_base_df.alias("o")
-d = dmd_df.alias("d")
-p = part_dtls_df.alias("p")
-ns = nha_supp_df.alias("ns")
-
-# ---------------------------------------
-# Base component → NHA supplier candidates
-# ---------------------------------------
-comp_nha_suppliers_df = o \
+# 1. Base Temp Table (Before Deletion)
+#    - Join alternate NHA suppliers with OPEN LTB PO suppliers
+temp_table_raw_df = nha_supp_df.alias("ns") \
     .join(
-        d,
-        (F.col("d.cmpprtno_dmd") == F.col("o.obprtno")) &
-        (F.col("d.nha_dmd") != F.col("d.cmpprtno_dmd")),
-        "inner"
-    ) \
-    .join(
-        p,
-        (F.col("p.cmpprtno_part") == F.col("d.cmpprtno_dmd")) &
-        (F.col("p.nha_part") == F.col("d.nha_dmd")),
+        part_supp_df.alias("ps"),
+        (F.col("ns.material_ns") == F.col("ps.material_ps")) &
+        (F.col("ns.supcode_ns") == F.col("ps.ltb_supplier_ps")),
         "inner"
     ) \
     .select(
-        F.col("o.obprno"),
-        F.col("o.obprtno"),
-        F.col("o.obprtno").alias("nha"),
-        F.col("p.vencode_part").alias("vencode"),
-        F.col("p.venname_part").alias("venname")
-    )
+        F.col("ns.material_ns").alias("material_tt"),
+        F.col("ns.supcode_ns").alias("vencode_tt"),
+        F.col("ns.suppliername_ns").alias("venname_tt"),
+        F.col("ps.ltb_po_number").alias("ltbpono_tt")
+    ) \
+    .distinct()
 
-# ---------------------------------------
-# EXCLUSION 1: Already listed as direct OB suppliers
-# ---------------------------------------
-direct_suppliers = ob_supplier_df.select("obprno", "obprtno", "vencode")
+# 2. Build Exclusion List (The Logic from the DELETE Statement)
+#    The SAP DELETE statement has 3 UNIONS. We replicate them here.
 
-comp_nha_suppliers_df = comp_nha_suppliers_df.alias("c") \
-    .join(direct_suppliers.alias("ds"),
-          (F.col("c.obprno") == F.col("ds.obprno")) &
-          (F.col("c.obprtno") == F.col("ds.obprtno")) &
-          (F.col("c.vencode") == F.col("ds.vencode")),
-          "left_anti"
-    )
+# Logic 1: CMPPRTNO = MATERIAL, NHA <> CMPPRTNO
+delete_logic_1 = temp_table_raw_df.alias("a") \
+    .join(dmd_df.alias("c"), (F.col("c.cmpprtno_dmd") == F.col("a.material_tt")) & (F.col("c.nha_dmd") != F.col("c.cmpprtno_dmd")), "inner") \
+    .join(part_dtls_df.alias("b"), (F.col("b.cmpprtno_part") == F.col("c.cmpprtno_dmd")) & (F.col("b.nha_part") == F.col("c.nha_dmd")), "inner") \
+    .select(F.col("b.vencode_part").alias("vencode_del"))
 
-# ---------------------------------------
-# EXCLUSION 2: Suppliers already in NHA_SUPP for this OB part
-# ---------------------------------------
-comp_nha_suppliers_df = comp_nha_suppliers_df.alias("c") \
-    .join(ns,
-          (F.col("ns.material_ns") == F.col("c.nha")) &
-          (F.col("ns.supcode_ns") == F.col("c.vencode")),
-          "left_anti"
-    )
+# Logic 2: CMPPRTNO = MATERIAL, NHA = CMPPRTNO, CMPPRTNO = NHA (Wait, check SAP... SAP says B.CMPPRTNO = B.NHA)
+delete_logic_2 = temp_table_raw_df.alias("a") \
+    .join(dmd_df.alias("c"), (F.col("c.cmpprtno_dmd") == F.col("a.material_tt")) & (F.col("c.nha_dmd") == F.col("c.cmpprtno_dmd")), "inner") \
+    .join(part_dtls_df.alias("b"), (F.col("b.cmpprtno_part") == F.col("c.cmpprtno_dmd")) & (F.col("b.nha_part") == F.col("c.nha_dmd")) & (F.col("b.cmpprtno_part") == F.col("b.nha_part")), "inner") \
+    .select(F.col("b.vencode_part").alias("vencode_del"))
 
-# ---------------------------------------
-# Final formatting
-# ---------------------------------------
-comp_nha_suppliers_df = comp_nha_suppliers_df.select(
-    "obprno",
-    "obprtno",
-    "nha",
-    "vencode",
-    "venname",
-    F.lit("NA").alias("is_ltb_avail"),
-    F.lit(None).cast("date").alias("ltbdate"),
-    F.lit(0).alias("ltbqty"),
-    F.lit(0).alias("qty_liable_supplier"),
-    F.lit(None).cast("int").alias("qty_available_supplier"),
-    F.lit(None).cast("date").alias("lrc_suppliers_date_to_zero_inventory"),
-    F.lit(0).alias("lamqoh"),
-    F.lit(0).alias("open_po_qty"),
-    F.lit(refresh_frequency_days).alias("refresh_frequency"),
-    F.lit(None).cast("date").alias("supply_last_updated"),
-    F.current_date().alias("last_request_date"),
-    F.date_add(F.current_date(), refresh_frequency_days).alias("next_request_date"),
-    F.lit("N").alias("obsupplier"),
-    F.lit(0).alias("restricted_all_stock")
-).distinct()
+# Logic 3: CMPPRTNO = MATERIAL, NHA <> CMPPRTNO (Different join path in SAP)
+delete_logic_3 = temp_table_raw_df.alias("a") \
+    .join(dmd_df.alias("d"), (F.col("d.cmpprtno_dmd") == F.col("a.material_tt")) & (F.col("d.nha_dmd") != F.col("d.cmpprtno_dmd")), "inner") \
+    .join(part_dtls_df.alias("b"), (F.col("b.cmpprtno_part") == F.col("a.material_tt")) & (F.col("b.nha_part") == F.col("d.nha_dmd")), "inner") \
+    .select(F.col("b.vencode_part").alias("vencode_del"))
 
-comp_nha_suppliers_df.cache()
-comp_nha_suppliers_df.count()
+# Combine all exclusions
+exclusion_list_df = delete_logic_1.union(delete_logic_2).union(delete_logic_3).distinct()
+
+# 3. Apply Deletion (Left Anti Join)
+#    Remove any row from temp_table where the Vendor Code is in the exclusion list
+temp_table_df = temp_table_raw_df.join(
+    exclusion_list_df,
+    temp_table_raw_df.vencode_tt == exclusion_list_df.vencode_del,
+    "left_anti"
+)
+
+temp_table_df.cache()
+print(f"Original Temp Count: {temp_table_raw_df.count()}")
+print(f"Final Temp Count (After Delete): {temp_table_df.count()}")
