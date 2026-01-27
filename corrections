@@ -1,47 +1,19 @@
-CELL 8 — OB Part Supplier (Primary OB Supplier Logic)
-🧠 Business Meaning
-This block captures:
-OB Parts where the component itself is the NHA
-and we pull the primary (OB) supplier + current inventory position
-These are the main suppliers responsible for the obsolescence part.
-This corresponds to the FIRST SELECT block in SAP before all the UNIONs.
-📌 What we derive here
-For each OB Part:
-Supplier (preferred/OB supplier)
-On-hand stock (LAMQOH)
-Open PO quantity
-LTB info (if exists)
-Refresh scheduling fields
-
-
-
-
-
-
-
-from pyspark.sql import functions as F
-
-# Filter only valid OBPR states
-ob_base_df = obprt_df.filter(F.col("obpr_state").isin(valid_states))
-
-# OB Supplier = where CMPPRTNO = NHA
 ob_supplier_df = ob_base_df.alias("o") \
     .join(
         dmd_df.alias("d"),
-        (F.col("o.obprtno") == F.col("d.cmpprtno_dmd")) &
-        (F.col("d.cmpprtno_dmd") == F.col("d.nha_dmd")),
+        F.col("o.obprtno") == F.col("d.cmpprtno_dmd"),
         "inner"
     ) \
     .join(
         part_dtls_df.alias("p"),
-        (F.col("p.cmpprtno_part") == F.col("o.obprtno")) &
-        (F.col("p.nha_part") == F.col("p.cmpprtno_part")),
+        (F.col("p.cmpprtno_part") == F.col("d.cmpprtno_dmd")) &
+        (F.col("p.nha_part") == F.col("d.nha_dmd")),
         "inner"
     ) \
     .select(
         F.col("o.obprno"),
         F.col("o.obprtno"),
-        F.col("o.obprtno").alias("nha"),
+        F.col("d.nha_dmd").alias("nha"),
         F.col("p.vencode_part").alias("vencode"),
         F.col("p.venname_part").alias("venname"),
         F.col("o.is_ltb_avail"),
