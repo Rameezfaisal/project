@@ -1,49 +1,51 @@
-CELL 10 — LTB OPEN PO SUPPLIERS (From Temp Table)
+CELL 11 — R / S / C / X / D Parts Supplier Logic
 🧠 Business Meaning
-These are suppliers who still have OPEN LTB POs
-for either:
-The OB part itself, or
-The NHA where OB part is used
-Even if they are not preferred suppliers, they must be tracked because inventory is still inbound.
+Some special part categories (Repair, Service, Consumable, etc.)
+have separate supplier tracking outside normal OMAT logic.
 
 
 
 
 
 
-ltb_supplier_df = temp_table_df.alias("t") \
+
+
+rscxd_supplier_df = ob_base_df.alias("o") \
     .join(
-        ob_base_df.alias("o"),
-        F.col("t.material_tt") == F.col("o.obprtno"),
+        rscxd_dmd_df.alias("d"),
+        (F.col("d.cmpprtno_r") == F.col("o.obprtno")) &
+        (F.col("d.nha_r") != F.col("d.cmpprtno_r")),
         "inner"
     ) \
     .join(
-        dmd_df.alias("d"),
-        F.col("d.cmpprtno_dmd") == F.col("o.obprtno"),
-        "left"
+        rscxd_dtls_df.alias("p"),
+        (F.col("p.cmpprtno_rd") == F.col("o.obprtno")) &
+        (F.col("p.nha_rd") == F.col("d.nha_r")),
+        "inner"
     ) \
+    .filter(F.col("p.vencode_rd").isNotNull()) \
     .select(
         F.col("o.obprno"),
         F.col("o.obprtno"),
-        F.coalesce(F.col("d.nha_dmd"), F.col("o.obprtno")).alias("nha"),
-        F.col("t.vencode_tt").alias("vencode"),
-        F.col("t.venname_tt").alias("venname"),
+        F.col("d.nha_r").alias("nha"),
+        F.col("p.vencode_rd").alias("vencode"),
+        F.col("p.venname_rd").alias("venname"),
         F.lit("NA").alias("is_ltb_avail"),
         F.lit(None).cast("date").alias("ltbdate"),
         F.lit(0).alias("ltbqty"),
         F.lit(0).alias("qty_liable_supplier"),
         F.lit(None).cast("int").alias("qty_available_supplier"),
         F.lit(None).cast("date").alias("lrc_suppliers_date_to_zero_inventory"),
-        F.coalesce(F.col("d.lamqoh_dmd"), F.lit(0)).cast("int").alias("lamqoh"),
-        F.coalesce(F.col("d.open_po_qty_dmd"), F.lit(0)).cast("int").alias("open_po_qty"),
+        F.col("d.lamqoh_r").cast("int").alias("lamqoh"),
+        F.col("d.open_po_qty_r").cast("int").alias("open_po_qty"),
         F.lit(refresh_frequency_days).alias("refresh_frequency"),
         F.lit(None).cast("date").alias("supply_last_updated"),
         F.current_date().alias("last_request_date"),
         F.date_add(F.current_date(), refresh_frequency_days).alias("next_request_date"),
         F.lit("N").alias("obsupplier"),
-        F.coalesce(F.col("d.restricted_all_stock_dmd"), F.lit(0)).cast("int").alias("restricted_all_stock")
+        F.col("d.restricted_all_stock_r").cast("int").alias("restricted_all_stock")
     ) \
     .distinct()
 
-ltb_supplier_df.cache()
-ltb_supplier_df.count()
+rscxd_supplier_df.cache()
+rscxd_supplier_df.count()
