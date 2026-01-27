@@ -1,9 +1,10 @@
-CELL 13 — All Suppliers (NHA Level Suppliers)
+CELL 14 — All Suppliers (Component → NHA Supplier Backfill)
 🧠 Business Meaning
-If the OB part is used in a higher-level assembly (NHA),
-SAP also pulls all suppliers of that NHA.
-Even if no demand exists.
-This broadens supplier outreach for potential alternates.
+This block is a fallback expansion SAP uses when:
+OB part is a component of an NHA
+NHA has suppliers
+But those suppliers were not already captured in earlier logic
+It ensures no potential supplier is missed.
 
 
 
@@ -12,7 +13,10 @@ This broadens supplier outreach for potential alternates.
 
 
 
-all_suppliers_nha_df = ob_base_df.alias("o") \
+
+
+
+all_suppliers_component_df = ob_base_df.alias("o") \
     .join(
         dmd_df.alias("d"),
         (F.col("d.cmpprtno_dmd") == F.col("o.obprtno")) &
@@ -27,7 +31,7 @@ all_suppliers_nha_df = ob_base_df.alias("o") \
     .select(
         F.col("o.obprno"),
         F.col("o.obprtno"),
-        F.col("d.nha_dmd").alias("nha"),
+        F.col("o.obprtno").alias("nha"),
         F.col("s.supcode_ns").alias("vencode"),
         F.col("s.suppliername_ns").alias("venname"),
         F.lit("NA").alias("is_ltb_avail"),
@@ -47,5 +51,5 @@ all_suppliers_nha_df = ob_base_df.alias("o") \
     ) \
     .distinct()
 
-all_suppliers_nha_df.cache()
-all_suppliers_nha_df.count()
+all_suppliers_component_df.cache()
+all_suppliers_component_df.count()
