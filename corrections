@@ -1,56 +1,18 @@
-# ==============================================================================
-# Step-7 (CORRECTED): Build TEMP Supplier Table & Apply DELETE Logic
-# ==============================================================================
+obpr_info_df = spark.table(tbl_obpr_info).select(
+    F.col("obprno").alias("obprno_info"),
+    F.col("obprtno").alias("obprtno_info")
+).distinct()
 
-# 1. Base Temp Table (Before Deletion)
-#    - Join alternate NHA suppliers with OPEN LTB PO suppliers
-temp_table_raw_df = nha_supp_df.alias("ns") \
+# Enforce SAP join condition
+ob_base_df = ob_base_df.alias("o") \
     .join(
-        part_supp_df.alias("ps"),
-        (F.col("ns.material_ns") == F.col("ps.material_ps")) &
-        (F.col("ns.supcode_ns") == F.col("ps.ltb_supplier_ps")),
+        obpr_info_df.alias("i"),
+        (F.col("o.obprno") == F.col("i.obprno_info")) &
+        (F.col("o.obprtno") == F.col("i.obprtno_info")),
         "inner"
     ) \
-    .select(
-        F.col("ns.material_ns").alias("material_tt"),
-        F.col("ns.supcode_ns").alias("vencode_tt"),
-        F.col("ns.suppliername_ns").alias("venname_tt"),
-        F.col("ps.ltb_po_number").alias("ltbpono_tt")
-    ) \
+    .select("o.*") \
     .distinct()
 
-# 2. Build Exclusion List (The Logic from the DELETE Statement)
-#    The SAP DELETE statement has 3 UNIONS. We replicate them here.
-
-# Logic 1: CMPPRTNO = MATERIAL, NHA <> CMPPRTNO
-delete_logic_1 = temp_table_raw_df.alias("a") \
-    .join(dmd_df.alias("c"), (F.col("c.cmpprtno_dmd") == F.col("a.material_tt")) & (F.col("c.nha_dmd") != F.col("c.cmpprtno_dmd")), "inner") \
-    .join(part_dtls_df.alias("b"), (F.col("b.cmpprtno_part") == F.col("c.cmpprtno_dmd")) & (F.col("b.nha_part") == F.col("c.nha_dmd")), "inner") \
-    .select(F.col("b.vencode_part").alias("vencode_del"))
-
-# Logic 2: CMPPRTNO = MATERIAL, NHA = CMPPRTNO, CMPPRTNO = NHA (Wait, check SAP... SAP says B.CMPPRTNO = B.NHA)
-delete_logic_2 = temp_table_raw_df.alias("a") \
-    .join(dmd_df.alias("c"), (F.col("c.cmpprtno_dmd") == F.col("a.material_tt")) & (F.col("c.nha_dmd") == F.col("c.cmpprtno_dmd")), "inner") \
-    .join(part_dtls_df.alias("b"), (F.col("b.cmpprtno_part") == F.col("c.cmpprtno_dmd")) & (F.col("b.nha_part") == F.col("c.nha_dmd")) & (F.col("b.cmpprtno_part") == F.col("b.nha_part")), "inner") \
-    .select(F.col("b.vencode_part").alias("vencode_del"))
-
-# Logic 3: CMPPRTNO = MATERIAL, NHA <> CMPPRTNO (Different join path in SAP)
-delete_logic_3 = temp_table_raw_df.alias("a") \
-    .join(dmd_df.alias("d"), (F.col("d.cmpprtno_dmd") == F.col("a.material_tt")) & (F.col("d.nha_dmd") != F.col("d.cmpprtno_dmd")), "inner") \
-    .join(part_dtls_df.alias("b"), (F.col("b.cmpprtno_part") == F.col("a.material_tt")) & (F.col("b.nha_part") == F.col("d.nha_dmd")), "inner") \
-    .select(F.col("b.vencode_part").alias("vencode_del"))
-
-# Combine all exclusions
-exclusion_list_df = delete_logic_1.union(delete_logic_2).union(delete_logic_3).distinct()
-
-# 3. Apply Deletion (Left Anti Join)
-#    Remove any row from temp_table where the Vendor Code is in the exclusion list
-temp_table_df = temp_table_raw_df.join(
-    exclusion_list_df,
-    temp_table_raw_df.vencode_tt == exclusion_list_df.vencode_del,
-    "left_anti"
-)
-
-temp_table_df.cache()
-print(f"Original Temp Count: {temp_table_raw_df.count()}")
-print(f"Final Temp Count (After Delete): {temp_table_df.count()}")
+ob_base_df.cache()
+ob_base_df.count()
