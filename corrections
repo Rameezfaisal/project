@@ -1,25 +1,82 @@
+# ================================
+# Active PO History
+# ================================
+zpo_hist_active_df = spark.table(tbl_zpo_hist).select(
+    F.col("matnr").alias("material_ph"),
+    F.col("ebeln").alias("po_number_ph"),
+    F.col("ebelp").alias("po_item_ph"),
+    F.col("menge").alias("qty_requested_ph"),
+    F.col("wemng").alias("qty_received_ph"),
+    F.col("lifnr").alias("ltb_supplier"),
+    F.col("closed").alias("closed_flag"),
+    F.col("status").alias("status_flag")
+)
 
-Only OB parts that truly belong to a valid OB Problem Report should proceed.
+# ================================
+# Archived PO History  (MISSING BEFORE)
+# ================================
+zpo_hist_arch_df = spark.table(tbl_zpo_hist_arch).select(
+    F.col("matnr").alias("material_ph"),
+    F.col("ebeln").alias("po_number_ph"),
+    F.col("ebelp").alias("po_item_ph"),
+    F.col("menge").alias("qty_requested_ph"),
+    F.lit(None).cast("double").alias("qty_received_ph"),  # archived zero-closed lines
+    F.col("lifnr").alias("ltb_supplier"),
+    F.col("closed").alias("closed_flag"),
+    F.lit(None).alias("status_flag")
+)
 
+# Combine active + archive (SAP UNION behavior)
+zpo_hist_all_df = zpo_hist_active_df.unionByName(zpo_hist_arch_df)
 
+# Only completed / valid LTB lines (SAP filters CLSCOMP / CLSZERO logic simplified safely)
+ltb_hist_df = zpo_hist_all_df.filter(
+    (F.col("closed_flag").isin("CLSCOMP", "CLSZERO")) |
+    (F.col("status_flag").isNull())
+)
 
+# ================================
+# EBAN (LTB PR base)
+# ================================
+eban_df = spark.table(tbl_eban).select(
+    F.col("banfn").alias("banfn_eban"),
+    F.col("bnfpo").alias("bnfpo_eban"),
+    F.col("ebeln").alias("po_number"),
+    F.col("ebelp").alias("po_item"),
+    F.col("ekgrp").alias("purch_group"),
+    F.col("loekz").alias("delete_flag")
+)
 
-
-obpr_info_df = spark.table(tbl_obpr_info).select(
-    F.col("obprno").alias("obprno_info"),
-    F.col("obprtno").alias("obprtno_info")
-).distinct()
-
-# Enforce SAP join condition
-ob_base_df = ob_base_df.alias("o") \
+# ================================
+# Final LTB Supplier Dataset
+# ================================
+part_supp_df = eban_df.alias("e") \
     .join(
-        obpr_info_df.alias("i"),
-        (F.col("o.obprno") == F.col("i.obprno_info")) &
-        (F.col("o.obprtno") == F.col("i.obprtno_info")),
+        ltb_hist_df.alias("h"),
+        (F.col("e.po_number") == F.col("h.po_number_ph")) &
+        (F.col("e.po_item") == F.col("h.po_item_ph")),
         "inner"
     ) \
-    .select("o.*") \
-    .distinct()
+    .filter(
+        (F.col("e.purch_group") == "LTB") &
+        (F.col("e.delete_flag") != "X")
+    ) \
+    .groupBy(
+        F.col("h.material_ph").alias("material_ps"),
+        F.col("h.ltb_supplier").alias("ltb_supplier_ps"),
+        F.col("e.po_number").alias("ltb_po_number")
+    ) \
+    .agg(
+        F.sum("qty_requested_ph").alias("qty_requested"),
+        F.sum("qty_received_ph").alias("qty_received")
+    ) \
+    .withColumn(
+        "ltb_status",
+        F.when(F.col("qty_requested") == F.col("qty_received"), "LTB COMPLETED")
+         .when(F.col("qty_received").isNull(), "LTB CANCELLED")
+         .otherwise("LTB PO OPENED")
+    ) \
+    .filter(F.col("ltb_status") == "LTB PO OPENED")
 
-ob_base_df.cache()
-ob_base_df.count()
+part_supp_df.cache()
+part_supp_df.count()
