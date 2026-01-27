@@ -1,8 +1,9 @@
-CELL 6 — LTB OPEN PO DATASET
+CELL 7 — Build TEMP Supplier Table (SAP #temp_table)
 🧠 Business Meaning
-This step builds the list of LTB Purchase Orders that are still OPEN
-→ These represent suppliers who still owe material for long-term buys.
-We are reconstructing SAP’s PART_SUPP logic safely in Spark.
+Here we identify:
+Suppliers who are NOT the selected OMAT supplier for an NHA, but DO have an OPEN LTB PO
+These suppliers must still be tracked because they owe material, even if they are not the preferred supplier.
+This replaces SAP temporary table #temp_table.
 
 
 
@@ -11,64 +12,23 @@ We are reconstructing SAP’s PART_SUPP logic safely in Spark.
 
 
 
-from pyspark.sql import functions as F
-
-# EBAN (Purchase Requisitions tied to LTB)
-eban_df = spark.table(tbl_eban).select(
-    F.col("banfn").alias("banfn_eban"),
-    F.col("bnfpo").alias("bnfpo_eban"),
-    F.col("erdat").alias("pr_created_dt"),
-    F.col("frgdt").alias("pr_release_dt"),
-    F.col("lifnr").alias("pr_supplier"),
-    F.col("ebeln").alias("po_number"),
-    F.col("ebelp").alias("po_item"),
-    F.col("ekgrp").alias("purch_group"),
-    F.col("loekz").alias("delete_flag")
-)
-
-# PO History (actual goods movement against LTB POs)
-zpo_hist_df = spark.table(tbl_zpo_hist).select(
-    F.col("matnr").alias("material_ph"),
-    F.col("ebeln").alias("po_number_ph"),
-    F.col("ebelp").alias("po_item_ph"),
-    F.col("menge").alias("qty_requested_ph"),
-    F.col("wemng").alias("qty_received_ph"),
-    F.col("lgort").alias("sloc_ph"),
-    F.col("lifnr").alias("ltb_supplier"),
-    F.col("closed").alias("closed_flag")
-)
-
-# Only completed goods movement records relevant to LTB tracking
-ltb_hist_df = zpo_hist_df.filter(F.col("closed_flag") == "CLSCOMP")
-
-# Join PR ↔ PO History
-part_supp_df = eban_df.alias("e") \
+# Join alternate NHA suppliers with OPEN LTB PO suppliers
+temp_table_df = nha_supp_df.alias("ns") \
     .join(
-        ltb_hist_df.alias("h"),
-        (F.col("e.po_number") == F.col("h.po_number_ph")) &
-        (F.col("e.po_item") == F.col("h.po_item_ph")),
+        part_supp_df.alias("ps"),
+        (F.col("ns.material_ns") == F.col("ps.material_ps")) &
+        (F.col("ns.supcode_ns") == F.col("ps.ltb_supplier_ps")),
         "inner"
     ) \
-    .filter(
-        (F.col("e.purch_group") == "LTB") &
-        (F.col("e.delete_flag") != "X")
+    .select(
+        F.col("ns.material_ns").alias("material_tt"),
+        F.col("ns.supcode_ns").alias("vencode_tt"),
+        F.col("ns.suppliername_ns").alias("venname_tt"),
+        F.col("ps.ltb_po_number").alias("ltbpono_tt")
     ) \
-    .groupBy(
-        F.col("h.material_ph").alias("material_ps"),
-        F.col("h.ltb_supplier").alias("ltb_supplier_ps"),
-        F.col("e.po_number").alias("ltb_po_number")
-    ) \
-    .agg(
-        F.sum("qty_requested_ph").alias("qty_requested"),
-        F.sum("qty_received_ph").alias("qty_received")
-    ) \
-    .withColumn(
-        "ltb_status",
-        F.when(F.col("qty_requested") == F.col("qty_received"), "LTB COMPLETED")
-         .when(F.col("qty_received").isNull(), "LTB CANCELLED")
-         .otherwise("LTB PO OPENED")
-    ) \
-    .filter(F.col("ltb_status") == "LTB PO OPENED")
+    .distinct()
 
-part_supp_df.cache()
-part_supp_df.count()
+temp_table_df.cache()
+temp_table_df.count()
+
+
