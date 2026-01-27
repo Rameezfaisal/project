@@ -1,0 +1,476 @@
+PROCEDURE "W_OMAT"."prd.gops.OMAT::SP_OMAT_UPDATE_SUPPINV_WklyRefresh" ( ) 
+               LANGUAGE SQLSCRIPT
+               SQL SECURITY DEFINER --INVOKER 
+               DEFAULT SCHEMA W_OMAT
+               --READS SQL DATA
+               AS
+BEGIN
+ 
+/*---------------------------------------------------------------------------------------------------------------------------*
+*Program Name : SP_OMAT_UPDATE_SUPPINV_WklyRefresh
+*Project      : Obsolescence Improvement Project
+*Developer    : Akhil Martin
+*Requestor    : David, Hickman
+*Create Date  : 2020/04/20
+*----------------------------------------------------------------------------------------------------------------------------*
+*Description  : This Stored Procedure is used to UPDATE the Supplier Inventory details of BUY NHAs that have either demand,
+                                                            consumption or Open order in OMAT Application along with its LTB info from iPLM on weekly basis.     
+                                                            This is invoked from SQL and store the result set in Suppl Inventory Table in SQL.                                 
+*----------------------------------------------------------------------------------------------------------------------------*
+Change Log:
+Change Id                           Developer                          Date                                    Change Description
+-----------------------------------------------------------------------------------------------------------------------------*
+98687           AKHILJO         2020-04-17      Initial developemnt.
+121270          AKHILJO		2022-05-11      R,S,C,X,D included/Added into this SP Object.
+128762          TIWARIS         2023-09-13      added new column Restricted_All_Stock
+130760          NITHYVE         2024-11-13      code added to track all the LTB Open POâ€™s which are placed with preferred as well as unpreferred suppliers
+-----           BERANSU         2025-02-10      Inclusion Supplier from  All Plants 
+-----           BERANSU         2025-02-25      Restricted allStock to 0 for OB PN
+-----           BERANSU         2025-06-23      Commented Lines for Component Parts & Suppliers supplying its NHAs
+-----           BERANSU         2025-07-25      Connected to ZME0M Supplier list
+CHG0181788      BERANSU         2025-10-27      Un Commented line for Component Part for NHA and also updated the QOH & Unstricted for NHA w.r.t CMP
+-----           BERANSU         2025-10-28      Excluding CMPPRTNO And NHA which are part from the ZMEO4 , when CMPPRTNO=NHA 
+*----------------------------------------------------------------------------------------------------------------------------*/    
+ 
+ CREATE LOCAL TEMPORARY TABLE "#temp_table" 
+   (
+       "MATERIAL" varchar(20),
+        "VENCODE"  VARCHAR(20),
+        "VENNAME" VARCHAR(100),
+        "LTBPONO"  VARCHAR(20),
+        "MRP" varchar(20)
+        );
+ 
+--# Insertion of data into the TEMP TABLE:
+ 
+  
+BASE_DATA = select NHA,OMAT_SELECTED_SUPPLIERCD as SUPCODE from "W_OMAT"."ZT_OMAT_BUYNHA_SUPPLIERS_PLANTS"
+    Group by NHA,OMAT_SELECTED_SUPPLIERCD;
+    
+NHA_SUPP = Select A.* from  (select Distinct A.MATNR as MATERIAL, LEFT(LPAD(A.LIFNR,10,0),10) as SUPCODE,B.NAME1 as SUPPLIERNAME--,A.MRP 
+from "_SYS_BIC"."prd.global.ecc/CV_EORD" as A
+LEFT outer JOIN "_SYS_BIC"."prd.global.ecc/CV_LFA1" B ON B.LIFNR = A.LIFNR) A
+LEFT outer JOIN :BASE_DATA as B on A.SUPCODE<>B.SUPCODE and A.MATERIAL=B.NHA;
+--NHA_SUPP = select Distinct A.MATERIAL, A.SUPCODE,A.SUPPLIERNAME,A.MRP from "_SYS_BIC"."prd.csbg.spares/CV_ZT_INFOREC_DATA_SCHED" as A
+--left outer Join :BASE_DATA as B on A.SUPCODE<>B.SUPCODE and A.MATERIAL=B.NHA;
+    
+PART_SUPP = SELECT C1.PRTNO, C1.PrReqNo, C1.PrReqItm, C1.PrReqCreatedOn, C1.PrReqReleaseDate, C1.PrReqSupplier, C1.LTBPONo, C1.LTBPOItm
+    , SUM(C1.QtyRequested) AS QtyRequested
+    , SUM(C1.QtyReceived) AS QtyReceived
+    , CASE WHEN  SUM(C1.QtyRequested) IS NOT NULL AND SUM(C1.QtyRequested) = SUM(C1.QtyReceived) THEN 'LTB COMPLETED' 
+        WHEN SUM(C1.QtyRequested) IS NOT NULL AND SUM(C1.QtyRequested) <> SUM(C1.QtyReceived) THEN 'LTB PO OPENED'
+        WHEN SUM(C1.QtyRequested) IS NOT NULL AND SUM(C1.QtyReceived) IS NULL THEN 'LTB CANCELLED' ELSE 'LTB PO IN PROCESS' END AS LTB_STATUS
+    , c1.LGORT as SLOC
+    , c1.LTBPOSupplier
+    FROM (
+       SELECT DISTINCT CASE WHEN A1.MATNR IS NOT NULL AND A1.MATNR <> '' THEN A1.MATNR 
+        WHEN B1.MATNR IS NOT NULL AND B1.MATNR <> '' THEN B1.MATNR ELSE SUBSTR_BEFORE(B1.TXZ01,';')  END AS PRTNo
+       , A1.BANFN AS PrReqNo, A1.BNFPO AS PrReqItm, A1.ERDAT AS PrReqCreatedOn, A1.FRGDT AS PrReqReleaseDate, A1.LIFNR AS PrReqSupplier 
+       , A1.EBELN AS LTBPONo, A1.EBELP AS LTBPOItm
+       , CASE WHEN A1.MENGE IS NULL THEN B1.MENGE ELSE A1.MENGE END AS QtyRequested
+       , A1.WEMNG AS QtyReceived 
+       , A1.LGORT
+       , A1.LTBPOSupplier
+       FROM (
+        SELECT DISTINCT B.MATNR, A.BANFN, A.BNFPO, A.ERDAT, A.FRGDT, A.LIFNR, A.EBELN, A.EBELP
+        , SUM(B.MENGE) AS MENGE, SUM(B.WEMNG) AS WEMNG
+        , B.LGORT
+        , B.LIFNR AS LTBPOSupplier
+        FROM "_SYS_BIC"."prd.global.ecc/CV_EBAN" A
+        LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZPO_HSTRY" B ON B.EBELN = A.EBELN AND B.EBELP = A.EBELP AND B.LNKD_DOC = A.BANFN AND B.LNKD_ITM = A.BNFPO
+        WHERE A.EKGRP = 'LTB' AND A.LOEKZ <> 'X' AND B.CLOSED = 'CLSCOMP' 
+        GROUP BY B.MATNR, A.BANFN, A.BNFPO, A.ERDAT, A.FRGDT, A.LIFNR, A.EBELN, A.EBELP, B.LGORT, B.LIFNR
+ 
+        UNION
+        SELECT DISTINCT D.MATNR, A.BANFN, A.BNFPO, A.ERDAT, A.FRGDT, A.LIFNR, A.EBELN, A.EBELP
+        , SUM(D.MENGE) AS MENGE, SUM(D.WEMNG) AS WEMNG
+        , D.LGORT
+        , D.LIFNR AS LTBPOSupplier
+        FROM "_SYS_BIC"."prd.global.ecc/CV_EBAN" A
+        LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZPO_HSTRY" D ON D.EBELN = A.EBELN AND D.EBELP = A.EBELP AND D.LNKD_DOC = A.BANFN AND D.LNKD_ITM = A.BNFPO
+        WHERE A.EKGRP = 'LTB' AND A.LOEKZ <> 'X' AND D.STATUS <> 'INACT'
+        GROUP BY D.MATNR, A.BANFN, A.BNFPO, A.ERDAT, A.FRGDT, A.LIFNR, A.EBELN, A.EBELP, D.LGORT, D.LIFNR
+ 
+        UNION
+        SELECT DISTINCT E.MATNR, A.BANFN, A.BNFPO, A.ERDAT, A.FRGDT, A.LIFNR, A.EBELN, A.EBELP
+        , SUM(E.MENGE) AS MENGE, SUM(E.WEMNG) AS WEMNG
+        , E.LGORT
+        , E.LIFNR AS LTBPOSupplier
+        FROM "_SYS_BIC"."prd.global.ecc/CV_EBAN" A
+        LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZPO_HSTRY_ARCH" E ON E.EBELN = A.EBELN AND E.EBELP = A.EBELP AND E.LNKD_DOC = A.BANFN AND E.LNKD_ITM = A.BNFPO 
+        WHERE A.EKGRP = 'LTB' AND A.LOEKZ <> 'X' AND E.CLOSED = 'CLSCOMP'
+        GROUP BY E.MATNR, A.BANFN, A.BNFPO, A.ERDAT, A.FRGDT, A.LIFNR, A.EBELN, A.EBELP, E.LGORT, E.LIFNR
+ 
+        UNION
+        SELECT DISTINCT F.MATNR, A.BANFN, A.BNFPO, A.ERDAT, A.FRGDT, A.LIFNR, A.EBELN, A.EBELP
+        , SUM(F.MENGE) AS MENGE, NULL AS WEMNG
+        , F.LGORT
+        , F.LIFNR AS LTBPOSupplier
+        FROM "_SYS_BIC"."prd.global.ecc/CV_EBAN" A
+        LEFT JOIN "_SYS_BIC"."prd.global.ecc/CV_ZPO_HSTRY_ARCH" F ON F.EBELN = A.EBELN AND F.EBELP = A.EBELP AND F.LNKD_DOC = A.BANFN AND F.LNKD_ITM = A.BNFPO 
+        WHERE A.EKGRP = 'LTB' AND A.LOEKZ <> 'X' AND F.CLOSED = 'CLSZERO'
+        GROUP BY F.MATNR, A.BANFN, A.BNFPO, A.ERDAT, A.FRGDT, A.LIFNR, A.EBELN, A.EBELP, F.LGORT, F.LIFNR
+        )A1 
+       INNER JOIN "_SYS_BIC"."prd.global.ecc/CV_EBAN" B1 ON B1.BANFN = A1.BANFN AND B1.BNFPO = A1.BNFPO
+       ORDER BY A1.EBELN, A1.EBELP
+     )C1
+     WHERE C1.PRTNO IS NOT NULL AND C1.PRTNO <> ''
+     GROUP BY C1.PRTNO, C1.PrReqNo, C1.PrReqItm, C1.PrReqCreatedOn, C1.PrReqReleaseDate, C1.PrReqSupplier, C1.LTBPONo, C1.LTBPOItm, C1.LGORT, C1.LTBPOSupplier
+     ORDER BY C1.LTBPONo, C1.LTBPOItm DESC;
+     
+insert into "#temp_table"             
+SELECT Distinct MATERIAL,SUPCODE,SUPPLIERNAME,LTBPONO,0 as MRP FROM :NHA_SUPP A JOIN :PART_SUPP B
+on A.MATERIAL=B.PRTNO and B.LTBPOSupplier = A.SUPCODE and  B.LTB_STATUS='LTB PO OPENED';     
+--# CODE TO remove replicated data  FROM TEMP TABLE:
+ 
+   
+     DELETE FROM "#temp_table"
+WHERE VENCODE IN (
+    SELECT B.VENCODE
+    FROM "#temp_table" A
+    INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" C ON C.CMPPRTNO = A.MATERIAL AND C.NHA <> C.CMPPRTNO
+    INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" B ON B.CMPPRTNO = C.CMPPRTNO AND B.NHA = C.NHA
+    
+    UNION
+    
+    SELECT B.VENCODE
+    FROM "#temp_table" A
+    INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" C ON C.CMPPRTNO = A.MATERIAL AND C.NHA = C.CMPPRTNO
+    INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" B ON B.CMPPRTNO = C.CMPPRTNO AND B.NHA = C.NHA AND B.CMPPRTNO = B.NHA
+    
+    UNION
+    
+    SELECT B.VENCODE
+    FROM "#temp_table" A
+    INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" D ON D.CMPPRTNO = A.MATERIAL AND D.NHA <> D.CMPPRTNO
+    INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" B ON B.CMPPRTNO = A.MATERIAL AND B.NHA = D.NHA
+);
+ 
+-- Select * from (
+ 
+--Component Parts & It's Supplier who raised OB PR in iPLM, MRP Prefferd supplier may not be the one one who raised iPLM OB PR.
+SELECT DISTINCT A.OBPRNO,
+             A.OBPRTNO,
+             A.OBPRTNO AS NHA,
+             --LPAD(B.SUPPLIER_CODE,10,0) AS VENCODE,
+             --B.SUPPLIER_NAME AS VENNAME,
+                                             E.VENCODE,
+                                             E.VENNAME, 
+             A.IS_LTB_AVAIL,
+             A.LTB_DATE AS LTBDATE,
+             A.LTB_QTY AS LTBQTY,
+             '0' AS Qty_Liable_Supplier,
+             NULL AS Qty_Available_Supplier,
+             A."SUPPLIER_DATE_TO_ZERO" AS LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY,
+             D.LAMQOH,
+             D.OPEN_PO_QTY,
+             42 AS "Refresh_Frequency",
+             '' AS "Supply_Last_Updated",
+             CURRENT_DATE AS "Last_Request_Date",
+             ADD_DAYS(CURRENT_DATE,42) AS "Next_Request_Date",
+             --CASE WHEN B.SUPPLIER_CODE = LTRIM(E.VENCODE,0) AND E."MRP_SUPPLIER" = 1 THEN 'Y' ELSE 'N' END AS "OBSupplier"
+             'Y' AS "OBSupplier",
+             D.RESTRICTED_ALL_STOCK  --128762 change
+FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" D ON D.CMPPRTNO = A.OBPRTNO AND D.NHA = D.CMPPRTNO --AND D.NHA = A.OBPRTNO
+--INNER JOIN "_SYS_BIC"."prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART" C ON C.NAME = A.OBPRNO AND C.PART_NAME = A.OBPRTNO
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" E ON E.NHA = A.OBPRTNO AND E.NHA = E.CMPPRTNO
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPR_INFO_DTLS" B ON B.OBPRNO = A.OBPRNO AND B.OBPRTNO = A.OBPRTNO
+WHERE (UPPER(A."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK'))
+ 
+UNION
+ 
+--Component Parts, Its NHAs & NHA Suppliers - MRP Preffered.
+SELECT DISTINCT A.OBPRNO,
+                              A.OBPRTNO,
+                              D.NHA,
+                              B.VENCODE,
+                              B.VENNAME,
+                              'NA' AS IS_LTB_AVAIL,
+                              NULL AS LTBDATE,
+                              '0' AS LTBQTY,
+                              '0' AS Qty_Liable_Supplier,
+                              NULL AS Qty_Available_Supplier,
+                              NULL AS LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY,
+                              D.LAMQOH,
+                              D.OPEN_PO_QTY,
+                              42 AS "Refresh_Frequency",
+                              '' AS "Supply_Last_Updated",
+                              CURRENT_DATE AS "Last_Request_Date",
+                              ADD_DAYS(CURRENT_DATE,42) AS "Next_Request_Date",
+                              'N' AS "OBSupplier",
+                              D.RESTRICTED_ALL_STOCK  --128762 change
+FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" D ON D.CMPPRTNO = A.OBPRTNO AND D.NHA <> D.CMPPRTNO
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" B ON B.CMPPRTNO = A.OBPRTNO AND  B.NHA = D.NHA
+WHERE (UPPER(A."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK'))
+ 
+ 
+UNION
+ 
+--Component Parts & Suppliers supplying its NHAs
+--Commented Out  as LAMQOH & OPENPOQTY does not need to appear in OB Part with NHA Supplier.
+--SELECT DISTINCT C1.OBPRNO,                 C1.OBPRTNO,                   C1.NHA,                              C1.VENCODE,                    C1.VENNAME,                  C1.IS_LTB_AVAIL,                            C1.LTBDATE,                      C1.LTBQTY,                         C1.Qty_Liable_Supplier,                C1.Qty_Available_Supplier,
+--            C1.LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY,               D.LAMQOH,                      D.OPEN_PO_QTY,                            C1."Refresh_Frequency",                             C1."Supply_Last_Updated",                        C1."Last_Request_Date",                             C1."Next_Request_Date",
+--                           C1."OBSupplier"
+--FROM (
+SELECT DISTINCT 
+                              A.OBPRNO,
+                              A.OBPRTNO,
+                              A.OBPRTNO AS NHA,
+                              B.VENCODE,
+                              B.VENNAME,
+                              'NA' AS IS_LTB_AVAIL,
+                              NULL AS LTBDATE,
+                              '0' AS LTBQTY,
+                              '0' AS Qty_Liable_Supplier,
+                              NULL AS Qty_Available_Supplier,
+                              NULL AS LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY,
+                              0 AS LAMQOH,
+                              0 AS OPEN_PO_QTY,
+                              42 AS "Refresh_Frequency",
+                              '' AS "Supply_Last_Updated",
+                              CURRENT_DATE AS "Last_Request_Date",
+                              ADD_DAYS(CURRENT_DATE,42) AS "Next_Request_Date",
+                              'N' AS "OBSupplier",
+                              0 AS "RESTRICTED_ALL_STOCK"  --128762 change
+FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" C ON C.CMPPRTNO = A.OBPRTNO AND C.NHA <> C.CMPPRTNO
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" B ON B.CMPPRTNO = C.CMPPRTNO AND B.NHA = C.NHA
+WHERE (UPPER(A."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK'))
+AND B.VENCODE NOT IN (SELECT DISTINCT VENCODE FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" A1 
+                      INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" B1 ON A1.CMPPRTNO = B1.OBPRTNO AND A1.NHA = B1.OBPRTNO AND A1.VENCODE IS NOT NULL 
+						WHERE (UPPER(B1."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK')) AND B1.OBPRNO = A.OBPRNO AND B1.OBPRTNO = A.OBPRTNO)
+						AND (A.OBPRNO, A.OBPRTNO, A.OBPRTNO, B.VENCODE) not in 
+						(
+SELECT DISTINCT A.OBPRNO,  A.OBPRTNO, A.OBPRTNO AS NHA,  E.SUPCODE as VENCODE 
+FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" D ON D.CMPPRTNO = A.OBPRTNO AND D.NHA <> D.CMPPRTNO 
+INNER JOIN :NHA_SUPP E ON E.MATERIAL = D.NHA  
+WHERE (UPPER(A."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK')) 
+AND E.SUPCODE NOT IN (SELECT DISTINCT VENCODE FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" A1 
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" B1 ON A1.CMPPRTNO = B1.OBPRTNO AND A1.NHA = B1.OBPRTNO 
+AND A1.VENCODE IS NOT NULL 
+WHERE (UPPER(B1."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK')) AND B1.OBPRNO = A.OBPRNO AND B1.OBPRTNO = A.OBPRTNO))
+--INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" D ON D.CMPPRTNO = C1.OBPRTNO AND D.NHA = C1.NHA
+                                                                                                      
+UNION
+       
+--Component Parts and World Wide Supplier.              
+SELECT DISTINCT
+               A.OBPRNO,
+               A.OBPRTNO,
+               A.OBPRTNO AS NHA,
+               '0001000000' AS VENCODE,
+               'WW Supplier' AS VENNAME,
+               'No' AS IS_LTB_AVAIL,
+               NULL AS LTBDATE,
+               '0' AS LTBQTY,
+               '0' AS Qty_Liable_Supplier,
+               NULL AS Qty_Available_Supplier,
+               NULL AS LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY,
+               0 AS LAMQOH,
+               0 AS OPEN_PO_QTY,
+               NULL AS "Refresh_Frequency",
+               '' AS "Supply_Last_Updated",
+               CURRENT_DATE AS "Last_Request_Date",
+               NULL AS "Next_Request_Date",
+               'N' AS "OBSupplier",
+               0 AS "RESTRICTED_ALL_STOCK"  -- 128762 change 
+FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" C ON C.CMPPRTNO = A.OBPRTNO AND C.NHA = C.CMPPRTNO
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" B ON B.CMPPRTNO = C.CMPPRTNO AND B.NHA = C.NHA AND B.CMPPRTNO = B.NHA
+WHERE (UPPER("OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK'))
+ 
+UNION
+ 
+--R,S,C,X,D Parts added, as of NOW Only R,S having a supplier informtion captured in OMAT 
+SELECT DISTINCT A.OBPRNO,
+                              A.OBPRTNO,
+                              D.NHA,
+                              B.VENCODE,
+                              B.VENNAME,
+                              'NA' AS IS_LTB_AVAIL,
+                              NULL AS LTBDATE,
+                              '0' AS LTBQTY,
+                              '0' AS Qty_Liable_Supplier,
+                              NULL AS Qty_Available_Supplier,
+                              NULL AS LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY,
+                              D.LAMQOH,
+                              D.OPEN_PO_QTY,
+                              42 AS "Refresh_Frequency",
+                              '' AS "Supply_Last_Updated",
+                              CURRENT_DATE AS "Last_Request_Date",
+                              ADD_DAYS(CURRENT_DATE,42) AS "Next_Request_Date",
+                              'N' AS "OBSupplier",
+                              D.RESTRICTED_ALL_STOCK --128762 change
+FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_RSCXD_DMD_CONS" D ON D.CMPPRTNO = A.OBPRTNO AND D.NHA <> D.CMPPRTNO
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_RSCXD_DTLS" B ON B.CMPPRTNO = A.OBPRTNO AND  B.NHA = D.NHA
+WHERE (UPPER(A."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK'))
+               AND B.VENCODE IS NOT NULL
+ 
+-- Added by Nithya
+ 
+UNION
+ 
+---  code added to track all the LTB Open POâ€™s which are placed with preferred as well as unpreferred suppliers
+ 
+SELECT DISTINCT A.OBPRNO,
+                              A.OBPRTNO,
+                              D.NHA,
+                              S.VENCODE,
+                              S.VENNAME,
+                              'NA' AS IS_LTB_AVAIL,
+                              NULL AS LTBDATE,
+                              '0' AS LTBQTY,
+                              '0' AS Qty_Liable_Supplier,
+                              NULL AS Qty_Available_Supplier,
+                              NULL AS LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY,
+                              D.LAMQOH,
+                              D.OPEN_PO_QTY,
+                              42 AS "Refresh_Frequency",
+                              '' AS "Supply_Last_Updated",
+                              CURRENT_DATE AS "Last_Request_Date",
+                              ADD_DAYS(CURRENT_DATE,42) AS "Next_Request_Date",
+                              'N' AS "OBSupplier",
+                              D.RESTRICTED_ALL_STOCK  
+FROM "#temp_table" S
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A on S.MATERIAL=A.OBPRTNO
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" D ON D.CMPPRTNO = A.OBPRTNO AND D.NHA <> D.CMPPRTNO
+WHERE (UPPER(A."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK')) and D.NHA=S.MATERIAL
+ 
+ 
+ 
+UNION
+ 
+ 
+SELECT DISTINCT A.OBPRNO,
+                              A.OBPRTNO,
+                              D.NHA,
+                              S.VENCODE,
+                              S.VENNAME,
+                              'NA' AS IS_LTB_AVAIL,
+                              NULL AS LTBDATE,
+                              '0' AS LTBQTY,
+                              '0' AS Qty_Liable_Supplier,
+                              NULL AS Qty_Available_Supplier,
+                              NULL AS LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY,
+                              D.LAMQOH,
+                              D.OPEN_PO_QTY,
+                              42 AS "Refresh_Frequency",
+                              '' AS "Supply_Last_Updated",
+                              CURRENT_DATE AS "Last_Request_Date",
+                              ADD_DAYS(CURRENT_DATE,42) AS "Next_Request_Date",
+                              'N' AS "OBSupplier",
+                              D.RESTRICTED_ALL_STOCK  
+FROM "#temp_table" S
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A on S.MATERIAL=A.OBPRTNO
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" D ON D.CMPPRTNO = A.OBPRTNO AND D.NHA = D.CMPPRTNO
+WHERE (UPPER(A."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK'))and D.NHA=S.MATERIAL
+ 
+-- added by Suhas
+--For All Supplier -- Part Number Line
+
+UNION
+ 
+SELECT DISTINCT A.OBPRNO,
+                              A.OBPRTNO,
+                              D.NHA,
+                              E.SUPCODE as VENCODE,
+                              E.SUPPLIERNAME as VENNAME,
+                              'NA' AS IS_LTB_AVAIL,
+                              NULL AS LTBDATE,
+                              '0' AS LTBQTY,
+                              '0' AS Qty_Liable_Supplier,
+                              NULL AS Qty_Available_Supplier,
+                              NULL AS LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY,
+                              D.LAMQOH,
+                              D.OPEN_PO_QTY,
+                              42 AS "Refresh_Frequency",
+                              '' AS "Supply_Last_Updated",
+                              CURRENT_DATE AS "Last_Request_Date",
+                              ADD_DAYS(CURRENT_DATE,42) AS "Next_Request_Date",
+                              'N' AS "OBSupplier",
+                              D.RESTRICTED_ALL_STOCK  
+FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" D ON D.CMPPRTNO = A.OBPRTNO AND D.NHA = D.CMPPRTNO AND D.NHA = A.OBPRTNO
+INNER JOIN :NHA_SUPP E ON E.MATERIAL = A.OBPRTNO  --and D.NHA=E.MATERIAL
+WHERE (UPPER(A."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK')) 
+AND E.SUPCODE NOT IN (SELECT DISTINCT VENCODE FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" A1 
+                                                                                                         INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" B1 ON A1.CMPPRTNO = B1.OBPRTNO AND A1.NHA = B1.OBPRTNO 
+                                                                                                         AND A1.VENCODE IS NOT NULL 
+                                                                                                         WHERE (UPPER(B1."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK')) AND B1.OBPRNO = A.OBPRNO AND B1.OBPRTNO = A.OBPRTNO)
+                                                                                                         
+UNION
+ 
+--For All Supplier -- NHA Line
+ 
+SELECT DISTINCT A.OBPRNO,
+                              A.OBPRTNO,
+                              D.NHA,
+                              E.SUPCODE as VENCODE,
+                              E.SUPPLIERNAME as VENNAME,
+                              'NA' AS IS_LTB_AVAIL,
+                              NULL AS LTBDATE,
+                              '0' AS LTBQTY,
+                              '0' AS Qty_Liable_Supplier,
+                              NULL AS Qty_Available_Supplier,
+                              NULL AS LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY,
+                              D.LAMQOH,
+                              D.OPEN_PO_QTY,
+                              42 AS "Refresh_Frequency",
+                              '' AS "Supply_Last_Updated",
+                              CURRENT_DATE AS "Last_Request_Date",
+                              ADD_DAYS(CURRENT_DATE,42) AS "Next_Request_Date",
+                              'N' AS "OBSupplier",
+                              D.RESTRICTED_ALL_STOCK  
+FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" D ON D.CMPPRTNO = A.OBPRTNO AND D.NHA <> D.CMPPRTNO 
+INNER JOIN :NHA_SUPP E ON E.MATERIAL = D.NHA  
+WHERE (UPPER(A."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK')) 
+AND E.SUPCODE NOT IN (SELECT DISTINCT VENCODE FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" A1 
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" B1 ON A1.CMPPRTNO = B1.OBPRTNO AND A1.NHA = B1.OBPRTNO 
+AND A1.VENCODE IS NOT NULL 
+WHERE (UPPER(B1."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK')) AND B1.OBPRNO = A.OBPRNO AND B1.OBPRTNO = A.OBPRTNO)
+ 
+UNION
+ 
+--For All Supplier --ComponentPart Line for NHA Line
+Select  B.OBPRNO, B.OBPRTNO,B.NHA,B.VENCODE,VENNAME,B.IS_LTB_AVAIL,B.LTBDATE,B.LTBQTY,B.QTY_LIABLE_SUPPLIER,B.QTY_AVAILABLE_SUPPLIER,B.LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY
+,G.LAMQOH as LAMQOH,G.OPEN_PO_QTY as OPEN_PO_QTY ,B."Refresh_Frequency",B."Supply_Last_Updated",B."Last_Request_Date",B."Next_Request_Date",B."OBSupplier",G."RESTRICTED_ALL_STOCK" from (
+SELECT DISTINCT A.OBPRNO,
+                              A.OBPRTNO,
+                              A.OBPRTNO AS NHA,
+                              E.SUPCODE as VENCODE,
+                              E.SUPPLIERNAME as VENNAME,
+                              'NA' AS IS_LTB_AVAIL,
+                              NULL AS LTBDATE,
+                              '0' AS LTBQTY,
+                              '0' AS Qty_Liable_Supplier,
+                              NULL AS Qty_Available_Supplier,
+                              NULL AS LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY,
+                              0 AS LAMQOH,
+                              0 AS OPEN_PO_QTY,
+                              42 AS "Refresh_Frequency",
+                              '' AS "Supply_Last_Updated",
+                              CURRENT_DATE AS "Last_Request_Date",
+                              ADD_DAYS(CURRENT_DATE,42) AS "Next_Request_Date",
+                              'N' AS "OBSupplier",
+                              0 AS "RESTRICTED_ALL_STOCK"  
+FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" D ON D.CMPPRTNO = A.OBPRTNO AND D.NHA <> D.CMPPRTNO 
+INNER JOIN :NHA_SUPP E ON E.MATERIAL = D.NHA  
+WHERE (UPPER(A."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK')) 
+AND E.SUPCODE NOT IN (SELECT DISTINCT VENCODE FROM "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_PART_DTLS" A1 
+INNER JOIN "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" B1 ON A1.CMPPRTNO = B1.OBPRTNO AND A1.NHA = B1.OBPRTNO 
+AND A1.VENCODE IS NOT NULL 
+WHERE (UPPER(B1."OBPR_STATE") IN ('CONFIRMED', 'IN REVIEW','IN WORK')) AND B1.OBPRNO = A.OBPRNO AND B1.OBPRTNO = A.OBPRTNO))B
+Left Join "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_DMD_CONSUMPTION_DTLS" G ON G.CMPPRTNO = B.OBPRTNO AND G.NHA = B.NHA 
+                                                                                                 
+      --  ) A  where OBPRTNO='790-096626-003'  
+        ;                                                               
+                                                                           
+DROP TABLE "#temp_table"; 
+
+END;
