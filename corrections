@@ -1,147 +1,57 @@
-nha_supp_df = eord_df.alias("a") \
-    .join(lfa1_df.alias("b"), F.col("a.supcode_eord")==F.col("b.lifnr_lfa1"), "left") \
-    .join(base_data_df.alias("bd"),
-          (F.col("a.material")==F.col("bd.nha")) &
-          (F.col("a.supcode_eord") != F.col("bd.supcode")),
-          "left") \
-    .select(
-        F.col("a.material").alias("material_ns"),
-        F.col("a.supcode_eord").alias("supcode_ns"),
-        F.col("b.suppliername_lfa1").alias("suppliername_ns")
-    ).distinct()
+AnalysisException                         Traceback (most recent call last)
+Cell In[40], line 15
+      6 zpo_hist_df = read_union_fast("zpo_hstry").selectExpr(
+      7     "matnr as matnr_hist","ebeln","ebelp","menge","wemng",
+      8     "lgort","lifnr as ltbposupplier","closed","status",
+      9     "lnkd_doc","lnkd_itm"
+     10 )
+     12 ltb_union_df = zpo_hist_df.filter(F.col("closed")=="CLSCOMP")
+     14 part_supp_df = eban_df.alias("e") \
+---> 15     .join(ltb_union_df.alias("h"),
+     16           (F.col("e.ebeln")==F.col("h.ebeln")) &
+     17           (F.col("e.ebelp")==F.col("h.ebelp")),
+     18           "inner") \
+     19     .filter((F.col("e.ekgrp")=="LTB") & (F.col("e.loekz")!="X")) \
+     20     .groupBy("matnr_hist","ltbpono","ltbposupplier") \
+     21     .agg(
+     22         F.sum("menge").alias("qtyrequested"),
+     23         F.sum("wemng").alias("qtyreceived")
+     24     ) \
+     25     .withColumn(
+     26         "ltb_status",
+     27         F.when(F.col("qtyrequested")==F.col("qtyreceived"),"LTB COMPLETED")
+     28          .when(F.col("qtyreceived").isNull(),"LTB CANCELLED")
+     29          .otherwise("LTB PO OPENED")
+     30     ) \
+     31     .filter(F.col("ltb_status")=="LTB PO OPENED")
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/sql/dataframe.py:2493, in DataFrame.join(self, other, on, how)
+   2491         on = self._jseq([])
+   2492     assert isinstance(how, str), "how should be a string"
+-> 2493     jdf = self._jdf.join(other._jdf, on, how)
+   2494 return DataFrame(jdf, self.sparkSession)
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-
-
-
-
-
-eban_df = spark.table(tbl_eban).selectExpr(
-    "banfn","bnfpo","erdat","frgdt","lifnr as prereq_supplier",
-    "ebeln as ltbpono","ebelp as ltbpoitm","ekgrp","loekz"
-)
-
-zpo_hist_df = spark.table(tbl_zpo_hist).selectExpr(
-    "matnr as matnr_hist","ebeln","ebelp","menge","wemng",
-    "lgort","lifnr as ltbposupplier","closed","status",
-    "lnkd_doc","lnkd_itm"
-)
-
-ltb_union_df = zpo_hist_df.filter(F.col("closed")=="CLSCOMP")
-
-part_supp_df = eban_df.alias("e") \
-    .join(ltb_union_df.alias("h"),
-          (F.col("e.ebeln")==F.col("h.ebeln")) &
-          (F.col("e.ebelp")==F.col("h.ebelp")),
-          "inner") \
-    .filter((F.col("e.ekgrp")=="LTB") & (F.col("e.loekz")!="X")) \
-    .groupBy("matnr_hist","ltbpono","ltbposupplier") \
-    .agg(
-        F.sum("menge").alias("qtyrequested"),
-        F.sum("wemng").alias("qtyreceived")
-    ) \
-    .withColumn(
-        "ltb_status",
-        F.when(F.col("qtyrequested")==F.col("qtyreceived"),"LTB COMPLETED")
-         .when(F.col("qtyreceived").isNull(),"LTB CANCELLED")
-         .otherwise("LTB PO OPENED")
-    ) \
-    .filter(F.col("ltb_status")=="LTB PO OPENED")
-
-
-
-
-
-
-
-
-
-temp_table_df = nha_supp_df.alias("a") \
-    .join(part_supp_df.alias("b"),
-          (F.col("a.material_ns")==F.col("b.matnr_hist")) &
-          (F.col("a.supcode_ns")==F.col("b.ltbposupplier")),
-          "inner") \
-    .select(
-        F.col("a.material_ns").alias("material_tt"),
-        F.col("a.supcode_ns").alias("vencode_tt"),
-        F.col("a.suppliername_ns").alias("venname_tt"),
-        F.col("b.ltbpono").alias("ltbpono_tt")
-    ).distinct()
-
-
-
-
-
-
-
-
-
-
-ob_base_df = obprt_df.filter(F.col("obpr_state").isin(valid_states))
-
-ob_supplier_df = ob_base_df.alias("a") \
-    .join(dmd_df.alias("d"),
-          (F.col("a.obprtno")==F.col("d.cmpprtno_dmd")) &
-          (F.col("d.cmpprtno_dmd")==F.col("d.nha_dmd")),
-          "inner") \
-    .join(part_dtls_df.alias("p"),
-          (F.col("p.cmpprtno_part")==F.col("a.obprtno")) &
-          (F.col("p.nha_part")==F.col("p.cmpprtno_part")),
-          "inner") \
-    .select(
-        "a.obprno","a.obprtno",
-        F.col("a.obprtno").alias("nha"),
-        F.col("p.vencode_part").alias("vencode"),
-        F.col("p.venname_part").alias("venname"),
-        F.col("a.is_ltb_avail"),
-        F.col("a.ltb_date").alias("ltbdate"),
-        F.col("a.ltb_qty").alias("ltbqty"),
-        F.lit(0).cast("int").alias("qty_liable_supplier"),
-        F.lit(None).cast("int").alias("qty_available_supplier"),
-        F.col("a.supplier_date_to_zero").alias("lrc_suppliers_date_to_zero_inventory"),
-        F.col("d.lamqoh_dmd").alias("lamqoh"),
-        F.col("d.open_po_qty_dmd").alias("open_po_qty"),
-        F.lit(refresh_frequency_days).alias("refresh_frequency"),
-        F.lit(None).cast("date").alias("supply_last_updated"),
-        F.current_date().alias("last_request_date"),
-        F.date_add(F.current_date(),refresh_frequency_days).alias("next_request_date"),
-        F.lit("Y").alias("obsupplier"),
-        F.col("d.restricted_all_stock_dmd").alias("restricted_all_stock")
-    )
-
-
-
-
-
-
-
-
-
-ltb_temp_df = temp_table_df.alias("t") \
-    .join(ob_base_df.alias("o"), F.col("t.material_tt")==F.col("o.obprtno")) \
-    .join(dmd_df.alias("d"),
-          (F.col("d.cmpprtno_dmd")==F.col("o.obprtno")) &
-          (F.col("d.nha_dmd")!=F.col("d.cmpprtno_dmd")),
-          "inner") \
-    .select(
-        "o.obprno","o.obprtno",
-        F.col("d.nha_dmd").alias("nha"),
-        F.col("t.vencode_tt").alias("vencode"),
-        F.col("t.venname_tt").alias("venname"),
-        F.lit("NA").alias("is_ltb_avail"),
-        F.lit(None).cast("date").alias("ltbdate"),
-        F.lit(0).alias("ltbqty"),
-        F.lit(0).alias("qty_liable_supplier"),
-        F.lit(None).cast("int").alias("qty_available_supplier"),
-        F.lit(None).cast("date").alias("lrc_suppliers_date_to_zero_inventory"),
-        F.col("d.lamqoh_dmd").alias("lamqoh"),
-        F.col("d.open_po_qty_dmd").alias("open_po_qty"),
-        F.lit(refresh_frequency_days).alias("refresh_frequency"),
-        F.lit(None).cast("date").alias("supply_last_updated"),
-        F.current_date().alias("last_request_date"),
-        F.date_add(F.current_date(),refresh_frequency_days).alias("next_request_date"),
-        F.lit("N").alias("obsupplier"),
-        F.col("d.restricted_all_stock_dmd").alias("restricted_all_stock")
-    )
+AnalysisException: [UNRESOLVED_COLUMN.WITH_SUGGESTION] A column or function parameter with name `e`.`ebeln` cannot be resolved. Did you mean one of the following? [`h`.`ebeln`, `h`.`ebelp`, `e`.`banfn`, `e`.`bnfpo`, `e`.`ekgrp`].;
+'Join Inner, (('e.ebeln = ebeln#4282) AND ('e.ebelp = ebelp#4283))
+:- SubqueryAlias e
+:  +- Project [banfn#2456, bnfpo#2457, erdat#2469, frgdt#2485, lifnr#2498 AS prereq_supplier#4216, ebeln#2513 AS ltbpo
