@@ -1,44 +1,108 @@
 from pyspark.sql import functions as F
 from pyspark.sql import Window
-
-
-# Source
-tbl_ipln_pr_part = "lakehouse_ipln.cv_iplm_problem_report_part"
-
-# Target
-tbl_omat_obprtno_dtls = "lakehouse_omat.omat_obprtno_dtls"
-tbl_omat_log_dtls     = "lakehouse_omat.omat_log_dtls"
-
-# Runtime
-run_ts = F.current_timestamp()
+from delta.tables import DeltaTable
 
 
 
 
-df_obpr = spark.table(tbl_omat_obprtno_dtls)
 
-df_iplm = (
-    spark.table(tbl_ipln_pr_part)
-    .select(
-        F.col("name").alias("src_obprno"),
-        F.col("part_name").alias("src_obprtno"),
-        F.col("state").alias("src_state"),
-        F.col("reason").alias("src_reason"),
-        F.col("disposition").alias("src_disposition"),
-        F.col("mstae").alias("src_part_status"),
-        F.col("is_the_last_time_buy_available").alias("src_is_ltb_avail"),
-        F.col("ob_last_buy_date").alias("src_ltb_date"),
-        F.col("lrc_suppliers_date_to_zero_inventory").alias("src_supplier_zero_dt"),
-        F.col("submitted_date").alias("src_submitted_dt")
-    )
+
+
+# =========================
+# Source Tables (Lakehouse)
+# =========================
+src_iplm_pr_part_tbl = "eng_test.cv_iplm_problem_report_part"   # _SYS_BIC.prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART
+src_omat_obpr_view    = "eng_test.cv_omat_obprtno_dtls"          # _SYS_BIC.prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS (if exists)
+
+# =========================
+# Target Tables (Delta)
+# =========================
+tgt_obprtno_dtls_tbl = "eng_test.rpt_omat_obprtno_dtls"
+tgt_log_dtls_tbl     = "eng_test.rpt_omat_log_dtls"
+
+# =========================
+# Control Flags
+# =========================
+active_states = ["CONFIRMED", "IN REVIEW", "IN WORK"]
+active_dispositions = ["CONFIRMED", "DEFER"]
+obsolete_reason = "OBSOLETE COMPONENT"
+closed_state = "CLOSED"
+
+run_timestamp = F.current_timestamp()
+
+
+
+
+
+
+
+
+
+# iPLM Problem Report Part data
+iplm_df_raw = (
+    spark.table(src_iplm_pr_part_tbl)
+    .select([F.col(c).alias(c.lower()) for c in spark.table(src_iplm_pr_part_tbl).columns])
 )
 
+# OMAT OBPR-Part current snapshot (used for duplicate detection logic)
+omat_view_df_raw = (
+    spark.table(src_omat_obpr_view)
+    .select([F.col(c).alias(c.lower()) for c in spark.table(src_omat_obpr_view).columns])
+)
+
+# Target table reference (Delta)
+obprtno_delta = DeltaTable.forName(spark, tgt_obprtno_dtls_tbl)
 
 
 
 
 
-spark.sql(f"""
-INSERT INTO {tbl_omat_log_dtls} (message, val1, val2, val3, log_ts)
-VALUES ('SP_OMAT_UPDATEOBPR_WklyRefresh - Started', 0, 0, 0, current_timestamp())
-""")
+
+🧩 Cell 4 — Log Start of Weekly OBPR Refresh
+Business Purpose:
+Record that the OBPR weekly refresh process has started.
+This mirrors the first INSERT in the SAP stored procedure.
+
+
+
+
+
+Cell 5 — Prepare Filtered iPLM Obsolete PR-Part Dataset
+Business Purpose:
+From all iPLM PR-Part records, keep only those related to Obsolete Components and standardize fields needed for downstream OBPR updates.
+This dataset is reused across multiple update steps, so we clean and cache it once.
+
+
+
+
+
+iplm_obsolete_df = (
+    iplm_df_raw
+    # Keep only Obsolete Component records
+    .filter(F.upper(F.col("reason")) == obsolete_reason)
+
+    # Standardize state & disposition for rule checks
+    .withColumn("state_cd", F.upper(F.col("state")))
+    .withColumn("disposition_cd", F.upper(F.col("disposition")))
+
+    # Business keys (renamed early to avoid ambiguity later)
+    .withColumn("obprno_key", F.col("name"))
+    .withColumn("obprtno_key", F.col("part_name"))
+
+    # Select only required columns for downstream logic
+    .select(
+        "obprno_key",
+        "obprtno_key",
+        "state_cd",
+        "disposition_cd",
+        F.col("mstae").alias("part_status_cd"),
+        F.col("is_the_last_time_buy_available").alias("is_ltb_avail_cd"),
+        F.col("ob_last_buy_date").alias("ltb_date_cd"),
+        F.col("lrc_suppliers_date_to_zero_inventory").alias("supplier_date_to_zero_cd"),
+        "submitted_date"
+    )
+    .dropDuplicates()
+    .cache()
+)
+
+iplm_obsolete_df.createOrReplaceTempView("vw_iplm_obsolete_pr_parts")
