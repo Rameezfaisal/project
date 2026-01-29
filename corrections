@@ -1,27 +1,6 @@
-🧩 Cell 4 — Log Start of Weekly OBPR Refresh
+Cell 6 — Update OBPR State for Terminal/Non-Active PRs
 Business Purpose:
-Record that the OBPR weekly refresh process has started.
-This mirrors the first INSERT in the SAP stored procedure.
-
-
-
-
-log_start_df = spark.createDataFrame(
-    [("SP_OMAT_UPDATEOBPR_WklyRefresh - Started",)],
-    ["program_name"]
-).withColumn("executed_on", F.current_timestamp()) \
- .withColumn("obpr_cnt", F.lit(0).cast("int")) \
- .withColumn("obprtno_cnt", F.lit(0).cast("int")) \
- .withColumn("obprtno_nha_cnt", F.lit(0).cast("int"))
-
-(
-    log_start_df
-    .select("executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name")
-    .write
-    .format("delta")
-    .mode("append")
-    .saveAsTable(tgt_log_dtls_tbl)
-)
+If iPLM shows a PR-Part is obsolete but its state is no longer in active workflow states (CONFIRMED, IN REVIEW, IN WORK), then update OMAT to reflect the latest OBPR state.
 
 
 
@@ -29,43 +8,28 @@ log_start_df = spark.createDataFrame(
 
 
 
-
-🧩 Cell 5 — Prepare Filtered iPLM Obsolete PR-Part Dataset
-Business Purpose:
-From all iPLM PR-Part records, keep only those related to Obsolete Components and standardize fields needed for downstream OBPR updates.
-This dataset is reused across multiple update steps, so we clean and cache it once.
-
-
-
-
-
-iplm_obsolete_df = (
-    iplm_df_raw
-    # Keep only Obsolete Component records
-    .filter(F.upper(F.col("reason")) == obsolete_reason)
-
-    # Standardize state & disposition for rule checks
-    .withColumn("state_cd", F.upper(F.col("state")))
-    .withColumn("disposition_cd", F.upper(F.col("disposition")))
-
-    # Business keys (renamed early to avoid ambiguity later)
-    .withColumn("obprno_key", F.col("name"))
-    .withColumn("obprtno_key", F.col("part_name"))
-
-    # Select only required columns for downstream logic
+# Source dataset for terminal-state updates
+terminal_state_df = (
+    iplm_obsolete_df
+    .filter(~F.col("state_cd").isin(active_states))  # NOT in active workflow states
     .select(
-        "obprno_key",
-        "obprtno_key",
-        "state_cd",
-        "disposition_cd",
-        F.col("mstae").alias("part_status_cd"),
-        F.col("is_the_last_time_buy_available").alias("is_ltb_avail_cd"),
-        F.col("ob_last_buy_date").alias("ltb_date_cd"),
-        F.col("lrc_suppliers_date_to_zero_inventory").alias("supplier_date_to_zero_cd"),
-        "submitted_date"
+        F.col("obprno_key").alias("obprno_upd"),
+        F.col("obprtno_key").alias("obprtno_upd"),
+        F.col("state_cd").alias("new_obpr_state")
     )
     .dropDuplicates()
-    .cache()
 )
 
-iplm_obsolete_df.createOrReplaceTempView("vw_iplm_obsolete_pr_parts")
+# Perform Delta MERGE update
+(
+    obprtno_delta.alias("t")
+    .merge(
+        terminal_state_df.alias("s"),
+        "t.obprno = s.obprno_upd AND t.obprtno = s.obprtno_upd"
+    )
+    .whenMatchedUpdate(set={
+        "obpr_state": "s.new_obpr_state",
+        "last_modified_on": "current_timestamp()"
+    })
+    .execute()
+)
