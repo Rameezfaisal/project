@@ -1,63 +1,3 @@
-from pyspark.sql import functions as F
-from pyspark.sql import Window
-from delta.tables import DeltaTable
-
-
-
-
-
-
-
-# =========================
-# Source Tables (Lakehouse)
-# =========================
-src_iplm_pr_part_tbl = "eng_test.cv_iplm_problem_report_part"   # _SYS_BIC.prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART
-src_omat_obpr_view    = "eng_test.cv_omat_obprtno_dtls"          # _SYS_BIC.prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS (if exists)
-
-# =========================
-# Target Tables (Delta)
-# =========================
-tgt_obprtno_dtls_tbl = "eng_test.rpt_omat_obprtno_dtls"
-tgt_log_dtls_tbl     = "eng_test.rpt_omat_log_dtls"
-
-# =========================
-# Control Flags
-# =========================
-active_states = ["CONFIRMED", "IN REVIEW", "IN WORK"]
-active_dispositions = ["CONFIRMED", "DEFER"]
-obsolete_reason = "OBSOLETE COMPONENT"
-closed_state = "CLOSED"
-
-run_timestamp = F.current_timestamp()
-
-
-
-
-
-
-
-
-
-# iPLM Problem Report Part data
-iplm_df_raw = (
-    spark.table(src_iplm_pr_part_tbl)
-    .select([F.col(c).alias(c.lower()) for c in spark.table(src_iplm_pr_part_tbl).columns])
-)
-
-# OMAT OBPR-Part current snapshot (used for duplicate detection logic)
-omat_view_df_raw = (
-    spark.table(src_omat_obpr_view)
-    .select([F.col(c).alias(c.lower()) for c in spark.table(src_omat_obpr_view).columns])
-)
-
-# Target table reference (Delta)
-obprtno_delta = DeltaTable.forName(spark, tgt_obprtno_dtls_tbl)
-
-
-
-
-
-
 🧩 Cell 4 — Log Start of Weekly OBPR Refresh
 Business Purpose:
 Record that the OBPR weekly refresh process has started.
@@ -66,8 +6,31 @@ This mirrors the first INSERT in the SAP stored procedure.
 
 
 
+log_start_df = spark.createDataFrame(
+    [("SP_OMAT_UPDATEOBPR_WklyRefresh - Started",)],
+    ["program_name"]
+).withColumn("executed_on", F.current_timestamp()) \
+ .withColumn("obpr_cnt", F.lit(0).cast("int")) \
+ .withColumn("obprtno_cnt", F.lit(0).cast("int")) \
+ .withColumn("obprtno_nha_cnt", F.lit(0).cast("int"))
 
-Cell 5 — Prepare Filtered iPLM Obsolete PR-Part Dataset
+(
+    log_start_df
+    .select("executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name")
+    .write
+    .format("delta")
+    .mode("append")
+    .saveAsTable(tgt_log_dtls_tbl)
+)
+
+
+
+
+
+
+
+
+🧩 Cell 5 — Prepare Filtered iPLM Obsolete PR-Part Dataset
 Business Purpose:
 From all iPLM PR-Part records, keep only those related to Obsolete Components and standardize fields needed for downstream OBPR updates.
 This dataset is reused across multiple update steps, so we clean and cache it once.
