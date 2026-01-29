@@ -1,18 +1,9 @@
-Cell 11 — Build LTBINFO (Latest LTB Data per Duplicate Part)
-Business Purpose:
-For parts that exist in multiple PRs, use only the most recently submitted PR to determine:
-Last Time Buy availability
-Last Time Buy date
-Supplier inventory depletion date
-
-
-
-
-
-
-
-iplm_ltb_df = (
-    iplm_obsolete_df
+# Active PRs in iPLM that are Obsolete Components and NOT CLOSED
+active_pr_parts_df = (
+    iplm_df_raw
+    .filter(F.upper(F.col("reason")) == obsolete_reason)
+    .withColumn("state_cd", F.upper(F.col("state")))
+    .withColumn("disposition_cd", F.upper(F.col("disposition")))
     .filter(
         (F.col("state_cd") != closed_state) &
         (
@@ -21,12 +12,114 @@ iplm_ltb_df = (
         )
     )
     .select(
-        F.col("obprtno_key").alias("ltb_part_key"),
-        "submitted_date",
-        F.col("is_ltb_avail_cd").alias("is_ltb_avail_new"),
-        F.col("ltb_date_cd").alias("ltb_date_new"),
-        F.col("supplier_date_to_zero_cd").alias("supplier_date_to_zero_new")
+        F.col("name").alias("obprno_key"),
+        F.col("part_name").alias("obprtno_key")
     )
+    .dropDuplicates()
+)
+
+# OMAT existing PR-Part combinations
+omat_pairs_df = (
+    omat_view_df_raw
+    .select(
+        F.col("obprno").alias("omat_obprno"),
+        F.col("obprtno").alias("omat_obprtno")
+    )
+    .dropDuplicates()
+)
+
+# Find same part in other PRs
+duplicate_pairs_df = (
+    active_pr_parts_df.alias("a")
+    .join(
+        omat_pairs_df.alias("b"),
+        (F.col("a.obprtno_key") == F.col("b.omat_obprtno")) &
+        (F.col("a.obprno_key") != F.col("b.omat_obprno")),
+        "inner"
+    )
+    .select(
+        F.col("a.obprtno_key").alias("part_name_dup"),
+        F.col("a.obprno_key").alias("related_pr")
+    )
+)
+
+rltdprs_df = (
+    duplicate_pairs_df
+    .groupBy("part_name_dup")
+    .agg(
+        F.concat_ws(",", F.collect_list("related_pr")).alias("openprs"),
+        F.lit("Yes").alias("duplicate_pr_flag")
+    )
+)
+
+rltdprs_df.createOrReplaceTempView("vw_rltdprs")
+
+
+
+
+
+
+
+
+
+
+
+
+enrichment_src_df = (
+    iplm_df_raw
+    .filter(F.upper(F.col("reason")) == obsolete_reason)
+    .withColumn("state_cd", F.upper(F.col("state")))
+    .withColumn("disposition_cd", F.upper(F.col("disposition")))
+    .filter(
+        (F.col("state_cd").isin(active_states)) |
+        (F.col("disposition_cd").isin(active_dispositions))
+    )
+    .select(
+        F.col("name").alias("obprno_upd"),
+        F.col("part_name").alias("obprtno_upd"),
+        F.col("mstae").alias("part_status_new"),
+        F.col("state_cd").alias("obpr_state_new"),
+        F.col("is_the_last_time_buy_available").alias("is_ltb_avail_new"),
+        F.col("ob_last_buy_date").alias("ltb_date_new"),
+        F.col("lrc_suppliers_date_to_zero_inventory").alias("supplier_date_to_zero_new"),
+        "submitted_date"
+    )
+    .join(
+        rltdprs_df.alias("r"),
+        F.col("obprtno_upd") == F.col("r.part_name_dup"),
+        "left"
+    )
+    .select(
+        "obprno_upd",
+        "obprtno_upd",
+        "part_status_new",
+        "obpr_state_new",
+        "is_ltb_avail_new",
+        "ltb_date_new",
+        "supplier_date_to_zero_new",
+        F.col("openprs").alias("reltd_ob_pr_new"),
+        F.col("duplicate_pr_flag").alias("duplicate_pr_flag_new")
+    )
+    .dropDuplicates(["obprno_upd", "obprtno_upd"])
+)
+
+(
+    obprtno_delta.alias("t")
+    .merge(
+        enrichment_src_df.alias("s"),
+        "t.obprno = s.obprno_upd AND t.obprtno = s.obprtno_upd"
+    )
+    .whenMatchedUpdate(set={
+        "part_status": "s.part_status_new",
+        "obpr_state": "s.obpr_state_new",
+        "is_ltb_avail": "s.is_ltb_avail_new",
+        "ltb_date": "s.ltb_date_new",
+        "supplier_date_to_zero": "s.supplier_date_to_zero_new",
+        "reltd_ob_pr": "s.reltd_ob_pr_new",
+        "duplicate_pr_flag": "s.duplicate_pr_flag_new",
+        "last_modified_on": "current_timestamp()"
+    })
+    .execute()
 )
 
 
@@ -35,12 +128,80 @@ iplm_ltb_df = (
 
 
 
+
+
+
+
+
+duplicate_parts_df = (
+    spark.table(tgt_obprtno_dtls_tbl)
+    .filter(F.col("reltd_ob_pr").isNotNull() & (F.length(F.col("reltd_ob_pr")) > 0))
+    .filter(F.col("obprtno") != "NA")
+    .select(F.col("obprtno").alias("dup_part_key"))
+    .dropDuplicates()
+)
+
+active_iplm_for_dup_df = (
+    iplm_df_raw
+    .filter(F.upper(F.col("reason")) == obsolete_reason)
+    .withColumn("state_cd", F.upper(F.col("state")))
+    .withColumn("disposition_cd", F.upper(F.col("disposition")))
+    .filter(
+        (F.col("state_cd") != closed_state) &
+        (
+            F.col("state_cd").isin(active_states) |
+            F.col("disposition_cd").isin(active_dispositions)
+        )
+    )
+    .select(
+        F.col("part_name").alias("dup_part_key"),
+        "submitted_date"
+    )
+)
+
+duplicatepr_df = (
+    duplicate_parts_df.alias("d")
+    .join(active_iplm_for_dup_df.alias("i"), "dup_part_key")
+    .groupBy("dup_part_key")
+    .agg(F.max("submitted_date").alias("latest_submitted_date"))
+)
+
+duplicatepr_df.createOrReplaceTempView("vw_duplicatepr")
+
+
+
+
+
+
+
+
+
+
+
 ltbinfo_df = (
-    iplm_ltb_df.alias("i")
+    iplm_df_raw
+    .filter(F.upper(F.col("reason")) == obsolete_reason)
+    .withColumn("state_cd", F.upper(F.col("state")))
+    .withColumn("disposition_cd", F.upper(F.col("disposition")))
+    .filter(
+        (F.col("part_name") != "NA") &
+        (F.col("state_cd") != closed_state) &
+        (
+            F.col("state_cd").isin(active_states) |
+            F.col("disposition_cd").isin(active_dispositions)
+        )
+    )
+    .select(
+        F.col("part_name").alias("ltb_part_key"),
+        "submitted_date",
+        F.col("is_the_last_time_buy_available").alias("is_ltb_avail_new"),
+        F.col("ob_last_buy_date").alias("ltb_date_new"),
+        F.col("lrc_suppliers_date_to_zero_inventory").alias("supplier_date_to_zero_new")
+    )
     .join(
         duplicatepr_df.alias("d"),
-        (F.col("i.ltb_part_key") == F.col("d.dup_part_key")) &
-        (F.col("i.submitted_date") == F.col("d.latest_submitted_date")),
+        (F.col("ltb_part_key") == F.col("d.dup_part_key")) &
+        (F.col("submitted_date") == F.col("latest_submitted_date")),
         "inner"
     )
     .select(
@@ -52,84 +213,4 @@ ltbinfo_df = (
     .dropDuplicates(["ltb_part_key"])
 )
 
-
 ltbinfo_df.createOrReplaceTempView("vw_ltbinfo")
-
-
-
-
-
-
-
-
-
-
-Cell 12 — Update OMAT with Latest LTB & Supplier Dates
-Business Purpose:
-For parts appearing in multiple PRs, ensure OMAT stores LTB details from the most recently submitted PR only.
-
-
-
-
-
-ltb_update_src_df = (
-    ltbinfo_df
-    .select(
-        F.col("ltb_part_key").alias("obprtno_upd"),
-        "is_ltb_avail_new",
-        "ltb_date_new",
-        "supplier_date_to_zero_new"
-    )
-    .dropDuplicates(["obprtno_upd"])
-)
-
-
-
-
-
-(
-    obprtno_delta.alias("t")
-    .merge(
-        ltb_update_src_df.alias("s"),
-        "t.obprtno = s.obprtno_upd"
-    )
-    .whenMatchedUpdate(set={
-        "is_ltb_avail": "s.is_ltb_avail_new",
-        "ltb_date": "s.ltb_date_new",
-        "supplier_date_to_zero": "s.supplier_date_to_zero_new",
-        "last_modified_on": "current_timestamp()"
-    })
-    .execute()
-)
-
-
-
-
-
-
-Cell 13 — Log Completion of Weekly OBPR Refresh
-Business Purpose:
-Record that the OBPR weekly refresh has successfully finished.
-This mirrors the final INSERT into OMAT_LOG_DTLS in the SAP procedure.
-
-
-
-
-log_finish_df = spark.createDataFrame(
-    [("SP_OMAT_UPDATEOBPR_WklyRefresh - Finished",)],
-    ["program_name"]
-).withColumn("executed_on", F.current_timestamp()) \
- .withColumn("obpr_cnt", F.lit(0).cast("int")) \
- .withColumn("obprtno_cnt", F.lit(0).cast("int")) \
- .withColumn("obprtno_nha_cnt", F.lit(0).cast("int"))
-
-(
-    log_finish_df
-    .select("executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name")
-    .write
-    .format("delta")
-    .mode("append")
-    .saveAsTable(tgt_log_dtls_tbl)
-)
-
-
