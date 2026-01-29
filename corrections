@@ -1,6 +1,7 @@
-Cell 6 — Update OBPR State for Terminal/Non-Active PRs
+Cell 7 — Close OBPR-Part Records Removed from iPLM
 Business Purpose:
-If iPLM shows a PR-Part is obsolete but its state is no longer in active workflow states (CONFIRMED, IN REVIEW, IN WORK), then update OMAT to reflect the latest OBPR state.
+If an OBPR–Part combination no longer exists in the iPLM obsolete component list, it means the part was removed from that PR.
+Such records must be marked as CLOSED in OMAT.
 
 
 
@@ -8,27 +9,51 @@ If iPLM shows a PR-Part is obsolete but its state is no longer in active workflo
 
 
 
-# Source dataset for terminal-state updates
-terminal_state_df = (
+active_iplm_keys_df = (
     iplm_obsolete_df
-    .filter(~F.col("state_cd").isin(active_states))  # NOT in active workflow states
     .select(
-        F.col("obprno_key").alias("obprno_upd"),
-        F.col("obprtno_key").alias("obprtno_upd"),
-        F.col("state_cd").alias("new_obpr_state")
+        F.col("obprno_key").alias("obprno_key_chk"),
+        F.col("obprtno_key").alias("obprtno_key_chk")
     )
     .dropDuplicates()
 )
 
-# Perform Delta MERGE update
+
+
+
+
+
+target_df = spark.table(tgt_obprtno_dtls_tbl) \
+    .select(
+        F.col("obprno").alias("t_obprno"),
+        F.col("obprtno").alias("t_obprtno")
+    )
+
+removed_pairs_df = (
+    target_df.alias("t")
+    .join(
+        active_iplm_keys_df.alias("s"),
+        (F.col("t.t_obprno") == F.col("s.obprno_key_chk")) &
+        (F.col("t.t_obprtno") == F.col("s.obprtno_key_chk")),
+        "left_anti"
+    )
+)
+
+
+
+
+
+
+
+
 (
     obprtno_delta.alias("t")
     .merge(
-        terminal_state_df.alias("s"),
-        "t.obprno = s.obprno_upd AND t.obprtno = s.obprtno_upd"
+        removed_pairs_df.alias("r"),
+        "t.obprno = r.t_obprno AND t.obprtno = r.t_obprtno"
     )
     .whenMatchedUpdate(set={
-        "obpr_state": "s.new_obpr_state",
+        "obpr_state": f"'{closed_state}'",
         "last_modified_on": "current_timestamp()"
     })
     .execute()
