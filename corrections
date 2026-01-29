@@ -1,31 +1,17 @@
-Cell 10 — Build DUPLICATEPR (Latest PR per Part)
+Cell 11 — Build LTBINFO (Latest LTB Data per Duplicate Part)
 Business Purpose:
-For parts that appear in multiple PRs, we must determine which PR is the most recent (by submitted date).
-Later, we will pull LTB and supplier depletion info only from that latest PR.
-This ensures OMAT reflects the most up-to-date commercial decision.
+For parts that exist in multiple PRs, use only the most recently submitted PR to determine:
+Last Time Buy availability
+Last Time Buy date
+Supplier inventory depletion date
 
 
 
 
 
-Identify Parts with Duplicate PRs in OMAT
 
 
-
-duplicate_parts_df = (
-    spark.table(tgt_obprtno_dtls_tbl)
-    .filter(F.col("reltd_ob_pr").isNotNull() & (F.length(F.col("reltd_ob_pr")) > 0))
-    .select(
-        F.col("obprtno").alias("dup_part_key")
-    )
-    .dropDuplicates()
-)
-
-
-
-
-
-active_iplm_for_dup_df = (
+iplm_ltb_df = (
     iplm_obsolete_df
     .filter(
         (F.col("state_cd") != closed_state) &
@@ -35,29 +21,115 @@ active_iplm_for_dup_df = (
         )
     )
     .select(
-        F.col("obprtno_key").alias("dup_part_key"),
-        "submitted_date"
+        F.col("obprtno_key").alias("ltb_part_key"),
+        "submitted_date",
+        F.col("is_ltb_avail_cd").alias("is_ltb_avail_new"),
+        F.col("ltb_date_cd").alias("ltb_date_new"),
+        F.col("supplier_date_to_zero_cd").alias("supplier_date_to_zero_new")
     )
 )
 
 
 
 
-Get Latest Submitted Date per Part
 
 
 
-duplicatepr_df = (
-    duplicate_parts_df.alias("d")
+ltbinfo_df = (
+    iplm_ltb_df.alias("i")
     .join(
-        active_iplm_for_dup_df.alias("i"),
-        "dup_part_key",
+        duplicatepr_df.alias("d"),
+        (F.col("i.ltb_part_key") == F.col("d.dup_part_key")) &
+        (F.col("i.submitted_date") == F.col("d.latest_submitted_date")),
         "inner"
     )
-    .groupBy("dup_part_key")
-    .agg(
-        F.max("submitted_date").alias("latest_submitted_date")
+    .select(
+        "ltb_part_key",
+        "is_ltb_avail_new",
+        "ltb_date_new",
+        "supplier_date_to_zero_new"
     )
+    .dropDuplicates(["ltb_part_key"])
 )
 
-duplicatepr_df.createOrReplaceTempView("vw_duplicatepr")
+
+ltbinfo_df.createOrReplaceTempView("vw_ltbinfo")
+
+
+
+
+
+
+
+
+
+
+Cell 12 — Update OMAT with Latest LTB & Supplier Dates
+Business Purpose:
+For parts appearing in multiple PRs, ensure OMAT stores LTB details from the most recently submitted PR only.
+
+
+
+
+
+ltb_update_src_df = (
+    ltbinfo_df
+    .select(
+        F.col("ltb_part_key").alias("obprtno_upd"),
+        "is_ltb_avail_new",
+        "ltb_date_new",
+        "supplier_date_to_zero_new"
+    )
+    .dropDuplicates(["obprtno_upd"])
+)
+
+
+
+
+
+(
+    obprtno_delta.alias("t")
+    .merge(
+        ltb_update_src_df.alias("s"),
+        "t.obprtno = s.obprtno_upd"
+    )
+    .whenMatchedUpdate(set={
+        "is_ltb_avail": "s.is_ltb_avail_new",
+        "ltb_date": "s.ltb_date_new",
+        "supplier_date_to_zero": "s.supplier_date_to_zero_new",
+        "last_modified_on": "current_timestamp()"
+    })
+    .execute()
+)
+
+
+
+
+
+
+Cell 13 — Log Completion of Weekly OBPR Refresh
+Business Purpose:
+Record that the OBPR weekly refresh has successfully finished.
+This mirrors the final INSERT into OMAT_LOG_DTLS in the SAP procedure.
+
+
+
+
+log_finish_df = spark.createDataFrame(
+    [("SP_OMAT_UPDATEOBPR_WklyRefresh - Finished",)],
+    ["program_name"]
+).withColumn("executed_on", F.current_timestamp()) \
+ .withColumn("obpr_cnt", F.lit(0).cast("int")) \
+ .withColumn("obprtno_cnt", F.lit(0).cast("int")) \
+ .withColumn("obprtno_nha_cnt", F.lit(0).cast("int"))
+
+(
+    log_finish_df
+    .select("executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name")
+    .write
+    .format("delta")
+    .mode("append")
+    .saveAsTable(tgt_log_dtls_tbl)
+)
+
+
