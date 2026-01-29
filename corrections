@@ -1,54 +1,65 @@
-Cell 8 — Build RLTDPRS (Detect Parts in Multiple Active OBPRs)
+Cell 9 — Main OBPR Enrichment Update
 Business Purpose:
-Identify parts that appear in more than one active OB Problem Report.
-This helps flag duplicate investigations and links related PR numbers.
+Update OMAT OBPR-Part records with the latest information from iPLM, including:
+Current PR state
+Part lifecycle status
+LTB availability & date
+Supplier depletion date
+Related PR list (duplicates)
+Duplicate PR flag
 
 
 
 
 
 
-
-
-active_iplm_df = (
-    iplm_obsolete_df
+enrichment_src_df = (
+    iplm_obsolete_df.alias("i")
     .filter(
-        (F.col("state_cd").isin(active_states)) |
-        (F.col("disposition_cd").isin(active_dispositions))
+        (F.col("i.state_cd").isin(active_states)) |
+        (F.col("i.disposition_cd").isin(active_dispositions))
     )
-    .select(
-        "obprno_key",
-        "obprtno_key"
-    )
-    .dropDuplicates()
-)
-
-
-
-
-
-omat_keys_df = (
-    omat_view_df_raw
-    .select(
-        F.col("obprno").alias("omat_obprno"),
-        F.col("obprtno").alias("omat_obprtno")
-    )
-    .dropDuplicates()
-)
-
-duplicate_pairs_df = (
-    active_iplm_df.alias("a")
     .join(
-        omat_keys_df.alias("b"),
-        (F.col("a.obprtno_key") == F.col("b.omat_obprtno")) &   # ❌ wait wrong col?
-        (F.col("a.obprno_key") != F.col("b.omat_obprno")),      # different PR
-        "inner"
+        rltdprs_df.alias("r"),
+        F.col("i.obprtno_key") == F.col("r.part_name_dup"),
+        "left"
     )
     .select(
-        F.col("a.obprtno_key").alias("part_name_dup"),
-        F.col("a.obprno_key").alias("related_pr")
+        F.col("i.obprno_key").alias("obprno_upd"),
+        F.col("i.obprtno_key").alias("obprtno_upd"),
+        F.col("i.part_status_cd").alias("part_status_new"),
+        F.col("i.state_cd").alias("obpr_state_new"),
+        F.col("i.is_ltb_avail_cd").alias("is_ltb_avail_new"),
+        F.col("i.ltb_date_cd").alias("ltb_date_new"),
+        F.col("i.supplier_date_to_zero_cd").alias("supplier_date_to_zero_new"),
+        F.col("r.openprs").alias("reltd_ob_pr_new"),
+        F.col("r.duplicate_pr_flag").alias("duplicate_pr_flag_new")
     )
-    .dropDuplicates()
+    # Critical for Delta MERGE safety
+    .dropDuplicates(["obprno_upd", "obprtno_upd"])
+)
+
+
+
+
+
+(
+    obprtno_delta.alias("t")
+    .merge(
+        enrichment_src_df.alias("s"),
+        "t.obprno = s.obprno_upd AND t.obprtno = s.obprtno_upd"
+    )
+    .whenMatchedUpdate(set={
+        "part_status": "s.part_status_new",
+        "obpr_state": "s.obpr_state_new",
+        "is_ltb_avail": "s.is_ltb_avail_new",
+        "ltb_date": "s.ltb_date_new",
+        "supplier_date_to_zero": "s.supplier_date_to_zero_new",
+        "reltd_ob_pr": "s.reltd_ob_pr_new",
+        "duplicate_pr_flag": "s.duplicate_pr_flag_new",
+        "last_modified_on": "current_timestamp()"
+    })
+    .execute()
 )
 
 
@@ -56,18 +67,4 @@ duplicate_pairs_df = (
 
 
 
-rltdprs_df = (
-    duplicate_pairs_df
-    .groupBy("part_name_dup")
-    .agg(
-        F.concat_ws(",", F.collect_set("related_pr")).alias("openprs"),
-        F.lit("Yes").alias("duplicate_pr_flag")
-    )
-)
 
-
-
-
-
-
-rltdprs_df.createOrReplaceTempView("vw_rltdprs")
