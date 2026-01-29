@@ -1,0 +1,134 @@
+PROCEDURE "W_OMAT"."prd.gops.OMAT::SP_OMAT_UPDATEOBPR_WklyRefresh" ( ) 
+	LANGUAGE SQLSCRIPT
+	SQL SECURITY DEFINER 
+	DEFAULT SCHEMA W_OMAT
+	--READS SQL DATA 
+	AS
+BEGIN
+/*-------------------------------------------------------------------------------------------------------------------------------------*
+*Program Name : SP_OMAT_UPDATEOBPR_WklyRefresh
+*Project      : Obsolescence Improvement Project
+*Developer    : Akhil Martin
+*Requestor    : David, Hickman
+*Create Date  : 2020/06/19
+*---------------------------------------------------------------------------------------------------------------------------------------------------*
+*Description  : This Stored Procedure Updates the existing OBPR in OMAT database with its State, demand and consumption details 
+			 	Refresh everything except Explosion.				
+*---------------------------------------------------------------------------------------------------------------------------------------------------*
+Change Log:
+Change Id 		Developer		Date			Change Description
+----------------------------------------------------------------------------------------------------------------------------------------------------*
+98687			AKHILJO			2020-04-15		Initial developemnt.
+107767			AKHILJO			2021-03-17		New SP invoking to get the MRP PREFERRED suppliers in all the procurement plants in LAM												
+108410			AKHILJO			2021-04-14		Change to update the OMAT OBPR-OBPRTNO combination if a OBPart is removed from the OBPR in iplM 
+109926          TiwarIs	        2021--6-16      Call to procedure "W_OMAT"."prd.gops.OMAT::SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh" ( )
+113178          Srivaap	        2021-08-26      commented call to procedure
+127183          TIWARIS         2023-03-29      added call to proc. "W_OMAT"."prd.gops.OMAT::SP_OMAT_UPDATE_CO_WklyRefresh" ( ) 
+*----------------------------------------------------------------------------------------------------------------------------------------------------*/	
+
+--Logging from the SP
+INSERT INTO "W_OMAT"."OMAT_LOG_DTLS" VALUES ('SP_OMAT_UPDATEOBPR_WklyRefresh - Started', 0 , 0 , 0 ,  NOW());
+
+
+--Capture the change in STATE of the OBPR weekly, Update the state of the OBPR
+UPDATE "W_OMAT"."OMAT_OBPRTNO_DTLS" A
+	SET A."OBPR_STATE" = B.STATE,
+		A."LAST_MODIFIED_ON" = NOW()
+FROM "W_OMAT"."OMAT_OBPRTNO_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART" B ON B.NAME = A.OBPRNO AND B.PART_NAME = A.OBPRTNO
+WHERE UPPER(B.STATE) NOT IN ('CONFIRMED', 'IN WORK', 'IN REVIEW')
+AND UPPER(B.REASON) = 'OBSOLETE COMPONENT';
+
+--Change to update the OMAT OBPR-OBPRTNO combination if a OBPart is removed from the OBPR in iplM --107767
+UPDATE "W_OMAT"."OMAT_OBPRTNO_DTLS" A
+	SET A."OBPR_STATE" = 'CLOSED',
+		A."LAST_MODIFIED_ON" = NOW()
+FROM "W_OMAT"."OMAT_OBPRTNO_DTLS" A
+WHERE CONCAT(A.OBPRNO,A.OBPRTNO) NOT IN (SELECT DISTINCT CONCAT(B.NAME,B.PART_NAME) FROM "_SYS_BIC"."prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART" B WHERE UPPER(B.REASON) = 'OBSOLETE COMPONENT');
+
+--Get the Related PR numbers of the component Part Number. ie. if the OB Part appear in any other OB PRs.
+RLTDPRS = SELECT DISTINCT "PART_NAME", STRING_AGG("NAME",',') AS "OpenPRs", 'Yes' AS "DUPLICATE_PR_FLAG" FROM (
+			SELECT DISTINCT A."PART_NAME", A."NAME"
+			FROM "_SYS_BIC"."prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART" A
+			INNER JOIN  "_SYS_BIC"."prd.gops.OMAT/CV_OMAT_OBPRTNO_DTLS" B ON B."OBPRNO" <> A.NAME AND B."OBPRTNO" = A.PART_NAME
+			WHERE UPPER(STATE) <> 'CLOSED' 
+					AND (UPPER(STATE) IN ('CONFIRMED', 'IN REVIEW','IN WORK') 
+        				OR UPPER(DISPOSITION) IN ('CONFIRMED', 'DEFER'))
+					AND UPPER(REASON) = 'OBSOLETE COMPONENT'
+					--AND A.PART_NAME = '630-018054-001'
+			GROUP BY A."PART_NAME",A."NAME"
+			)A1 GROUP BY A1."PART_NAME"
+			ORDER BY A1."PART_NAME" ASC;	
+			
+--Get the updated OB PR info from iPLM weekly			
+UPDATE "W_OMAT"."OMAT_OBPRTNO_DTLS" A
+	SET A."PART_STATUS" = B.MSTAE
+		,A."OBPR_STATE" = B.STATE
+		,A."IS_LTB_AVAIL" = B.IS_THE_LAST_TIME_BUY_AVAILABLE
+		,A."LTB_DATE" = B."OB_LAST_BUY_DATE"
+		,A.RELTD_OB_PR = C."OpenPRs"
+		,A.DUPLICATE_PR_FLAG = C."DUPLICATE_PR_FLAG"
+		,A."LAST_MODIFIED_ON" = NOW()
+		,A."SUPPLIER_DATE_TO_ZERO" = B.LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY
+FROM "W_OMAT"."OMAT_OBPRTNO_DTLS" A
+INNER JOIN "_SYS_BIC"."prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART" B ON B.NAME = A."OBPRNO" AND B.PART_NAME = A."OBPRTNO"
+LEFT JOIN :RLTDPRS C ON C.PART_NAME = A."OBPRTNO"
+WHERE (UPPER(B.STATE) IN ('CONFIRMED', 'IN REVIEW','IN WORK') 
+		OR UPPER(DISPOSITION) IN ('CONFIRMED', 'DEFER'))
+AND UPPER(B.REASON) = 'OBSOLETE COMPONENT';
+			
+DUPLICATEPR = SELECT DISTINCT B.PART_NAME, MAX(SUBMITTED_DATE) AS SUBMITTED_DATE
+				FROM "W_OMAT"."OMAT_OBPRTNO_DTLS" A
+				INNER JOIN "_SYS_BIC"."prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART" B ON B.PART_NAME = A.OBPRTNO
+				WHERE A."RELTD_OB_PR" IS NOT NULL AND LENGTH(A."RELTD_OB_PR") > 0
+					AND B.PART_NAME <> 'NA'
+					AND UPPER(B.STATE) <> 'CLOSED' 
+					AND (UPPER(B.STATE) IN ('CONFIRMED', 'IN REVIEW','IN WORK')
+							OR UPPER(B.DISPOSITION) IN ('CONFIRMED', 'DEFER'))
+					AND UPPER(B.REASON) = 'OBSOLETE COMPONENT'	
+				GROUP BY B.PART_NAME;
+				
+LTBINFO = SELECT DISTINCT A.PART_NAME, 	IS_THE_LAST_TIME_BUY_AVAILABLE AS IS_LTB_AVAIL, 		OB_LAST_BUY_DATE AS LTB_DATE
+						,LRC_SUPPLIERS_DATE_TO_ZERO_INVENTORY AS "SUPPLIER_DATE_TO_ZERO"
+			FROM "_SYS_BIC"."prd.IPLM/CV_IPLM_PROBLEM_REPORT_PART"  A
+			INNER JOIN :DUPLICATEPR B ON B.PART_NAME = A.PART_NAME AND B.SUBMITTED_DATE = A.SUBMITTED_DATE
+			WHERE A.PART_NAME <> 'NA'
+					AND UPPER(A.STATE) <> 'CLOSED' 
+					AND (UPPER(A.STATE) IN ('CONFIRMED', 'IN REVIEW','IN WORK')
+							OR UPPER(A.DISPOSITION) IN ('CONFIRMED', 'DEFER'))
+					AND UPPER(A.REASON) = 'OBSOLETE COMPONENT';
+					
+DUPLICATEPR = SELECT * FROM :DUPLICATEPR WHERE 1 = 2;
+
+--UPDATE THE LATEST LTB & SUPPLIER DATE TO ZERO INFOR FROM IPLM TO OMAT Table.
+UPDATE "W_OMAT"."OMAT_OBPRTNO_DTLS" A SET A."IS_LTB_AVAIL" = B.IS_LTB_AVAIL
+			, A.LTB_DATE = B.LTB_DATE
+			, A."SUPPLIER_DATE_TO_ZERO" = B.SUPPLIER_DATE_TO_ZERO
+FROM "W_OMAT"."OMAT_OBPRTNO_DTLS" A
+INNER JOIN :LTBINFO B ON B.PART_NAME = A.OBPRTNO;
+
+LTBINFO = SELECT * FROM :LTBINFO WHERE 1 = 2;
+
+--Logging from the SP
+INSERT INTO "W_OMAT"."OMAT_LOG_DTLS" VALUES ('SP_OMAT_UPDATEOBPR_WklyRefresh - Finished', 0 , 0 , 0 ,  NOW());
+
+/*
+
+INCLUDE SEQUENTIAL SP INVOKES
+
+*/
+
+CALL "W_OMAT"."prd.gops.OMAT::SP_OMAT_UPDATEDMD_CONS_PO_WklyRefresh"();
+	
+--NEW SP CALL to identify MRP preferred Supplier in all procurement Plants. 107767 CHANGES
+CALL "W_OMAT"."prd.gops.OMAT::SP_OMAT_UPDATE_SUPPLIERS_BYPLANT"();
+
+CALL  "W_OMAT"."prd.gops.OMAT::SP_OMAT_PART_DTLS_WklyRefresh" ( ) ;
+
+CALL "W_OMAT"."prd.gops.OMAT::SP_OMAT_UPDATE_PRINFO_WklyRefresh"();
+
+--CALL "W_OMAT"."prd.gops.OMAT::SP_OMAT_UPDATEDMD_CONS_MKNHA_WklyRefresh"();
+
+CALL "W_OMAT"."prd.gops.OMAT::SP_OMAT_UPDATE_CO_WklyRefresh" ( );
+
+END;
