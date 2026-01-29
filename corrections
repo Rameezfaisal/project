@@ -1,65 +1,43 @@
-Cell 9 — Main OBPR Enrichment Update
+Cell 10 — Build DUPLICATEPR (Latest PR per Part)
 Business Purpose:
-Update OMAT OBPR-Part records with the latest information from iPLM, including:
-Current PR state
-Part lifecycle status
-LTB availability & date
-Supplier depletion date
-Related PR list (duplicates)
-Duplicate PR flag
+For parts that appear in multiple PRs, we must determine which PR is the most recent (by submitted date).
+Later, we will pull LTB and supplier depletion info only from that latest PR.
+This ensures OMAT reflects the most up-to-date commercial decision.
 
 
 
 
 
+Identify Parts with Duplicate PRs in OMAT
 
-enrichment_src_df = (
-    iplm_obsolete_df.alias("i")
-    .filter(
-        (F.col("i.state_cd").isin(active_states)) |
-        (F.col("i.disposition_cd").isin(active_dispositions))
+
+
+duplicate_parts_df = (
+    spark.table(tgt_obprtno_dtls_tbl)
+    .filter(F.col("reltd_ob_pr").isNotNull() & (F.length(F.col("reltd_ob_pr")) > 0))
+    .select(
+        F.col("obprtno").alias("dup_part_key")
     )
-    .join(
-        rltdprs_df.alias("r"),
-        F.col("i.obprtno_key") == F.col("r.part_name_dup"),
-        "left"
+    .dropDuplicates()
+)
+
+
+
+
+
+active_iplm_for_dup_df = (
+    iplm_obsolete_df
+    .filter(
+        (F.col("state_cd") != closed_state) &
+        (
+            F.col("state_cd").isin(active_states) |
+            F.col("disposition_cd").isin(active_dispositions)
+        )
     )
     .select(
-        F.col("i.obprno_key").alias("obprno_upd"),
-        F.col("i.obprtno_key").alias("obprtno_upd"),
-        F.col("i.part_status_cd").alias("part_status_new"),
-        F.col("i.state_cd").alias("obpr_state_new"),
-        F.col("i.is_ltb_avail_cd").alias("is_ltb_avail_new"),
-        F.col("i.ltb_date_cd").alias("ltb_date_new"),
-        F.col("i.supplier_date_to_zero_cd").alias("supplier_date_to_zero_new"),
-        F.col("r.openprs").alias("reltd_ob_pr_new"),
-        F.col("r.duplicate_pr_flag").alias("duplicate_pr_flag_new")
+        F.col("obprtno_key").alias("dup_part_key"),
+        "submitted_date"
     )
-    # Critical for Delta MERGE safety
-    .dropDuplicates(["obprno_upd", "obprtno_upd"])
-)
-
-
-
-
-
-(
-    obprtno_delta.alias("t")
-    .merge(
-        enrichment_src_df.alias("s"),
-        "t.obprno = s.obprno_upd AND t.obprtno = s.obprtno_upd"
-    )
-    .whenMatchedUpdate(set={
-        "part_status": "s.part_status_new",
-        "obpr_state": "s.obpr_state_new",
-        "is_ltb_avail": "s.is_ltb_avail_new",
-        "ltb_date": "s.ltb_date_new",
-        "supplier_date_to_zero": "s.supplier_date_to_zero_new",
-        "reltd_ob_pr": "s.reltd_ob_pr_new",
-        "duplicate_pr_flag": "s.duplicate_pr_flag_new",
-        "last_modified_on": "current_timestamp()"
-    })
-    .execute()
 )
 
 
@@ -67,4 +45,17 @@ enrichment_src_df = (
 
 
 
+duplicatepr_df = (
+    duplicate_parts_df.alias("d")
+    .join(
+        active_iplm_for_dup_df.alias("i"),
+        "dup_part_key",
+        "inner"
+    )
+    .groupBy("dup_part_key")
+    .agg(
+        F.max("submitted_date").alias("latest_submitted_date")
+    )
+)
 
+duplicatepr_df.createOrReplaceTempView("vw_duplicatepr")
