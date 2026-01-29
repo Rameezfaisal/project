@@ -1,13 +1,54 @@
-removed_pairs_df = (
-    target_df.alias("t")
+Cell 8 — Build RLTDPRS (Detect Parts in Multiple Active OBPRs)
+Business Purpose:
+Identify parts that appear in more than one active OB Problem Report.
+This helps flag duplicate investigations and links related PR numbers.
+
+
+
+
+
+
+
+
+active_iplm_df = (
+    iplm_obsolete_df
+    .filter(
+        (F.col("state_cd").isin(active_states)) |
+        (F.col("disposition_cd").isin(active_dispositions))
+    )
+    .select(
+        "obprno_key",
+        "obprtno_key"
+    )
+    .dropDuplicates()
+)
+
+
+
+
+
+omat_keys_df = (
+    omat_view_df_raw
+    .select(
+        F.col("obprno").alias("omat_obprno"),
+        F.col("obprtno").alias("omat_obprtno")
+    )
+    .dropDuplicates()
+)
+
+duplicate_pairs_df = (
+    active_iplm_df.alias("a")
     .join(
-        active_iplm_keys_df.alias("s"),
-        (F.col("t.t_obprno") == F.col("s.obprno_key_chk")) &
-        (F.col("t.t_obprtno") == F.col("s.obprtno_key_chk")),
-        "left_anti"
+        omat_keys_df.alias("b"),
+        (F.col("a.obprtno_key") == F.col("b.omat_obprtno")) &   # ❌ wait wrong col?
+        (F.col("a.obprno_key") != F.col("b.omat_obprno")),      # different PR
+        "inner"
     )
-    # 🔴 CRITICAL: ensure 1 row per key for MERGE safety
-    .dropDuplicates(["t_obprno", "t_obprtno"])
+    .select(
+        F.col("a.obprtno_key").alias("part_name_dup"),
+        F.col("a.obprno_key").alias("related_pr")
+    )
+    .dropDuplicates()
 )
 
 
@@ -15,18 +56,13 @@ removed_pairs_df = (
 
 
 
-
-(
-    obprtno_delta.alias("t")
-    .merge(
-        removed_pairs_df.alias("r"),
-        "t.obprno = r.t_obprno AND t.obprtno = r.t_obprtno"
+rltdprs_df = (
+    duplicate_pairs_df
+    .groupBy("part_name_dup")
+    .agg(
+        F.concat_ws(",", F.collect_set("related_pr")).alias("openprs"),
+        F.lit("Yes").alias("duplicate_pr_flag")
     )
-    .whenMatchedUpdate(set={
-        "obpr_state": f"'{closed_state}'",
-        "last_modified_on": "current_timestamp()"
-    })
-    .execute()
 )
 
 
@@ -34,3 +70,4 @@ removed_pairs_df = (
 
 
 
+rltdprs_df.createOrReplaceTempView("vw_rltdprs")
