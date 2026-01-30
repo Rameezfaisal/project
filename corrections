@@ -1,62 +1,78 @@
-# Active PRs in iPLM that are Obsolete Components and NOT CLOSED
-active_pr_parts_df = (
-    iplm_df_raw
-    .filter(F.upper(F.col("reason")) == obsolete_reason)
-    .withColumn("state_cd", F.upper(F.col("state")))
-    .withColumn("disposition_cd", F.upper(F.col("disposition")))
-    .filter(
-        (F.col("state_cd") != closed_state) &
-        (
-            F.col("state_cd").isin(active_states) |
-            F.col("disposition_cd").isin(active_dispositions)
-        )
-    )
+# Source dataset for terminal-state updates
+terminal_state_df = (
+    iplm_obsolete_df
+    .filter(~F.col("state_cd").isin(active_states))  # NOT in active workflow states
     .select(
-        F.col("name").alias("obprno_key"),
-        F.col("part_name").alias("obprtno_key")
+        F.col("obprno_key").alias("obprno_upd"),
+        F.col("obprtno_key").alias("obprtno_upd"),
+        F.col("state_cd").alias("new_obpr_state")
     )
     .dropDuplicates()
 )
 
-# OMAT existing PR-Part combinations
-omat_pairs_df = (
-    omat_view_df_raw
+# Register as temp view for SQL usage
+terminal_state_df.createOrReplaceTempView("stg_terminal_state_updates")
+
+# Execute Merge via Spark SQL
+spark.sql(f"""
+    MERGE INTO {tgt_obprtno_dtls_tbl} t
+    USING stg_terminal_state_updates s
+    ON t.obprno = s.obprno_upd AND t.obprtno = s.obprtno_upd
+    WHEN MATCHED THEN UPDATE SET
+        obpr_state = s.new_obpr_state,
+        last_modified_on = current_timestamp()
+""")
+
+
+
+
+
+
+
+
+
+
+
+
+active_iplm_keys_df = (
+    iplm_obsolete_df
     .select(
-        F.col("obprno").alias("omat_obprno"),
-        F.col("obprtno").alias("omat_obprtno")
+        F.col("obprno_key").alias("obprno_key_chk"),
+        F.col("obprtno_key").alias("obprtno_key_chk")
     )
     .dropDuplicates()
 )
 
-# Find same part in other PRs
-duplicate_pairs_df = (
-    active_pr_parts_df.alias("a")
+target_df = spark.table(tgt_obprtno_dtls_tbl) \
+    .select(
+        F.col("obprno").alias("t_obprno"),
+        F.col("obprtno").alias("t_obprtno")
+    )
+
+removed_pairs_df = (
+    target_df.alias("t")
     .join(
-        omat_pairs_df.alias("b"),
-        (F.col("a.obprtno_key") == F.col("b.omat_obprtno")) &
-        (F.col("a.obprno_key") != F.col("b.omat_obprno")),
-        "inner"
+        active_iplm_keys_df.alias("s"),
+        (F.col("t.t_obprno") == F.col("s.obprno_key_chk")) &
+        (F.col("t.t_obprtno") == F.col("s.obprtno_key_chk")),
+        "left_anti"
     )
-    .select(
-        F.col("a.obprtno_key").alias("part_name_dup"),
-        F.col("a.obprno_key").alias("related_pr")
-    )
+    .select("t_obprno", "t_obprtno")
+    .dropDuplicates()
 )
 
-rltdprs_df = (
-    duplicate_pairs_df
-    .groupBy("part_name_dup")
-    .agg(
-        F.concat_ws(",", F.collect_list("related_pr")).alias("openprs"),
-        F.lit("Yes").alias("duplicate_pr_flag")
-    )
-)
+# Register as temp view for SQL usage
+removed_pairs_df.createOrReplaceTempView("stg_removed_pairs")
 
-rltdprs_df.createOrReplaceTempView("vw_rltdprs")
-
-
-
-
+# Execute Merge via Spark SQL
+spark.sql(f"""
+    MERGE INTO {tgt_obprtno_dtls_tbl} t
+    USING stg_removed_pairs s
+    ON t.obprno = s.t_obprno AND t.obprtno = s.t_obprtno
+    WHEN MATCHED THEN UPDATE SET
+        obpr_state = '{closed_state}',
+        last_modified_on = current_timestamp()
+""")
 
 
 
@@ -103,24 +119,24 @@ enrichment_src_df = (
     .dropDuplicates(["obprno_upd", "obprtno_upd"])
 )
 
-(
-    obprtno_delta.alias("t")
-    .merge(
-        enrichment_src_df.alias("s"),
-        "t.obprno = s.obprno_upd AND t.obprtno = s.obprtno_upd"
-    )
-    .whenMatchedUpdate(set={
-        "part_status": "s.part_status_new",
-        "obpr_state": "s.obpr_state_new",
-        "is_ltb_avail": "s.is_ltb_avail_new",
-        "ltb_date": "s.ltb_date_new",
-        "supplier_date_to_zero": "s.supplier_date_to_zero_new",
-        "reltd_ob_pr": "s.reltd_ob_pr_new",
-        "duplicate_pr_flag": "s.duplicate_pr_flag_new",
-        "last_modified_on": "current_timestamp()"
-    })
-    .execute()
-)
+# Register as temp view for SQL usage
+enrichment_src_df.createOrReplaceTempView("stg_enrichment_src")
+
+# Execute Merge via Spark SQL
+spark.sql(f"""
+    MERGE INTO {tgt_obprtno_dtls_tbl} t
+    USING stg_enrichment_src s
+    ON t.obprno = s.obprno_upd AND t.obprtno = s.obprtno_upd
+    WHEN MATCHED THEN UPDATE SET
+        part_status = s.part_status_new,
+        obpr_state = s.obpr_state_new,
+        is_ltb_avail = s.is_ltb_avail_new,
+        ltb_date = s.ltb_date_new,
+        supplier_date_to_zero = s.supplier_date_to_zero_new,
+        reltd_ob_pr = s.reltd_ob_pr_new,
+        duplicate_pr_flag = s.duplicate_pr_flag_new,
+        last_modified_on = current_timestamp()
+""")
 
 
 
@@ -132,85 +148,28 @@ enrichment_src_df = (
 
 
 
-
-duplicate_parts_df = (
-    spark.table(tgt_obprtno_dtls_tbl)
-    .filter(F.col("reltd_ob_pr").isNotNull() & (F.length(F.col("reltd_ob_pr")) > 0))
-    .filter(F.col("obprtno") != "NA")
-    .select(F.col("obprtno").alias("dup_part_key"))
-    .dropDuplicates()
-)
-
-active_iplm_for_dup_df = (
-    iplm_df_raw
-    .filter(F.upper(F.col("reason")) == obsolete_reason)
-    .withColumn("state_cd", F.upper(F.col("state")))
-    .withColumn("disposition_cd", F.upper(F.col("disposition")))
-    .filter(
-        (F.col("state_cd") != closed_state) &
-        (
-            F.col("state_cd").isin(active_states) |
-            F.col("disposition_cd").isin(active_dispositions)
-        )
-    )
+ltb_update_src_df = (
+    ltbinfo_df
     .select(
-        F.col("part_name").alias("dup_part_key"),
-        "submitted_date"
-    )
-)
-
-duplicatepr_df = (
-    duplicate_parts_df.alias("d")
-    .join(active_iplm_for_dup_df.alias("i"), "dup_part_key")
-    .groupBy("dup_part_key")
-    .agg(F.max("submitted_date").alias("latest_submitted_date"))
-)
-
-duplicatepr_df.createOrReplaceTempView("vw_duplicatepr")
-
-
-
-
-
-
-
-
-
-
-
-ltbinfo_df = (
-    iplm_df_raw
-    .filter(F.upper(F.col("reason")) == obsolete_reason)
-    .withColumn("state_cd", F.upper(F.col("state")))
-    .withColumn("disposition_cd", F.upper(F.col("disposition")))
-    .filter(
-        (F.col("part_name") != "NA") &
-        (F.col("state_cd") != closed_state) &
-        (
-            F.col("state_cd").isin(active_states) |
-            F.col("disposition_cd").isin(active_dispositions)
-        )
-    )
-    .select(
-        F.col("part_name").alias("ltb_part_key"),
-        "submitted_date",
-        F.col("is_the_last_time_buy_available").alias("is_ltb_avail_new"),
-        F.col("ob_last_buy_date").alias("ltb_date_new"),
-        F.col("lrc_suppliers_date_to_zero_inventory").alias("supplier_date_to_zero_new")
-    )
-    .join(
-        duplicatepr_df.alias("d"),
-        (F.col("ltb_part_key") == F.col("d.dup_part_key")) &
-        (F.col("submitted_date") == F.col("latest_submitted_date")),
-        "inner"
-    )
-    .select(
-        "ltb_part_key",
+        F.col("ltb_part_key").alias("obprtno_upd"),
         "is_ltb_avail_new",
         "ltb_date_new",
         "supplier_date_to_zero_new"
     )
-    .dropDuplicates(["ltb_part_key"])
+    .dropDuplicates(["obprtno_upd"])
 )
 
-ltbinfo_df.createOrReplaceTempView("vw_ltbinfo")
+# Register as temp view for SQL usage
+ltb_update_src_df.createOrReplaceTempView("stg_ltb_updates")
+
+# Execute Merge via Spark SQL
+spark.sql(f"""
+    MERGE INTO {tgt_obprtno_dtls_tbl} t
+    USING stg_ltb_updates s
+    ON t.obprtno = s.obprtno_upd
+    WHEN MATCHED THEN UPDATE SET
+        is_ltb_avail = s.is_ltb_avail_new,
+        ltb_date = s.ltb_date_new,
+        supplier_date_to_zero = s.supplier_date_to_zero_new,
+        last_modified_on = current_timestamp()
+""")
