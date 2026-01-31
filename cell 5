@@ -1,10 +1,16 @@
 # #### Step-4 -- Creating NHALIST Temp table (Optimized)
-# Optimization: Cache this table. It is used 9 times. Caching prevents 9 re-scans.
 
+# 1. Increase Broadcast Threshold to 200MB (Default is 10MB)
+# Since nhalist has ~625k rows, it is likely around 50-70MB. This config enables Broadcast join.
+spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "209715200") 
+
+# 2. Cache the list. 
+# It is used 9 times. Caching prevents 9 separate reads/computations.
 nhalist = nha.select("cmpprtno", "nha").distinct().cache()
 
-# Force materialization to ensure it's in memory before heavy processing starts
-print(f"Items to process: {nhalist.count()}")
+# 3. Force materialization so we don't wait for it later
+count = nhalist.count()
+print(f"Items to process: {count}")
 
 
 
@@ -14,11 +20,10 @@ print(f"Items to process: {nhalist.count()}")
 
 
 
-# #### Step-5 -- Calculating Manufacturing 3-year Consumption (Optimized)
-
+# Example: Step-5 (Apply this pattern to mfg12m, mfg5y, sprsdmd, etc.)
 mfg3 = (
     mseg.join(mkpf, "mblnr")
-        # OPTIMIZATION: Broadcast the small nhalist
+        # Optimization: Explicitly broadcast the cached 625k rows
         .join(F.broadcast(nhalist), mseg.matnr == nhalist.nha) 
         .filter(
             (mseg.bwart.isin("261","262")) &
@@ -36,6 +41,66 @@ mfg3 = (
 
 
 
-# Clean up memory
-spark.sql(f""" INSERT INTO ... """) # (Your insert SQL)
+
+# #### Step-11 -- Final Optimized Insert
+# Optimization: Single Scan (No Union) + Explicit Casting
+
+base = (
+    nhalist.alias("a")
+    .join(mfg3.alias("b"), nhalist.nha == mfg3.nha_cd, "left")
+    .join(mfgdmd.alias("c"), nhalist.nha == mfgdmd.nha_cd, "left")
+    .join(sprsdmd.alias("d"), nhalist.nha == sprsdmd.nha_cd, "left")
+    .join(sprs3.alias("e"), nhalist.nha == sprs3.nha_cd, "left")
+    .join(mfg12m.alias("f"), nhalist.nha == mfg12m.nha_cd, "left")
+    .join(lamqoh.alias("g"), nhalist.nha == lamqoh.nha_cd, "left")
+    .join(openpo.alias("h"), nhalist.nha == openpo.nha_cd, "left")
+    .join(mfg5y.alias("i"), nhalist.nha == mfg5y.nha_cd, "left")
+    .join(sprs5y.alias("j"), nhalist.nha == sprs5y.nha_cd, "left")
+    .select(
+        nhalist.cmpprtno.alias("cmpprtno"),
+        nhalist.nha.alias("nha"),
+        # Explicit Casts to INT to avoid Schema Mismatch failures
+        F.col("b.mfg_3yrs_consumption").cast("int"),
+        F.col("c.mfg_dmd").cast("int"),
+        F.col("d.sprs_dmd").cast("int"),
+        F.col("e.sprs_3yrs_consumption").cast("int"),
+        F.col("f.mfg_12mnths_consumption").cast("int"),
+        F.col("g.lamqoh").cast("int"),
+        F.col("g.restricted_all_stock").cast("int"),
+        F.col("h.open_po_qty").cast("int"),
+        F.col("i.mfg_5yrs_consumption").cast("int"),
+        F.col("j.sprs_5yrs_consumption").cast("int")
+    )
+)
+
+# Single Filter Logic (Replaces the slow Union)
+final = base.filter(
+    (F.col("cmpprtno") == F.col("nha")) |
+    (
+        (F.coalesce(F.col("mfg_3yrs_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("mfg_dmd"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("sprs_dmd"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("sprs_3yrs_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("mfg_12mnths_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("open_po_qty"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("mfg_5yrs_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("sprs_5yrs_consumption"), F.lit(0)) > 0)
+    )
+).withColumn("last_modified_on", F.current_date())
+
+final.createOrReplaceTempView("final_dmd")
+
+spark.sql(f"""
+INSERT INTO {tgt_dmd}
+(cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
+ mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
+ last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption)
+SELECT 
+ cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
+ mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
+ last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption
+FROM final_dmd
+""")
+
+# Clean up
 nhalist.unpersist()
