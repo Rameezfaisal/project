@@ -1,4 +1,34 @@
-1. Rows passing initial filters (Candidates): 8383
-2. Candidates already found in OMAT (Matches): 8510
-3. Expected 'New' Rows (Candidates - Matches): -127
->> CONCLUSION: There is a join/filter issue in the main Step 4 logic.
+# -------------------------------------------------------------------------
+# FIXED STEP 4: Identify New OBPRs (Using Left Anti Join)
+# -------------------------------------------------------------------------
+
+# 1. Prepare Source Candidates (Filter logic)
+candidates_df = (
+    df_iplm
+    .filter(F.col("part_name") != "NA")
+    .filter(F.upper("state") != "CLOSED")
+    .filter(
+        (F.upper("state").isin("CONFIRMED","IN REVIEW","IN WORK")) |
+        (F.upper("disposition").isin("CONFIRMED","DEFER"))
+    )
+    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
+)
+
+# 2. Perform Anti Join
+# "Left Anti" returns only rows from candidates_df that DO NOT exist in df_omat_src.
+# It safely ignores duplicates in the target table.
+obprlst_df = (
+    candidates_df.alias("src")
+    .join(
+        df_omat_src.alias("tgt"),
+        (F.col("src.name") == F.col("tgt.obprno")) &
+        (F.col("src.part_name") == F.col("tgt.obprtno")),
+        "left_anti" 
+    )
+    .select(F.col("src.name").alias("ob_prno"))
+    .distinct()
+    .withColumn("id", F.dense_rank().over(Window.orderBy("ob_prno")))
+    # .limit(weekly_limit) 
+)
+
+obprlst_df.createOrReplaceTempView("obprlst")
