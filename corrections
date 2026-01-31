@@ -1,3 +1,39 @@
-Fabric Source NHA Count: 9051
-SAP Target Count: 12263
-Difference: 3212
+# #### Step-12 — Write to OMAT Tables + Log Execution
+
+# 1. Final dataset
+# Add dropDuplicates(["nha"]) to ensure strict 1-to-1 parity with SAP
+df_final = spark.table("stage7_final_suppliers").dropDuplicates(["nha"]) 
+
+# 2. Replace target table (full refresh)
+(
+    df_final
+    .select(
+        "nha",
+        "omat_selected_plant",
+        "omat_selected_supplier",
+        "omat_selected_suppliercd",
+        "suppcd_1050",
+        "suppcd_1060",
+        "suppcd_1090",
+        "suppcd_1900",
+        "suppcd_2000",
+        "suppcd_3120",
+        "suppcd_po1",
+        "suppcd_po2",
+        "suppcd_pr",
+        "suppname_1050",
+        "suppname_1060",
+        "suppname_1090",
+        "suppname_1900",
+        "suppname_2000",
+        "suppname_3120",
+        "suppname_po1",
+        "suppname_po2",
+        "suppname_pr"
+    )
+    .write
+    .mode("overwrite")
+    .format("delta")
+    .option("overwriteSchema", "true")
+    .saveAsTable(tgt_suppliers_tbl)
+)
