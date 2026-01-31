@@ -1,34 +1,41 @@
 # -------------------------------------------------------------------------
-# FIXED STEP 4: Identify New OBPRs (Using Left Anti Join)
+# STEP 6 (Fixed): Insert Execution Log (Handles 0-row case)
 # -------------------------------------------------------------------------
 
-# 1. Prepare Source Candidates (Filter logic)
-candidates_df = (
-    df_iplm
-    .filter(F.col("part_name") != "NA")
-    .filter(F.upper("state") != "CLOSED")
-    .filter(
-        (F.upper("state").isin("CONFIRMED","IN REVIEW","IN WORK")) |
-        (F.upper("disposition").isin("CONFIRMED","DEFER"))
-    )
-    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
-)
+# 1. Calculate the metrics into variables first
+#    This forces the count to happen regardless of whether rows exist.
+row_counts = spark.sql("""
+    SELECT 
+        COUNT(DISTINCT ob_prtno) as part_cnt, 
+        COUNT(DISTINCT ob_prno)  as pr_cnt
+    FROM obprdtls
+""").collect()[0]
 
-# 2. Perform Anti Join
-# "Left Anti" returns only rows from candidates_df that DO NOT exist in df_omat_src.
-# It safely ignores duplicates in the target table.
-obprlst_df = (
-    candidates_df.alias("src")
-    .join(
-        df_omat_src.alias("tgt"),
-        (F.col("src.name") == F.col("tgt.obprno")) &
-        (F.col("src.part_name") == F.col("tgt.obprtno")),
-        "left_anti" 
-    )
-    .select(F.col("src.name").alias("ob_prno"))
-    .distinct()
-    .withColumn("id", F.dense_rank().over(Window.orderBy("ob_prno")))
-    # .limit(weekly_limit) 
-)
+part_count = row_counts['part_cnt']
+# Note: For the 'Program Name' suffix, if there are no PRs, we use 'None' or 'No Data'
+first_pr = spark.sql("SELECT first(ob_prno) as pr FROM obprdtls").collect()[0]['pr']
+pr_suffix = first_pr if first_pr else "No_New_Data"
 
-obprlst_df.createOrReplaceTempView("obprlst")
+# 2. Construct the Log Row manually
+#    This guarantees exactly 1 row is always inserted.
+log_data = [Row(
+    executed_on = F.current_timestamp(),
+    obprtno_cnt = part_count,
+    obprtno_nha_cnt = 0,
+    obpr_cnt = row_counts['pr_cnt'], # This comes from the processed details view
+    program_name = f"nb_omat_insert_newobpr_wklyrefresh - {pr_suffix}"
+)]
+
+# 3. Create DataFrame and Insert
+df_log_entry = spark.createDataFrame(log_data)
+
+# Use append to add this single log row to the target Delta table
+df_log_entry.select(
+    F.col("executed_on"),
+    F.col("obprtno_cnt"),
+    F.col("obprtno_nha_cnt"),
+    F.col("obpr_cnt"),
+    F.col("program_name")
+).write.format("delta").mode("append").save(tbl_omat_log_tgt)  # Ensure this path variable is the full path
+
+print("Log entry inserted successfully.")
