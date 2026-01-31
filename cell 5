@@ -1,64 +1,41 @@
-# #### Step-11 -- Final Optimized Insert
-# Performance Fix: Replaced UNION with single OR filter to prevent double-scanning 'base'.
-# Schema Fix: Explicitly cast all metrics to INT to match target DDL.
+# #### Step-4 -- Creating NHALIST Temp table (Optimized)
+# Optimization: Cache this table. It is used 9 times. Caching prevents 9 re-scans.
 
-# 1. Define the selection with explicit Casting to INT
-base = (
-    nhalist.alias("a")
-    .join(mfg3.alias("b"), nhalist.nha == mfg3.nha_cd, "left")
-    .join(mfgdmd.alias("c"), nhalist.nha == mfgdmd.nha_cd, "left")
-    .join(sprsdmd.alias("d"), nhalist.nha == sprsdmd.nha_cd, "left")
-    .join(sprs3.alias("e"), nhalist.nha == sprs3.nha_cd, "left")
-    .join(mfg12m.alias("f"), nhalist.nha == mfg12m.nha_cd, "left")
-    .join(lamqoh.alias("g"), nhalist.nha == lamqoh.nha_cd, "left")
-    .join(openpo.alias("h"), nhalist.nha == openpo.nha_cd, "left")
-    .join(mfg5y.alias("i"), nhalist.nha == mfg5y.nha_cd, "left")
-    .join(sprs5y.alias("j"), nhalist.nha == sprs5y.nha_cd, "left")
-    .select(
-        nhalist.cmpprtno.alias("cmpprtno"),
-        nhalist.nha.alias("nha"),
-        # CAST metrics to INT to match DDL
-        F.col("b.mfg_3yrs_consumption").cast("int"),
-        F.col("c.mfg_dmd").cast("int"),
-        F.col("d.sprs_dmd").cast("int"),
-        F.col("e.sprs_3yrs_consumption").cast("int"),
-        F.col("f.mfg_12mnths_consumption").cast("int"),
-        F.col("g.lamqoh").cast("int"),
-        F.col("g.restricted_all_stock").cast("int"),
-        F.col("h.open_po_qty").cast("int"),
-        F.col("i.mfg_5yrs_consumption").cast("int"),
-        F.col("j.sprs_5yrs_consumption").cast("int")
-    )
+nhalist = nha.select("cmpprtno", "nha").distinct().cache()
+
+# Force materialization to ensure it's in memory before heavy processing starts
+print(f"Items to process: {nhalist.count()}")
+
+
+
+
+
+
+
+
+
+# #### Step-5 -- Calculating Manufacturing 3-year Consumption (Optimized)
+
+mfg3 = (
+    mseg.join(mkpf, "mblnr")
+        # OPTIMIZATION: Broadcast the small nhalist
+        .join(F.broadcast(nhalist), mseg.matnr == nhalist.nha) 
+        .filter(
+            (mseg.bwart.isin("261","262")) &
+            (mkpf.bldat > F.date_sub(today, 365*3))
+        )
+        .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), mseg.matnr.alias("nha_cd"))
+        .agg(F.sum(F.when(mseg.shkzg=="S",-mseg.menge).otherwise(mseg.menge)).alias("mfg_3yrs_consumption"))
 )
 
-# 2. Apply Single Filter (Logic: Row matches if CMPPRTNO=NHA **OR** any Metric > 0)
-# This mimics the SAP UNION DISTINCT logic perfectly but executes in one pass.
 
-final = base.filter(
-    (F.col("cmpprtno") == F.col("nha")) |  # Condition A (Always keep self-matches)
-    (
-        (F.coalesce(F.col("mfg_3yrs_consumption"), F.lit(0)) > 0) |
-        (F.coalesce(F.col("mfg_dmd"), F.lit(0)) > 0) |
-        (F.coalesce(F.col("sprs_dmd"), F.lit(0)) > 0) |
-        (F.coalesce(F.col("sprs_3yrs_consumption"), F.lit(0)) > 0) |
-        (F.coalesce(F.col("mfg_12mnths_consumption"), F.lit(0)) > 0) |
-        (F.coalesce(F.col("open_po_qty"), F.lit(0)) > 0) |
-        (F.coalesce(F.col("mfg_5yrs_consumption"), F.lit(0)) > 0) |
-        (F.coalesce(F.col("sprs_5yrs_consumption"), F.lit(0)) > 0)
-    )
-).withColumn("last_modified_on", F.current_date())
 
-# 3. Create View and Insert
-final.createOrReplaceTempView("final_dmd")
 
-spark.sql(f"""
-INSERT INTO {tgt_dmd}
-(cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
- mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
- last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption)
-SELECT 
- cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
- mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
- last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption
-FROM final_dmd
-""")
+
+
+
+
+
+# Clean up memory
+spark.sql(f""" INSERT INTO ... """) # (Your insert SQL)
+nhalist.unpersist()
