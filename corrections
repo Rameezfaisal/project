@@ -1,1 +1,24 @@
-PySparkTypeError: [CANNOT_INFER_TYPE_FOR_FIELD] Unable to infer the type of the field `executed_on`.
+# -------------------------------------------------------------------------
+# STEP 6 (Fixed): Insert Execution Log (SQL Version)
+# -------------------------------------------------------------------------
+# Aggregation without GROUP BY guarantees 1 row is returned even if source is empty.
+
+spark.sql(f"""
+INSERT INTO {tbl_omat_log_tgt} (
+    executed_on,
+    obprtno_cnt,
+    obprtno_nha_cnt,
+    obpr_cnt,
+    program_name
+)
+SELECT
+    current_timestamp()                                   AS executed_on,
+    COUNT(DISTINCT ob_prtno)                              AS obprtno_cnt,
+    0                                                     AS obprtno_nha_cnt,
+    (SELECT COUNT(*) FROM obprlst)                        AS obpr_cnt,
+    CONCAT(
+        'nb_omat_insert_newobpr_wklyrefresh - ', 
+        COALESCE(MAX(ob_prno), 'No_New_Data')
+    )                                                     AS program_name
+FROM obprdtls
+""")
