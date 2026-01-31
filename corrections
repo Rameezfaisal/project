@@ -1,41 +1,22 @@
-# -------------------------------------------------------------------------
-# STEP 6 (Fixed): Insert Execution Log (Handles 0-row case)
-# -------------------------------------------------------------------------
-
-# 1. Calculate the metrics into variables first
-#    This forces the count to happen regardless of whether rows exist.
-row_counts = spark.sql("""
+# 1. Get stats safely (Count always returns a row, even if 0)
+stats = spark.sql("""
     SELECT 
         COUNT(DISTINCT ob_prtno) as part_cnt, 
-        COUNT(DISTINCT ob_prno)  as pr_cnt
+        COUNT(DISTINCT ob_prno) as pr_cnt,
+        first(ob_prno) as example_pr
     FROM obprdtls
-""").collect()[0]
+""").first()
 
-part_count = row_counts['part_cnt']
-# Note: For the 'Program Name' suffix, if there are no PRs, we use 'None' or 'No Data'
-first_pr = spark.sql("SELECT first(ob_prno) as pr FROM obprdtls").collect()[0]['pr']
-pr_suffix = first_pr if first_pr else "No_New_Data"
-
-# 2. Construct the Log Row manually
-#    This guarantees exactly 1 row is always inserted.
+# 2. Create single log row
 log_data = [Row(
     executed_on = F.current_timestamp(),
-    obprtno_cnt = part_count,
+    obprtno_cnt = stats['part_cnt'],
     obprtno_nha_cnt = 0,
-    obpr_cnt = row_counts['pr_cnt'], # This comes from the processed details view
-    program_name = f"nb_omat_insert_newobpr_wklyrefresh - {pr_suffix}"
+    obpr_cnt = stats['pr_cnt'],
+    program_name = f"nb_omat_insert_newobpr_wklyrefresh - {stats['example_pr'] or 'No_New_Data'}"
 )]
 
-# 3. Create DataFrame and Insert
-df_log_entry = spark.createDataFrame(log_data)
-
-# Use append to add this single log row to the target Delta table
-df_log_entry.select(
-    F.col("executed_on"),
-    F.col("obprtno_cnt"),
-    F.col("obprtno_nha_cnt"),
-    F.col("obpr_cnt"),
-    F.col("program_name")
-).write.format("delta").mode("append").save(tbl_omat_log_tgt)  # Ensure this path variable is the full path
-
-print("Log entry inserted successfully.")
+# 3. Write to table
+spark.createDataFrame(log_data).select(
+    "executed_on", "obprtno_cnt", "obprtno_nha_cnt", "obpr_cnt", "program_name"
+).write.format("delta").mode("append").save(tbl_omat_log_tgt)
