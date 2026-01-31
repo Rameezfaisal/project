@@ -1,36 +1,34 @@
-# #### Step-4 -- Creating NHALIST Temp table (Optimized)
+# #### Step-5 (Consolidated) -- Manufacturing Consumption (12mo, 3yr, 5yr)
+# OPTIMIZATION: Reads MSEG only once instead of 3 times.
 
-# 1. Increase Broadcast Threshold to 200MB (Default is 10MB)
-# Since nhalist has ~625k rows, it is likely around 50-70MB. This config enables Broadcast join.
-spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "209715200") 
-
-# 2. Cache the list. 
-# It is used 9 times. Caching prevents 9 separate reads/computations.
-nhalist = nha.select("cmpprtno", "nha").distinct().cache()
-
-# 3. Force materialization so we don't wait for it later
-count = nhalist.count()
-print(f"Items to process: {count}")
-
-
-
-
-
-
-
-
-
-# Example: Step-5 (Apply this pattern to mfg12m, mfg5y, sprsdmd, etc.)
-mfg3 = (
+mfg_all = (
     mseg.join(mkpf, "mblnr")
-        # Optimization: Explicitly broadcast the cached 625k rows
+        # 1. Broadcast the small nhalist
         .join(F.broadcast(nhalist), mseg.matnr == nhalist.nha) 
         .filter(
             (mseg.bwart.isin("261","262")) &
-            (mkpf.bldat > F.date_sub(today, 365*3))
+            # 2. Filter for the WIDEST date range (5 years)
+            (mkpf.bldat > F.date_sub(today, 365*5))
         )
         .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), mseg.matnr.alias("nha_cd"))
-        .agg(F.sum(F.when(mseg.shkzg=="S",-mseg.menge).otherwise(mseg.menge)).alias("mfg_3yrs_consumption"))
+        .agg(
+            # 3. Use Conditional Sums for narrower ranges
+            F.sum(
+                F.when((mkpf.bldat > F.date_sub(today, 365)) & (mseg.shkzg=="S"), -mseg.menge)
+                 .when((mkpf.bldat > F.date_sub(today, 365)), mseg.menge)
+                 .otherwise(0)
+            ).alias("mfg_12mnths_consumption"),
+            
+            F.sum(
+                F.when((mkpf.bldat > F.date_sub(today, 365*3)) & (mseg.shkzg=="S"), -mseg.menge)
+                 .when((mkpf.bldat > F.date_sub(today, 365*3)), mseg.menge)
+                 .otherwise(0)
+            ).alias("mfg_3yrs_consumption"),
+            
+            F.sum(
+                F.when(mseg.shkzg=="S", -mseg.menge).otherwise(mseg.menge)
+            ).alias("mfg_5yrs_consumption")
+        )
 )
 
 
@@ -40,40 +38,102 @@ mfg3 = (
 
 
 
+# #### Step-6 (Consolidated) -- Mfg & Spares Demand
+# OPTIMIZATION: Reads Forecast table only once.
 
+dmd_cols = ["dmdpd"] + [f"dmd{i}" for i in range(1,27)]
+# Create a single expression to sum all dmd columns
+total_dmd_expr = sum(F.col(c) for c in dmd_cols)
 
-# #### Step-11 -- Final Optimized Insert
-# Optimization: Single Scan (No Union) + Explicit Casting
-
-base = (
-    nhalist.alias("a")
-    .join(mfg3.alias("b"), nhalist.nha == mfg3.nha_cd, "left")
-    .join(mfgdmd.alias("c"), nhalist.nha == mfgdmd.nha_cd, "left")
-    .join(sprsdmd.alias("d"), nhalist.nha == sprsdmd.nha_cd, "left")
-    .join(sprs3.alias("e"), nhalist.nha == sprs3.nha_cd, "left")
-    .join(mfg12m.alias("f"), nhalist.nha == mfg12m.nha_cd, "left")
-    .join(lamqoh.alias("g"), nhalist.nha == lamqoh.nha_cd, "left")
-    .join(openpo.alias("h"), nhalist.nha == openpo.nha_cd, "left")
-    .join(mfg5y.alias("i"), nhalist.nha == mfg5y.nha_cd, "left")
-    .join(sprs5y.alias("j"), nhalist.nha == sprs5y.nha_cd, "left")
-    .select(
-        nhalist.cmpprtno.alias("cmpprtno"),
-        nhalist.nha.alias("nha"),
-        # Explicit Casts to INT to avoid Schema Mismatch failures
-        F.col("b.mfg_3yrs_consumption").cast("int"),
-        F.col("c.mfg_dmd").cast("int"),
-        F.col("d.sprs_dmd").cast("int"),
-        F.col("e.sprs_3yrs_consumption").cast("int"),
-        F.col("f.mfg_12mnths_consumption").cast("int"),
-        F.col("g.lamqoh").cast("int"),
-        F.col("g.restricted_all_stock").cast("int"),
-        F.col("h.open_po_qty").cast("int"),
-        F.col("i.mfg_5yrs_consumption").cast("int"),
-        F.col("j.sprs_5yrs_consumption").cast("int")
+demand_all = (
+    forecast
+    .join(F.broadcast(nhalist), forecast.matnr == nhalist.nha, "inner")
+    .filter(
+        (forecast.werks == "COMB") &
+        (forecast.rowtype.isin("06", "07")) # Filter for both types
+    )
+    .groupBy(
+        nhalist.cmpprtno.alias("cmpprtno_cd"),
+        forecast.matnr.alias("nha_cd")
+    )
+    .agg(
+        # Conditional Sum based on Row Type
+        F.sum(F.when(forecast.rowtype == "06", total_dmd_expr).otherwise(0)).alias("mfg_dmd"),
+        F.sum(F.when(forecast.rowtype == "07", total_dmd_expr).otherwise(0)).alias("sprs_dmd")
     )
 )
 
-# Single Filter Logic (Replaces the slow Union)
+
+
+
+
+
+
+
+
+# #### Step-8 (Consolidated) -- Spares Consumption (3yr, 5yr)
+# OPTIMIZATION: Reads Spares table only once.
+
+sprs_all = (
+    spares
+    .join(F.broadcast(nhalist), spares.material == nhalist.nha, "inner")
+    .filter(
+        (spares.source_doc != "STO") &
+        (spares.order_type.isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")) &
+        # Filter for widest range (5 years)
+        (spares.actual_gi > F.date_sub(F.current_date(), 365*5))
+    )
+    .groupBy(
+        nhalist.cmpprtno.alias("cmpprtno_cd"),
+        spares.material.alias("nha_cd")
+    )
+    .agg(
+        F.sum(
+            F.when(spares.actual_gi > F.date_sub(F.current_date(), 365*3), spares.qty_shipped)
+             .otherwise(0)
+        ).alias("sprs_3yrs_consumption"),
+        
+        F.sum(spares.qty_shipped).alias("sprs_5yrs_consumption")
+    )
+)
+
+
+
+
+
+
+
+
+
+# #### Step-11 -- Final Consolidated Insert
+
+base = (
+    nhalist.alias("a")
+    .join(mfg_all.alias("b"), nhalist.nha == mfg_all.nha_cd, "left")
+    .join(demand_all.alias("c"), nhalist.nha == demand_all.nha_cd, "left")
+    .join(sprs_all.alias("d"), nhalist.nha == sprs_all.nha_cd, "left")
+    .join(lamqoh.alias("g"), nhalist.nha == lamqoh.nha_cd, "left")
+    .join(openpo.alias("h"), nhalist.nha == openpo.nha_cd, "left")
+    .select(
+        nhalist.cmpprtno.alias("cmpprtno"),
+        nhalist.nha.alias("nha"),
+        # MFG Metrics (From mfg_all)
+        F.col("b.mfg_3yrs_consumption").cast("int"),
+        F.col("b.mfg_12mnths_consumption").cast("int"),
+        F.col("b.mfg_5yrs_consumption").cast("int"),
+        # Demand Metrics (From demand_all)
+        F.col("c.mfg_dmd").cast("int"),
+        F.col("c.sprs_dmd").cast("int"),
+        # Spares Metrics (From sprs_all)
+        F.col("d.sprs_3yrs_consumption").cast("int"),
+        F.col("d.sprs_5yrs_consumption").cast("int"),
+        # QOH & PO (Unchanged)
+        F.col("g.lamqoh").cast("int"),
+        F.col("g.restricted_all_stock").cast("int"),
+        F.col("h.open_po_qty").cast("int")
+    )
+)
+
 final = base.filter(
     (F.col("cmpprtno") == F.col("nha")) |
     (
@@ -90,17 +150,7 @@ final = base.filter(
 
 final.createOrReplaceTempView("final_dmd")
 
+# (Keep your existing INSERT SQL statement here)
 spark.sql(f"""
-INSERT INTO {tgt_dmd}
-(cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
- mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
- last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption)
-SELECT 
- cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
- mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
- last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption
-FROM final_dmd
+INSERT INTO {tgt_dmd} ...
 """)
-
-# Clean up
-nhalist.unpersist()
