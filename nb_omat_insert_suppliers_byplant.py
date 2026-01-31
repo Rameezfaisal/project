@@ -28,26 +28,92 @@
 #        - Load Type: Incremental append. Logs OMAT system activities.
 # 
 
-# In[8]:
+# In[1]:
 
 
-from silketl import SqlDatabaseConnector, get_workspace_name, preload, load_data, postload,json,current_workspace_name
+from pyspark.sql import Row
+from pyspark.sql import functions as F
+from delta.tables import DeltaTable
+ 
+import com.microsoft.spark.fabric
+from com.microsoft.spark.fabric.Constants import Constants
+ 
+from silketl import SqlDatabaseConnector, get_workspace_name, preload, load_data, postload,json,current_workspace_name, get_workspaceid_by_name
 
 
-# In[9]:
+# In[2]:
 
 
-# project_code = 'p2f_ome' 
-# ##FTR meaning feauture workspace
-# exec_env = 'FTR'
-# job_id = '' 
-# task_id = '' 
-# env = ''
+project_code = 'eng_omat'
+job_id = '123'
+task_id = '14704'
+env = 'FTR'
+ 
+
+
+# In[ ]:
+
+
+# sql_db = SqlDatabaseConnector(env)
+# sql_query = f"select * from config.vw_transform_egress_ingress_mapping where transform_egress_id = ? and project_code = ?"
+# object_df = sql_db.execute(sql_query,(task_id,project_code))
+# display(object_df)
+ 
+
+
+# In[ ]:
+
+
+# tgt_system_properties = json.loads(object_df['TGT_SYSTEM_PROPERTIES'][0])
+# # tgt_dt_workspacename = get_workspace_name(workspace_name = tgt_system_properties['workspaceName'])
+# tgt_dt_workspacename = tgt_system_properties['workspaceName']
+# src_dt_workspace_id = get_workspaceid_by_name(tgt_dt_workspacename)
+# print(tgt_dt_workspacename)
+# print(src_dt_workspace_id)
+ 
+
+
+# In[ ]:
+
+
+# schema_name = str(object_df['TGT_SCHEMA_NAME'][0])
+# delta_table_name = str(object_df['TGT_TABLE_NAME'][0])
+ 
+workspace = current_workspace_name
+s_workspace = current_workspace_name
+t_workspace = workspace.replace("_da_", "_dt_")
+ 
+# cat_mdm = workspace.replace("_da_", "_dt_")
+ 
+ 
+t_lakehouse = "lhg_glb.eng"
+s_lakehouse = "lhg_glb.eng"
+ 
+ 
+lh_sch_mdm = "lhg_glb.mdm"
+lh_sch_ecc = "lhs_glb.ecc"
+lh_sch_s4h = "lhs_glb.s4h"
+lh_sch_eng = "lhg_glb.eng"
+ 
+ 
+ 
+# lakehousename = str(object_df['TGT_SYSTEM_CODE'][0])
+ 
+# target_path = (
+# f"abfss://{dt_workspace}@onelake.dfs.fabric.microsoft.com/"
+# f"{lakehousename}.Lakehouse/Tables/{schema_name}/{delta_table_name}")
+ 
+# stg_target_path = (
+# f"abfss://{dt_workspace}@onelake.dfs.fabric.microsoft.com/"
+# f"{lakehousename}.Lakehouse/Tables/{schema_name}/{delta_table_name}_stg")
+ 
+# fqn_target_table = f"{dt_workspace}.{lakehousename}.{schema_name}.{delta_table_name}"
+ 
 
 
 # #### Step-1 -- Imports
 
-# In[10]:
+# In[3]:
 
 
 from pyspark.sql import functions as F
@@ -58,7 +124,7 @@ from delta.tables import DeltaTable
 
 # ##### Helper Functionn for Union
 
-# In[11]:
+# In[4]:
 
 
 from pyspark.sql.utils import AnalysisException
@@ -100,7 +166,7 @@ def read_union_fast(table_key: str):
 # #### Step-2 -- Parameterize (source/target)
 # 
 
-# In[12]:
+# In[5]:
 
 
 # Initialize union mapping
@@ -126,7 +192,7 @@ tgt_nha         = "lhs_glb.eng.rpt_omat_obpn_buy_nha_dtls"
 tgt_log         = "lhs_glb.eng.rpt_omat_log_dtls"
 
 
-# In[13]:
+# In[6]:
 
 
 # # Source tables
@@ -144,7 +210,7 @@ tgt_log         = "lhs_glb.eng.rpt_omat_log_dtls"
 
 # #### Step-3  -- Read Sources at DataFrames
 
-# In[14]:
+# In[7]:
 
 
 # df_nha_src   = spark.read.table(src_nha)
@@ -158,7 +224,7 @@ tgt_log         = "lhs_glb.eng.rpt_omat_log_dtls"
 
 # ---- Direct non-ECC/S4H tables ----
 df_nha_src  = spark.table("lhs_glb.omat_test.rpt_omat_obpn_buy_nha_dtls")
-df_inforec  = spark.table("wsf_silk_glb_dt_qa.lhg_glb.eng.rpt_inforec_data_sched")
+df_inforec  = spark.table("wsf_silk_glb_da_dev.lhs_glb.alex.zt_inforec_data_sched")
 df_dmd      = spark.table("lhs_glb.omat_test.rpt_omat_dmd_consumption_dtls")
 df_pr       = spark.table("lhs_glb.eng.stg_omat_iplm_problem_report_part")
 
@@ -169,12 +235,15 @@ df_po_hist  = read_union_fast("zpo_hstry")
 df_ekpo     = read_union_fast("ekpo")
 
 
+# _SYS_BIC."prd.gops.OMAT/CV_OMAT_BUYNHA_SUPPLIERS_PLANT"
+
+
 # #### Step-4 -- NHALIST - Temp Table
 # 
 # Reads rpt_omat_obpn_buy_nha_dtls and creates the working list of unprocessed NHA + component part numbers.
 # 
 
-# In[15]:
+# In[8]:
 
 
 df_nha = (
@@ -196,7 +265,7 @@ df_nha.createOrReplaceTempView("nha_list")
 # - Reads INFOREC and filters only valid, MRP-preferred suppliers per plant (1900, 2000, 3120, 1050, 1060, 1090 + fallback plants).
 # - Fallback plants are the backup plants used when the plant has no direct supplier in INFOREC.
 
-# In[16]:
+# In[9]:
 
 
 def inforec_df(plant):
@@ -206,7 +275,7 @@ def inforec_df(plant):
             (F.col("mrp") == "1") &
             (F.col("plant") == plant) &
             (~F.col("supcat").isin("A05","A08","A15")) &
-            F.col("supcode").isNotNull()
+            (F.length(F.trim(F.col("supcode"))) > 0)
         )
         .select(
             F.col("material").alias("nha_cd"),
@@ -233,7 +302,7 @@ i1020 = inforec_df("1020")
 # - Resolve preferred suppliers per NHA (broadcast joins)
 # - Joins NHALIST to all INFOREC plant datasets using broadcast to determine the best supplier per plant.
 
-# In[17]:
+# In[10]:
 
 
 df_sup = (
@@ -273,11 +342,29 @@ df_sup = (
 # - Insert new NHA supplier rows into Delta
 # - Writes the resolved supplier-per-plant data into rpt_omat_buynha_suppliers_plants using skew-safe Delta insert (works if table is empty or not).
 
-# In[18]:
+# In[11]:
 
 
+# Read existing target NHAs
+df_existing_nha = (
+    spark.read.table(tgt_suppliers)
+    .select("nha")
+    .distinct()
+)
+
+# Anti-join: NHAs not yet present in target
+df_sup_new = (
+    df_sup.alias("s")
+    .join(
+        df_existing_nha.alias("t"),
+        F.col("s.nha_cd") == F.col("t.nha"),
+        "left_anti"
+    )
+)
+
+# Prepare insert dataset
 df_insert = (
-    df_sup
+    df_sup_new
     .select(
         F.col("nha_cd").alias("nha"),
 
@@ -291,12 +378,10 @@ df_insert = (
     .filter(F.col("nha").isNotNull())
 )
 
-# --- Critical: range distribute before Delta write ---
-df_insert_balanced = (
-    df_insert
-    .repartitionByRange(300, "nha")   # 300 Fabric shuffle partitions
-)
+# Optional but good for Fabric scale
+df_insert_balanced = df_insert.repartitionByRange(300, "nha")
 
+# Insert
 (
     df_insert_balanced
     .write
@@ -304,6 +389,7 @@ df_insert_balanced = (
     .format("delta")
     .saveAsTable(tgt_suppliers)
 )
+
 
 
 # #### Step-8 -- EORD Supplier Back-fill
@@ -316,13 +402,18 @@ df_insert_balanced = (
 # Applies SAP fallback rules and 
 # Updates zt_omat_buynha_suppliers_plants.
 
-# In[19]:
+# In[12]:
 
 
 # 8.1 -- NHAs that need EORD backfill
 
 df_missing = (
-    spark.read.table(tgt_suppliers)
+    spark.read.table(tgt_suppliers).alias("t")
+    .join(
+        df_nha.select(F.col("nha_cd").alias("nha")).alias("n"),
+        "nha",
+        "inner"
+    )
     .filter(
         (F.coalesce(F.length("suppcd_1900"),F.lit(0)) == 0) &
         (F.coalesce(F.length("suppcd_2000"),F.lit(0)) == 0) &
@@ -333,7 +424,6 @@ df_missing = (
     )
     .select("nha")
 )
-
 
 # 8.2 Preferred EORD suppliers with names
 
@@ -430,7 +520,7 @@ delta_tbl = DeltaTable.forName(spark, tgt_suppliers)
 # e.g. - posupp_cd = "0000001234, 0000009876"
 # 
 
-# In[20]:
+# In[13]:
 
 
 df_posupp = (
@@ -462,7 +552,7 @@ df_posupp = (
         (F.col("p.aussl") != "U3") &
         (F.col("p.bsart") != "UB") &
         (F.col("p.elikz") != "X") &
-        (~F.col("e.pstyp").isin([7, 9]))
+        (~F.trim(F.col("e.pstyp")).isin("7", "9"))
     )
 
     .select(
@@ -487,7 +577,7 @@ df_posupp.createOrReplaceTempView("posupp")
 # - Updates the rpt_omat_buynha_suppliers_plants table using MERGE
 # Now every NHA has: Plant suppliers, Open PO suppliers, PR (problem report) supplier.
 
-# In[21]:
+# In[14]:
 
 
 # 10.1 -- Split PO suppliers into PO1 and PO2
@@ -564,7 +654,7 @@ delta_tbl = DeltaTable.forName(spark, tgt_suppliers)
 # 
 # 
 
-# In[22]:
+# In[15]:
 
 
 df_sel = (
@@ -640,7 +730,7 @@ delta_tbl = DeltaTable.forName(spark, tgt_suppliers)
 # #### Step-12 -- Mark processed & write OMAT log
 # Marks all NHAs from the current run as processed using a Delta MERGE and then writes a log record to rpt_omat_log_dtls with the OB PR count, NHA count, and execution timestamp for audit.
 
-# In[23]:
+# In[16]:
 
 
 # 12.1 -- Mark NHAs as processed using MERGE (Delta-safe)
