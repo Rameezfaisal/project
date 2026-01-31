@@ -1,24 +1,135 @@
-# -------------------------------------------------------------------------
-# STEP 6 (Fixed): Insert Execution Log (SQL Version)
-# -------------------------------------------------------------------------
-# Aggregation without GROUP BY guarantees 1 row is returned even if source is empty.
+# #### Step-5b -- Calculating Manufacturing 12-Month Consumption
+# New Metric matching SAP Step 5
 
-spark.sql(f"""
-INSERT INTO {tbl_omat_log_tgt} (
-    executed_on,
-    obprtno_cnt,
-    obprtno_nha_cnt,
-    obpr_cnt,
-    program_name
+mfg12m = (
+    mseg.join(mkpf, "mblnr")
+        .join(nhalist, mseg.matnr == nhalist.nha)
+        .filter(
+            (mseg.bwart.isin("261","262")) &
+            (mkpf.bldat > F.date_sub(today, 365))  # Last 12 months
+        )
+        .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), mseg.matnr.alias("nha_cd"))
+        .agg(F.sum(F.when(mseg.shkzg=="S",-mseg.menge).otherwise(mseg.menge)).alias("mfg_12mnths_consumption"))
 )
-SELECT
-    current_timestamp()                                   AS executed_on,
-    COUNT(DISTINCT ob_prtno)                              AS obprtno_cnt,
-    0                                                     AS obprtno_nha_cnt,
-    (SELECT COUNT(*) FROM obprlst)                        AS obpr_cnt,
-    CONCAT(
-        'nb_omat_insert_newobpr_wklyrefresh - ', 
-        COALESCE(MAX(ob_prno), 'No_New_Data')
-    )                                                     AS program_name
-FROM obprdtls
+
+# #### Step-5c -- Calculating Manufacturing 5-Year Consumption
+# New Metric matching SAP Step 6
+
+mfg5y = (
+    mseg.join(mkpf, "mblnr")
+        .join(nhalist, mseg.matnr == nhalist.nha)
+        .filter(
+            (mseg.bwart.isin("261","262")) &
+            (mkpf.bldat > F.date_sub(today, 365*5))  # Last 5 years
+        )
+        .groupBy(nhalist.cmpprtno.alias("cmpprtno_cd"), mseg.matnr.alias("nha_cd"))
+        .agg(F.sum(F.when(mseg.shkzg=="S",-mseg.menge).otherwise(mseg.menge)).alias("mfg_5yrs_consumption"))
+)
+
+
+
+
+
+
+
+
+
+# #### Step-8b -- Spares 5-Year Consumption
+# New Metric matching SAP Step 7
+
+sprs5y = (
+    spares
+    .join(nhalist, spares.material == nhalist.nha, "inner")
+    .filter(
+        (spares.source_doc != "STO") &
+        (spares.order_type.isin("TA","ZCON","ZO09","ZO04","ZSD","ZSO","ZFO","ZUP")) &
+        (spares.actual_gi > F.date_sub(F.current_date(), 365*5)) # Last 5 years
+    )
+    .groupBy(
+        nhalist.cmpprtno.alias("cmpprtno_cd"),
+        spares.material.alias("nha_cd")
+    )
+    .agg(
+        F.sum(spares.qty_shipped).alias("sprs_5yrs_consumption")
+    )
+)
+
+
+
+
+
+
+
+
+
+# #### Step-11 -- Final UNION + Insert into "rpt_omat_dmd_consumption_dtls"
+# Updated to include 12-month and 5-year metrics
+# Updated UNION logic to mimic SAP 'UNION' (remove duplicates)
+
+base = (
+    nhalist.alias("a")
+    .join(mfg3.alias("b"), nhalist.nha == mfg3.nha_cd, "left")
+    .join(mfgdmd.alias("c"), nhalist.nha == mfgdmd.nha_cd, "left")
+    .join(sprsdmd.alias("d"), nhalist.nha == sprsdmd.nha_cd, "left")
+    .join(sprs3.alias("e"), nhalist.nha == sprs3.nha_cd, "left")
+    .join(mfg12m.alias("f"), nhalist.nha == mfg12m.nha_cd, "left")      # NEW
+    .join(lamqoh.alias("g"), nhalist.nha == lamqoh.nha_cd, "left")
+    .join(openpo.alias("h"), nhalist.nha == openpo.nha_cd, "left")
+    .join(mfg5y.alias("i"), nhalist.nha == mfg5y.nha_cd, "left")        # NEW
+    .join(sprs5y.alias("j"), nhalist.nha == sprs5y.nha_cd, "left")      # NEW
+    .select(
+        nhalist.cmpprtno.alias("cmpprtno"),
+        nhalist.nha.alias("nha"),
+        F.col("b.mfg_3yrs_consumption"),
+        F.col("c.mfg_dmd"),
+        F.col("d.sprs_dmd"),
+        F.col("e.sprs_3yrs_consumption"),
+        F.col("f.mfg_12mnths_consumption"),     # NEW
+        F.col("g.lamqoh"),
+        F.col("g.restricted_all_stock"),
+        F.col("h.open_po_qty"),
+        F.col("i.mfg_5yrs_consumption"),        # NEW
+        F.col("j.sprs_5yrs_consumption")        # NEW
+    )
+)
+
+# Part 1: All rows where CMPPRTNO matches NHA (SAP Logic Block 1)
+part1 = base.filter(F.col("cmpprtno") == F.col("nha"))
+
+# Part 2: Rows with > 0 metrics (SAP Logic Block 2)
+# CRITICAL FIX: Added `(F.col("cmpprtno") != F.col("nha"))` to prevent duplicates.
+# In SAP, UNION removes duplicates automatically. In Spark, unionByName keeps them.
+# Explicitly excluding part1 rows from part2 ensures we don't insert the same row twice.
+
+part2 = base.filter(
+    (F.col("cmpprtno") != F.col("nha")) & (
+        (F.coalesce("mfg_3yrs_consumption",F.lit(0)) > 0) |
+        (F.coalesce("mfg_dmd",F.lit(0)) > 0) |
+        (F.coalesce("sprs_dmd",F.lit(0)) > 0) |
+        (F.coalesce("sprs_3yrs_consumption",F.lit(0)) > 0) |
+        (F.coalesce("mfg_12mnths_consumption",F.lit(0)) > 0) |  # NEW CHECK
+        (F.coalesce("open_po_qty",F.lit(0)) > 0) |
+        (F.coalesce("mfg_5yrs_consumption",F.lit(0)) > 0) |     # NEW CHECK
+        (F.coalesce("sprs_5yrs_consumption",F.lit(0)) > 0)      # NEW CHECK
+    )
+)
+
+final = part1.unionByName(part2).withColumn("last_modified_on", F.current_date())
+
+final.createOrReplaceTempView("final_dmd")
+
+# Updated INSERT statement with new columns
+spark.sql(f"""
+INSERT INTO {tgt_dmd}
+(cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
+ mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
+ last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption)
+SELECT 
+ cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
+ mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
+ last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption
+FROM final_dmd
 """)
+
+
+
