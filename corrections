@@ -1,175 +1,52 @@
-# Source dataset for terminal-state updates
-terminal_state_df = (
-    iplm_obsolete_df
-    .filter(~F.col("state_cd").isin(active_states))  # NOT in active workflow states
-    .select(
-        F.col("obprno_key").alias("obprno_upd"),
-        F.col("obprtno_key").alias("obprtno_upd"),
-        F.col("state_cd").alias("new_obpr_state")
-    )
-    .dropDuplicates()
+# #### Step-6 -- Remove Non-Preferred Suppliers when Duplicate NHAs Exist (CORRECTED)
+
+df_base = spark.table("stage2_eord_filled")
+
+# 1. Identify duplicates
+w = Window.partitionBy("nha").orderBy("nha")
+df_with_rn = df_base.withColumn("rn", F.row_number().over(w))
+
+# Create a dataframe of ONLY duplicate NHAs and rename the column to detect matches
+df_dups_flag = (
+    df_with_rn
+    .filter(F.col("rn") > 1)
+    .select(F.col("nha").alias("dup_nha"))  # Rename to avoid merge
+    .distinct()
 )
 
-# Register as temp view for SQL usage
-terminal_state_df.createOrReplaceTempView("stg_terminal_state_updates")
-
-# Execute Merge via Spark SQL
-spark.sql(f"""
-    MERGE INTO {tgt_obprtno_dtls_tbl} t
-    USING stg_terminal_state_updates s
-    ON t.obprno = s.obprno_upd AND t.obprtno = s.obprtno_upd
-    WHEN MATCHED THEN UPDATE SET
-        obpr_state = s.new_obpr_state,
-        last_modified_on = current_timestamp()
-""")
-
-
-
-
-
-
-
-
-
-
-
-
-active_iplm_keys_df = (
-    iplm_obsolete_df
-    .select(
-        F.col("obprno_key").alias("obprno_key_chk"),
-        F.col("obprtno_key").alias("obprtno_key_chk")
-    )
-    .dropDuplicates()
+# 2. Prepare EORD flags
+df_eord_flag = df_eord.select(
+    F.col("matnr_cd").alias("eord_nha"),
+    F.col("werks_cd").alias("eord_plant"),
+    F.col("lifnr_cd").alias("eord_lifnr"),
+    F.col("flifn_cd").alias("eord_flifn"),
+    F.col("autet_cd").alias("eord_autet")
 )
 
-target_df = spark.table(tgt_obprtno_dtls_tbl) \
-    .select(
-        F.col("obprno").alias("t_obprno"),
-        F.col("obprtno").alias("t_obprtno")
+# 3. Corrected Deduplication Logic
+def dedup_plant(df, plant):
+    return (
+        df
+        .join(df_dups_flag, df.nha == df_dups_flag.dup_nha, "left") # Join on condition, keep columns separate
+        .join(
+            df_eord_flag,
+            (df.nha == df_eord_flag.eord_nha) &
+            (df_eord_flag.eord_plant == plant) &
+            (df_eord_flag.eord_lifnr == df[f"suppcd_{plant}"]),
+            "left"
+        )
+        .filter(
+            ~(
+                F.col("dup_nha").isNotNull() &       # ONLY apply if it is a duplicate NHA
+                (F.col("eord_flifn") != preferred_flag) & # AND it is not the preferred vendor
+                F.col("eord_autet").isNotNull()
+            )
+        )
+        .drop("dup_nha", "eord_nha", "eord_plant", "eord_lifnr", "eord_flifn", "eord_autet")
     )
 
-removed_pairs_df = (
-    target_df.alias("t")
-    .join(
-        active_iplm_keys_df.alias("s"),
-        (F.col("t.t_obprno") == F.col("s.obprno_key_chk")) &
-        (F.col("t.t_obprtno") == F.col("s.obprtno_key_chk")),
-        "left_anti"
-    )
-    .select("t_obprno", "t_obprtno")
-    .dropDuplicates()
-)
+df_stage3 = df_with_rn.drop("rn")
+for p in procurement_plants:
+    df_stage3 = dedup_plant(df_stage3, p)
 
-# Register as temp view for SQL usage
-removed_pairs_df.createOrReplaceTempView("stg_removed_pairs")
-
-# Execute Merge via Spark SQL
-spark.sql(f"""
-    MERGE INTO {tgt_obprtno_dtls_tbl} t
-    USING stg_removed_pairs s
-    ON t.obprno = s.t_obprno AND t.obprtno = s.t_obprtno
-    WHEN MATCHED THEN UPDATE SET
-        obpr_state = '{closed_state}',
-        last_modified_on = current_timestamp()
-""")
-
-
-
-
-
-
-
-
-enrichment_src_df = (
-    iplm_df_raw
-    .filter(F.upper(F.col("reason")) == obsolete_reason)
-    .withColumn("state_cd", F.upper(F.col("state")))
-    .withColumn("disposition_cd", F.upper(F.col("disposition")))
-    .filter(
-        (F.col("state_cd").isin(active_states)) |
-        (F.col("disposition_cd").isin(active_dispositions))
-    )
-    .select(
-        F.col("name").alias("obprno_upd"),
-        F.col("part_name").alias("obprtno_upd"),
-        F.col("mstae").alias("part_status_new"),
-        F.col("state_cd").alias("obpr_state_new"),
-        F.col("is_the_last_time_buy_available").alias("is_ltb_avail_new"),
-        F.col("ob_last_buy_date").alias("ltb_date_new"),
-        F.col("lrc_suppliers_date_to_zero_inventory").alias("supplier_date_to_zero_new"),
-        "submitted_date"
-    )
-    .join(
-        rltdprs_df.alias("r"),
-        F.col("obprtno_upd") == F.col("r.part_name_dup"),
-        "left"
-    )
-    .select(
-        "obprno_upd",
-        "obprtno_upd",
-        "part_status_new",
-        "obpr_state_new",
-        "is_ltb_avail_new",
-        "ltb_date_new",
-        "supplier_date_to_zero_new",
-        F.col("openprs").alias("reltd_ob_pr_new"),
-        F.col("duplicate_pr_flag").alias("duplicate_pr_flag_new")
-    )
-    .dropDuplicates(["obprno_upd", "obprtno_upd"])
-)
-
-# Register as temp view for SQL usage
-enrichment_src_df.createOrReplaceTempView("stg_enrichment_src")
-
-# Execute Merge via Spark SQL
-spark.sql(f"""
-    MERGE INTO {tgt_obprtno_dtls_tbl} t
-    USING stg_enrichment_src s
-    ON t.obprno = s.obprno_upd AND t.obprtno = s.obprtno_upd
-    WHEN MATCHED THEN UPDATE SET
-        part_status = s.part_status_new,
-        obpr_state = s.obpr_state_new,
-        is_ltb_avail = s.is_ltb_avail_new,
-        ltb_date = s.ltb_date_new,
-        supplier_date_to_zero = s.supplier_date_to_zero_new,
-        reltd_ob_pr = s.reltd_ob_pr_new,
-        duplicate_pr_flag = s.duplicate_pr_flag_new,
-        last_modified_on = current_timestamp()
-""")
-
-
-
-
-
-
-
-
-
-
-
-ltb_update_src_df = (
-    ltbinfo_df
-    .select(
-        F.col("ltb_part_key").alias("obprtno_upd"),
-        "is_ltb_avail_new",
-        "ltb_date_new",
-        "supplier_date_to_zero_new"
-    )
-    .dropDuplicates(["obprtno_upd"])
-)
-
-# Register as temp view for SQL usage
-ltb_update_src_df.createOrReplaceTempView("stg_ltb_updates")
-
-# Execute Merge via Spark SQL
-spark.sql(f"""
-    MERGE INTO {tgt_obprtno_dtls_tbl} t
-    USING stg_ltb_updates s
-    ON t.obprtno = s.obprtno_upd
-    WHEN MATCHED THEN UPDATE SET
-        is_ltb_avail = s.is_ltb_avail_new,
-        ltb_date = s.ltb_date_new,
-        supplier_date_to_zero = s.supplier_date_to_zero_new,
-        last_modified_on = current_timestamp()
-""")
+df_stage3.createOrReplaceTempView("stage3_deduped")
