@@ -37,3 +37,28 @@ df_final = spark.table("stage7_final_suppliers").dropDuplicates(["nha"])
     .option("overwriteSchema", "true")
     .saveAsTable(tgt_suppliers_tbl)
 )
+
+
+
+
+
+
+
+
+from pyspark.sql import Window
+
+# Define a window partitioned by NHA, ordered by "Data Quality"
+# We prioritize rows that have a PR supplier, then PO supplier, then MRP supplier
+w = Window.partitionBy("nha").orderBy(
+    F.col("suppcd_pr").desc(),      # Prioritize if it has a PR supplier
+    F.col("suppcd_po1").desc(),     # Then if it has a PO supplier
+    F.col("suppcd_2000").desc()     # Then if it has a Plant 2000 supplier
+)
+
+# Keep only the "Rank 1" row
+df_final = (
+    spark.table("stage7_final_suppliers")
+    .withColumn("rn", F.row_number().over(w))
+    .filter(F.col("rn") == 1)
+    .drop("rn")
+)
