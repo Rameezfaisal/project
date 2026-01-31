@@ -1,107 +1,63 @@
 # -------------------------------------------------------------------------
-# FIXED STEP 5: Build OBPR Part Details
+# STEP 7: Insert into OMAT Target Table
 # -------------------------------------------------------------------------
-# Logic Fix: We pre-calculate the "Latest LTB Info" for every part involved
-# to replicate the SAP "Update" routine found at the end of the procedure.
-# -------------------------------------------------------------------------
-
-# 1. Create a "Latest Info" Lookup
-# Groups by Part Name and grabs the info from the MOST RECENT submission
-# (replaces SAP logic: DUPLICATEPR + LTBINFO temp tables)
-window_latest = Window.partitionBy("part_name").orderBy(F.col("submitted_date").desc())
-
-latest_ltb_lookup = (
-    df_iplm
-    .filter(F.col("part_name") != "NA")
-    .filter(F.upper("state") != "CLOSED")
-    .filter(
-        (F.upper("state").isin("CONFIRMED","IN REVIEW","IN WORK")) |
-        (F.upper("disposition").isin("CONFIRMED","DEFER"))
-    )
-    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
-    .withColumn("rn", F.row_number().over(window_latest))
-    .filter(F.col("rn") == 1) # Take only the absolute latest record per part
-    .select(
-        F.col("part_name").alias("ltb_lookup_part"),
-        F.col("is_the_last_time_buy_available").alias("latest_is_ltb_avail"),
-        F.col("ob_last_buy_date").alias("latest_ltb_date"),
-        F.col("lrc_suppliers_date_to_zero_inventory").alias("latest_supplier_date")
-    )
+spark.sql(f"""
+INSERT INTO {tbl_omat_obprt_tgt} (
+    business_unit,
+    created_on,
+    duplicate_pr_flag,
+    enditem,
+    is_ltb_avail,
+    is_obprt_processed,
+    is_weekly_processed,
+    last_modified_on,
+    ltb_date,
+    ltb_qty,
+    obprno,
+    obprtno,
+    obpr_state,
+    part_status,
+    pg_pm,
+    reltd_ob_pr,
+    supplier_date_to_zero
 )
-
-# 2. Base DataFrame (The triggering PRs)
-base_df = (
-    df_iplm
-    .select(
-        F.col("name").alias("ob_prno"),
-        F.col("part_name").alias("ob_prtno"),
-        F.col("mstae").alias("part_status_cd"),
-        F.col("state").alias("obpr_state_cd"),
-        F.col("disposition"),
-        F.col("reason")
-        # NOTE: We DO NOT select the LTB dates from here anymore,
-        # because we must use the "Latest" dates from the lookup above.
-    )
-    .filter(F.col("ob_prtno") != "NA")
-    .filter(F.upper("obpr_state_cd") != "CLOSED")
-    .filter(
-        (F.upper("obpr_state_cd").isin("CONFIRMED","IN REVIEW","IN WORK")) |
-        (F.upper("disposition").isin("CONFIRMED","DEFER"))
-    )
-    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
-)
-
-b = base_df.alias("b")
-l = obprlst_df.alias("l")
-o = df_omat_src.alias("o")
-ltb = latest_ltb_lookup.alias("ltb")
-
-obprdtls_df = (
-    b
-    # Join OBPR list (The Process Driver)
-    .join(l, F.col("b.ob_prno") == F.col("l.ob_prno"), "inner")
-    .drop(F.col("l.ob_prno"))
-
-    # Join Latest LTB Lookup (The Logic Fix)
-    .join(ltb, F.col("b.ob_prtno") == F.col("ltb.ltb_lookup_part"), "left")
-
-    # Left join OMAT to avoid duplicates (The Safety Check)
-    .join(
-        o,
-        (F.col("b.ob_prno") == F.col("o.obprno")) &
-        (F.col("b.ob_prtno") == F.col("o.obprtno")),
-        "left"
-    )
-    .filter(F.col("o.obprno").isNull()) # Keep only new records
-    .drop(F.col("o.obprno"))
-    .drop(F.col("o.obprtno"))
-
-    # Windowing for IDs
-    .withColumn(
-        "id",
-        F.row_number().over(
-            Window.partitionBy("b.ob_prno").orderBy("b.ob_prtno")
-        )
-    )
-    .withColumn("ltb_qty", F.lit(0))
-    .withColumn("reltd_ob_prs", F.lit(None).cast("string"))
-    .withColumn("duplicate_pr_flag", F.lit("No"))
-    .withColumn("is_obprt_processed", F.lit("No"))
-    
-    # Select final columns, ensuring we use the LTB columns from the LOOKUP
-    .select(
-        F.col("b.ob_prno"),
-        F.col("b.ob_prtno"),
-        F.col("b.part_status_cd"),
-        F.col("b.obpr_state_cd"),
-        F.col("ltb.latest_is_ltb_avail").alias("is_ltb_avail_cd"), # Using Latest
-        F.col("ltb.latest_ltb_date").alias("ltb_date_cd"),         # Using Latest
-        F.col("ltb.latest_supplier_date").alias("supplier_date_to_zero_cd"), # Using Latest
-        "ltb_qty",
-        "reltd_ob_prs",
-        "duplicate_pr_flag",
-        "is_obprt_processed"
-    )
-)
-
-obprdtls_df.createOrReplaceTempView("obprdtls")
+SELECT
+    CAST(NULL AS STRING)        AS business_unit,
+    current_timestamp()         AS created_on,
+    CASE 
+        WHEN r.reltd_ob_prs IS NOT NULL THEN 'Yes' 
+        ELSE 'No' 
+    END                         AS duplicate_pr_flag,
+    CAST(NULL AS STRING)        AS enditem,
+    d.is_ltb_avail_cd           AS is_ltb_avail, 
+    d.is_obprt_processed        AS is_obprt_processed,
+    'A'                         AS is_weekly_processed,
+    current_timestamp()         AS last_modified_on,
+    d.ltb_date_cd               AS ltb_date,
+    d.ltb_qty                   AS ltb_qty,
+    d.ob_prno                   AS obprno,
+    d.ob_prtno                  AS obprtno,
+    d.obpr_state_cd             AS obpr_state,
+    d.part_status_cd            AS part_status,
+    CAST(NULL AS STRING)        AS pg_pm,
+    r.reltd_ob_prs              AS reltd_ob_pr,
+    d.supplier_date_to_zero_cd  AS supplier_date_to_zero
+FROM (
+    SELECT 
+        ob_prno, 
+        ob_prtno, 
+        part_status_cd, 
+        obpr_state_cd, 
+        is_ltb_avail_cd, 
+        ltb_date_cd, 
+        ltb_qty, 
+        is_obprt_processed, 
+        supplier_date_to_zero_cd
+    FROM obprdtls
+    WHERE ob_prno IS NOT NULL 
+      AND ob_prtno IS NOT NULL
+) d
+LEFT JOIN related_prs r 
+  ON d.ob_prno  = r.ob_prno 
+ AND d.ob_prtno = r.ob_prtno
+""")
