@@ -1,56 +1,107 @@
-# #### Step-12 — Write to OMAT Tables + Log Execution
+# -------------------------------------------------------------------------
+# FIXED STEP 5: Build OBPR Part Details
+# -------------------------------------------------------------------------
+# Logic Fix: We pre-calculate the "Latest LTB Info" for every part involved
+# to replicate the SAP "Update" routine found at the end of the procedure.
+# -------------------------------------------------------------------------
 
-# 1. Smart Deduplication Logic
-# Instead of random dropDuplicates, we Rank rows by "Data Completeness"
-from pyspark.sql import Window
+# 1. Create a "Latest Info" Lookup
+# Groups by Part Name and grabs the info from the MOST RECENT submission
+# (replaces SAP logic: DUPLICATEPR + LTBINFO temp tables)
+window_latest = Window.partitionBy("part_name").orderBy(F.col("submitted_date").desc())
 
-# We prioritize:
-# 1. Rows that have a PR Supplier (Critical for Obsolescence)
-# 2. Rows that have a PO Supplier (Active purchasing)
-# 3. Rows that have a Plant 2000 Supplier (Business Priority)
-w = Window.partitionBy("nha").orderBy(
-    F.col("suppcd_pr").desc(),      # Non-null PR suppliers float to top
-    F.col("suppcd_po1").desc(),     # Non-null PO suppliers float to top
-    F.col("suppcd_2000").desc()     # Non-null Plant 2000 suppliers float to top
-)
-
-df_final_clean = (
-    spark.table("stage7_final_suppliers")
-    .withColumn("rn", F.row_number().over(w))
-    .filter(F.col("rn") == 1) # Keep only the single best row
-    .drop("rn")
-)
-
-# 2. Replace target table (full refresh)
-(
-    df_final_clean
-    .select(
-        "nha",
-        "omat_selected_plant",
-        "omat_selected_supplier",
-        "omat_selected_suppliercd",
-        "suppcd_1050",
-        "suppcd_1060",
-        "suppcd_1090",
-        "suppcd_1900",
-        "suppcd_2000",
-        "suppcd_3120",
-        "suppcd_po1",
-        "suppcd_po2",
-        "suppcd_pr",
-        "suppname_1050",
-        "suppname_1060",
-        "suppname_1090",
-        "suppname_1900",
-        "suppname_2000",
-        "suppname_3120",
-        "suppname_po1",
-        "suppname_po2",
-        "suppname_pr"
+latest_ltb_lookup = (
+    df_iplm
+    .filter(F.col("part_name") != "NA")
+    .filter(F.upper("state") != "CLOSED")
+    .filter(
+        (F.upper("state").isin("CONFIRMED","IN REVIEW","IN WORK")) |
+        (F.upper("disposition").isin("CONFIRMED","DEFER"))
     )
-    .write
-    .mode("overwrite")
-    .format("delta")
-    .option("overwriteSchema", "true")
-    .saveAsTable(tgt_suppliers_tbl)
+    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
+    .withColumn("rn", F.row_number().over(window_latest))
+    .filter(F.col("rn") == 1) # Take only the absolute latest record per part
+    .select(
+        F.col("part_name").alias("ltb_lookup_part"),
+        F.col("is_the_last_time_buy_available").alias("latest_is_ltb_avail"),
+        F.col("ob_last_buy_date").alias("latest_ltb_date"),
+        F.col("lrc_suppliers_date_to_zero_inventory").alias("latest_supplier_date")
+    )
 )
+
+# 2. Base DataFrame (The triggering PRs)
+base_df = (
+    df_iplm
+    .select(
+        F.col("name").alias("ob_prno"),
+        F.col("part_name").alias("ob_prtno"),
+        F.col("mstae").alias("part_status_cd"),
+        F.col("state").alias("obpr_state_cd"),
+        F.col("disposition"),
+        F.col("reason")
+        # NOTE: We DO NOT select the LTB dates from here anymore,
+        # because we must use the "Latest" dates from the lookup above.
+    )
+    .filter(F.col("ob_prtno") != "NA")
+    .filter(F.upper("obpr_state_cd") != "CLOSED")
+    .filter(
+        (F.upper("obpr_state_cd").isin("CONFIRMED","IN REVIEW","IN WORK")) |
+        (F.upper("disposition").isin("CONFIRMED","DEFER"))
+    )
+    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
+)
+
+b = base_df.alias("b")
+l = obprlst_df.alias("l")
+o = df_omat_src.alias("o")
+ltb = latest_ltb_lookup.alias("ltb")
+
+obprdtls_df = (
+    b
+    # Join OBPR list (The Process Driver)
+    .join(l, F.col("b.ob_prno") == F.col("l.ob_prno"), "inner")
+    .drop(F.col("l.ob_prno"))
+
+    # Join Latest LTB Lookup (The Logic Fix)
+    .join(ltb, F.col("b.ob_prtno") == F.col("ltb.ltb_lookup_part"), "left")
+
+    # Left join OMAT to avoid duplicates (The Safety Check)
+    .join(
+        o,
+        (F.col("b.ob_prno") == F.col("o.obprno")) &
+        (F.col("b.ob_prtno") == F.col("o.obprtno")),
+        "left"
+    )
+    .filter(F.col("o.obprno").isNull()) # Keep only new records
+    .drop(F.col("o.obprno"))
+    .drop(F.col("o.obprtno"))
+
+    # Windowing for IDs
+    .withColumn(
+        "id",
+        F.row_number().over(
+            Window.partitionBy("b.ob_prno").orderBy("b.ob_prtno")
+        )
+    )
+    .withColumn("ltb_qty", F.lit(0))
+    .withColumn("reltd_ob_prs", F.lit(None).cast("string"))
+    .withColumn("duplicate_pr_flag", F.lit("No"))
+    .withColumn("is_obprt_processed", F.lit("No"))
+    
+    # Select final columns, ensuring we use the LTB columns from the LOOKUP
+    .select(
+        F.col("b.ob_prno"),
+        F.col("b.ob_prtno"),
+        F.col("b.part_status_cd"),
+        F.col("b.obpr_state_cd"),
+        F.col("ltb.latest_is_ltb_avail").alias("is_ltb_avail_cd"), # Using Latest
+        F.col("ltb.latest_ltb_date").alias("ltb_date_cd"),         # Using Latest
+        F.col("ltb.latest_supplier_date").alias("supplier_date_to_zero_cd"), # Using Latest
+        "ltb_qty",
+        "reltd_ob_prs",
+        "duplicate_pr_flag",
+        "is_obprt_processed"
+    )
+)
+
+obprdtls_df.createOrReplaceTempView("obprdtls")
