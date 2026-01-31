@@ -1,52 +1,37 @@
-# #### Step-6 -- Remove Non-Preferred Suppliers when Duplicate NHAs Exist (CORRECTED)
+# Check the distinct NHA count in your source table
+count_source = spark.table(src_omat_dmd_tbl).select("nha").distinct().count()
 
-df_base = spark.table("stage2_eord_filled")
+print(f"Fabric Source NHA Count: {count_source}")
+print(f"SAP Target Count: 12263")
+print(f"Difference: {12263 - count_source}")
 
-# 1. Identify duplicates
-w = Window.partitionBy("nha").orderBy("nha")
-df_with_rn = df_base.withColumn("rn", F.row_number().over(w))
 
-# Create a dataframe of ONLY duplicate NHAs and rename the column to detect matches
-df_dups_flag = (
-    df_with_rn
-    .filter(F.col("rn") > 1)
-    .select(F.col("nha").alias("dup_nha"))  # Rename to avoid merge
-    .distinct()
-)
 
-# 2. Prepare EORD flags
-df_eord_flag = df_eord.select(
-    F.col("matnr_cd").alias("eord_nha"),
-    F.col("werks_cd").alias("eord_plant"),
-    F.col("lifnr_cd").alias("eord_lifnr"),
-    F.col("flifn_cd").alias("eord_flifn"),
-    F.col("autet_cd").alias("eord_autet")
-)
 
-# 3. Corrected Deduplication Logic
-def dedup_plant(df, plant):
-    return (
-        df
-        .join(df_dups_flag, df.nha == df_dups_flag.dup_nha, "left") # Join on condition, keep columns separate
-        .join(
-            df_eord_flag,
-            (df.nha == df_eord_flag.eord_nha) &
-            (df_eord_flag.eord_plant == plant) &
-            (df_eord_flag.eord_lifnr == df[f"suppcd_{plant}"]),
-            "left"
-        )
-        .filter(
-            ~(
-                F.col("dup_nha").isNotNull() &       # ONLY apply if it is a duplicate NHA
-                (F.col("eord_flifn") != preferred_flag) & # AND it is not the preferred vendor
-                F.col("eord_autet").isNotNull()
-            )
-        )
-        .drop("dup_nha", "eord_nha", "eord_plant", "eord_lifnr", "eord_flifn", "eord_autet")
-    )
 
-df_stage3 = df_with_rn.drop("rn")
-for p in procurement_plants:
-    df_stage3 = dedup_plant(df_stage3, p)
 
-df_stage3.createOrReplaceTempView("stage3_deduped")
+
+
+
+# Check if we are actually getting data from both sides
+print("--- EORD Counts ---")
+try:
+    c1 = spark.read.table(paths["ecc"]["eord"]).count()
+    print(f"ECC EORD rows: {c1}")
+except:
+    print("ECC EORD table missing or empty")
+
+try:
+    c2 = spark.read.table(paths["s4h"]["eord"]).count()
+    print(f"S4H EORD rows: {c2}")
+except:
+    print("S4H EORD table missing or empty")
+
+
+
+
+
+
+
+
+.filter(F.length(F.trim(F.col("supcode_cd"))) > 0)
