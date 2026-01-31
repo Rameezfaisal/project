@@ -1,63 +1,51 @@
 # -------------------------------------------------------------------------
-# STEP 7: Insert into OMAT Target Table
+# DEBUGGING STEP 4: Isolate where records are lost
 # -------------------------------------------------------------------------
-spark.sql(f"""
-INSERT INTO {tbl_omat_obprt_tgt} (
-    business_unit,
-    created_on,
-    duplicate_pr_flag,
-    enditem,
-    is_ltb_avail,
-    is_obprt_processed,
-    is_weekly_processed,
-    last_modified_on,
-    ltb_date,
-    ltb_qty,
-    obprno,
-    obprtno,
-    obpr_state,
-    part_status,
-    pg_pm,
-    reltd_ob_pr,
-    supplier_date_to_zero
+
+# 1. Check Raw Candidates (Before Join)
+# This checks if any data even passes your status/reason filters.
+candidates_df = (
+    df_iplm
+    .filter(F.col("part_name") != "NA")
+    .filter(F.upper("state") != "CLOSED")
+    .filter(
+        (F.upper("state").isin("CONFIRMED","IN REVIEW","IN WORK")) |
+        (F.upper("disposition").isin("CONFIRMED","DEFER"))
+    )
+    .filter(F.upper("reason") == "OBSOLETE COMPONENT")
 )
-SELECT
-    CAST(NULL AS STRING)        AS business_unit,
-    current_timestamp()         AS created_on,
-    CASE 
-        WHEN r.reltd_ob_prs IS NOT NULL THEN 'Yes' 
-        ELSE 'No' 
-    END                         AS duplicate_pr_flag,
-    CAST(NULL AS STRING)        AS enditem,
-    d.is_ltb_avail_cd           AS is_ltb_avail, 
-    d.is_obprt_processed        AS is_obprt_processed,
-    'A'                         AS is_weekly_processed,
-    current_timestamp()         AS last_modified_on,
-    d.ltb_date_cd               AS ltb_date,
-    d.ltb_qty                   AS ltb_qty,
-    d.ob_prno                   AS obprno,
-    d.ob_prtno                  AS obprtno,
-    d.obpr_state_cd             AS obpr_state,
-    d.part_status_cd            AS part_status,
-    CAST(NULL AS STRING)        AS pg_pm,
-    r.reltd_ob_prs              AS reltd_ob_pr,
-    d.supplier_date_to_zero_cd  AS supplier_date_to_zero
-FROM (
-    SELECT 
-        ob_prno, 
-        ob_prtno, 
-        part_status_cd, 
-        obpr_state_cd, 
-        is_ltb_avail_cd, 
-        ltb_date_cd, 
-        ltb_qty, 
-        is_obprt_processed, 
-        supplier_date_to_zero_cd
-    FROM obprdtls
-    WHERE ob_prno IS NOT NULL 
-      AND ob_prtno IS NOT NULL
-) d
-LEFT JOIN related_prs r 
-  ON d.ob_prno  = r.ob_prno 
- AND d.ob_prtno = r.ob_prtno
-""")
+
+candidate_count = candidates_df.count()
+print(f"1. Rows passing initial filters (Candidates): {candidate_count}")
+
+# 2. Check Matches in Target
+# If Candidates > 0, let's see how many of them exist in OMAT.
+if candidate_count > 0:
+    matches_df = (
+        candidates_df.alias("src")
+        .join(
+            df_omat_src.alias("tgt"),
+            (F.col("src.name") == F.col("tgt.obprno")) &
+            (F.col("src.part_name") == F.col("tgt.obprtno")),
+            "inner"
+        )
+    )
+    match_count = matches_df.count()
+    print(f"2. Candidates already found in OMAT (Matches): {match_count}")
+    
+    # 3. Final Calculation
+    print(f"3. Expected 'New' Rows (Candidates - Matches): {candidate_count - match_count}")
+    
+    if (candidate_count - match_count) == 0:
+        print(">> CONCLUSION: All candidates are already in the target table. There is no new data to process.")
+    else:
+        print(">> CONCLUSION: There is a join/filter issue in the main Step 4 logic.")
+        
+else:
+    print(">> CONCLUSION: No rows passed the initial filters. Check your 'State' or 'Reason' values in the source table.")
+    
+    # Optional: Inspect unique values to see if they differ (e.g., 'Obsolute' vs 'OBSOLETE COMPONENT')
+    print("--- Diagnostic: Unique Reasons in Source ---")
+    df_iplm.select(F.upper("reason")).distinct().show(truncate=False)
+    print("--- Diagnostic: Unique States in Source ---")
+    df_iplm.select(F.upper("state")).distinct().show(truncate=False)
