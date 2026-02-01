@@ -1,8 +1,66 @@
+# #### Step-5 (Corrected & 100% Faithful) -- Manufacturing Consumption
+# Fixes:
+# 1. Join Key: Uses 'mblnr' ONLY (Removes 'mjahr'). Matches SAP exactly.
+#    Note: This allows cross-year matches (Cartesian product) if doc IDs recycle.
+# 2. MAKT Logic: No 'SPRAS' filter. Groups by 'maktx' to replicate SAP's 
+#    grain (summing per description language), preserving the exact aggregation behavior.
+
+mfg_all = (
+    mseg.join(mkpf, "mblnr", "inner") # <--- FAITHFUL: Join on MBLNR only
+        # 1. Scope Filter
+        .join(F.broadcast(nhalist), mseg.matnr == nhalist.nha) 
+        # 2. MAKT Join (Unfiltered, matches SAP)
+        .join(makt, mseg.matnr == makt.matnr, "inner")
+        .filter(
+            (mseg.bwart.isin("261","262")) &
+            # 3. Global Time Window (Matches SAP's implicit bounds for the data range)
+            (mkpf.bldat > F.date_sub(today, 365*5)) &
+            (mkpf.bldat < today) 
+        )
+        # 4. Group by MAKTX: Mirrors SAP's handling of multi-language rows
+        .groupBy(
+            nhalist.cmpprtno.alias("cmpprtno_cd"), 
+            mseg.matnr.alias("nha_cd"), 
+            makt.maktx 
+        )
+        .agg(
+            # 12 Month Logic
+            F.sum(
+                F.when((mkpf.bldat > F.date_sub(today, 365)) & (mseg.shkzg=="S"), -mseg.menge)
+                 .when((mkpf.bldat > F.date_sub(today, 365)), mseg.menge)
+                 .otherwise(0)
+            ).alias("mfg_12mnths_consumption"),
+            
+            # 3 Year Logic
+            F.sum(
+                F.when((mkpf.bldat > F.date_sub(today, 365*3)) & (mseg.shkzg=="S"), -mseg.menge)
+                 .when((mkpf.bldat > F.date_sub(today, 365*3)), mseg.menge)
+                 .otherwise(0)
+            ).alias("mfg_3yrs_consumption"),
+            
+            # 5 Year Logic
+            F.sum(
+                F.when(mseg.shkzg=="S", -mseg.menge).otherwise(mseg.menge)
+            ).alias("mfg_5yrs_consumption")
+        )
+        # 5. Distinct: Collapses the multi-language rows (Matches SAP Insert DISTINCT)
+        .drop("maktx")
+        .distinct()
+)
+
+
+
+
+
+
+
+
+
+
 # #### Step-11 -- Final Insert (Faithful Logic)
 
 base = (
     nhalist.alias("a")
-    # Left Joins are now safe because mfg_all is unique (deduplicated in Step 5)
     .join(mfg_all.alias("b"), nhalist.nha == mfg_all.nha_cd, "left")
     .join(demand_all.alias("c"), nhalist.nha == demand_all.nha_cd, "left")
     .join(sprs_all.alias("d"), nhalist.nha == sprs_all.nha_cd, "left")
@@ -24,13 +82,13 @@ base = (
     )
 )
 
+# --- INCLUSION LOGIC (UNION DISTINCT EQUIVALENT) ---
 
-# --- DEFINING THE INCLUSION LOGIC EXPLICITLY ---
-
-# Condition 1: CMPPRTNO equals NHA (The "Self-Reference" Branch)
+# Branch 1: Self-Reference (CMPPRTNO = NHA)
 cond_self = (F.col("cmpprtno") == F.col("nha"))
 
-# Condition 2: Any Metric is Greater Than Zero (The "Activity" Branch)
+# Branch 2: Activity (Any metric > 0)
+# Note: Uses explicit '|' for logical OR between all metrics
 cond_activity = (
     (F.coalesce(F.col("mfg_3yrs_consumption"), F.lit(0)) > 0) |
     (F.coalesce(F.col("mfg_dmd"), F.lit(0)) > 0) |
@@ -42,15 +100,13 @@ cond_activity = (
     (F.coalesce(F.col("sprs_5yrs_consumption"), F.lit(0)) > 0)
 )
 
-# Faithful Replication of SAP UNION DISTINCT:
-# (Rows from Branch 1) OR (Rows from Branch 2)
+# Logic: (Branch 1) OR (Branch 2) -> Matches SAP UNION DISTINCT
 final = (
     base
-    .filter(cond_self | cond_activity)   # <- UNION DISTINCT equivalent
+    .filter(cond_self | cond_activity) 
     .distinct()
     .withColumn("last_modified_on", F.current_date())
 )
-
 
 final.createOrReplaceTempView("final_dmd")
 
@@ -65,13 +121,3 @@ SELECT
  last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption
 FROM final_dmd
 """)
-
-
-
-
-
-
-
-
-
-Mostly yes, but not 100% guaranteed faithful — your Step‑11 logic is now correct, however you still differ from SAP in at least (1) the MKPF↔MSEG join key (mblnr+mjahr vs SAP mblnr only) and (2) the way MAKT/language grain is handled/deduped, which can change results in edge cases..py)
