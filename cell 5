@@ -1,65 +1,7 @@
-# #### Step-5 (Corrected & Faithful) -- Manufacturing Consumption
-# Fixes:
-# 1. Added MAKTX to groupBy to prevent summing across languages (Inflating results).
-#    SAP groups by MAKTX, creating duplicate rows for the same MATNR if multiple descriptions exist.
-#    These duplicates are later removed by SELECT DISTINCT in the INSERT step.
-#    Grouping only by MATNR would sum them (e.g., 10+10=20 instead of DISTINCT(10)=10).
-# 2. Maintained strict 5-year global window (Widest required range).
-
-mfg_all = (
-    mseg.join(mkpf, ["mblnr", "mjahr"], "inner")
-        # 1. Scope Filter
-        .join(F.broadcast(nhalist), mseg.matnr == nhalist.nha) 
-        # 2. MAKT Filter (Inner join acts as filter for valid materials)
-        .join(makt, mseg.matnr == makt.matnr, "inner")
-        .filter(
-            (mseg.bwart.isin("261","262")) &
-            # 3. Global Time Window (Must cover the widest requirement: 5 Years)
-            (mkpf.bldat > F.date_sub(today, 365*5)) &
-            (mkpf.bldat < today) 
-        )
-        # CRITICAL FIX: Group by MAKTX to match SAP grain and prevent sum inflation
-        .groupBy(
-            nhalist.cmpprtno.alias("cmpprtno_cd"), 
-            mseg.matnr.alias("nha_cd"), 
-            makt.maktx  # Included to force SAP-like grain
-        )
-        .agg(
-            # 12 Month Logic
-            F.sum(
-                F.when((mkpf.bldat > F.date_sub(today, 365)) & (mseg.shkzg=="S"), -mseg.menge)
-                 .when((mkpf.bldat > F.date_sub(today, 365)), mseg.menge)
-                 .otherwise(0)
-            ).alias("mfg_12mnths_consumption"),
-            
-            # 3 Year Logic
-            F.sum(
-                F.when((mkpf.bldat > F.date_sub(today, 365*3)) & (mseg.shkzg=="S"), -mseg.menge)
-                 .when((mkpf.bldat > F.date_sub(today, 365*3)), mseg.menge)
-                 .otherwise(0)
-            ).alias("mfg_3yrs_consumption"),
-            
-            # 5 Year Logic (Base)
-            F.sum(
-                F.when(mseg.shkzg=="S", -mseg.menge).otherwise(mseg.menge)
-            ).alias("mfg_5yrs_consumption")
-        )
-)
-
-
-
-
-
-
-
-
-
-# #### Step-11 -- Final Insert (Faithful Logic)
+# #### Step-11 -- Final Insert (Faithful Logic & Fixed Schema)
 
 base = (
     nhalist.alias("a")
-    # Note: Joining on 'nha' alone might multiply rows if mfg_all has multiple MAKTX entries.
-    # This is intended behavior to match SAP intermediate state before distinct.
     .join(mfg_all.alias("b"), nhalist.nha == mfg_all.nha_cd, "left")
     .join(demand_all.alias("c"), nhalist.nha == demand_all.nha_cd, "left")
     .join(sprs_all.alias("d"), nhalist.nha == sprs_all.nha_cd, "left")
@@ -85,7 +27,6 @@ base = (
 # Structure: (Branch 1) OR (Branch 2)
 # Branch 1: cmpprtno == nha
 # Branch 2: Any metric > 0
-# CRITICAL FIX: Explicit '|' operators added for every line.
 
 final = base.filter(
     (F.col("cmpprtno") == F.col("nha")) | 
@@ -99,7 +40,7 @@ final = base.filter(
         (F.coalesce(F.col("mfg_5yrs_consumption"), F.lit(0)) > 0) |
         (F.coalesce(F.col("sprs_5yrs_consumption"), F.lit(0)) > 0)
     )
-).distinct() # CRITICAL: Added distinct() to collapse any MAKTX-induced duplicates
+).distinct().withColumn("last_modified_on", F.current_date()) # <--- FIXED: Column added here
 
 final.createOrReplaceTempView("final_dmd")
 
