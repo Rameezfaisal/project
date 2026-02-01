@@ -84,3 +84,4 @@ nha = spark.table("lhs_glb.omat_test.rpt_omat_obpn_buy_nha_dtls") \
            .select("cmpprtno", "nha", "isprocessed") \
            .filter(F.col("isprocessed") == "N") \
            .distinct()
+
