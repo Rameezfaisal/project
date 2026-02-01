@@ -1,60 +1,30 @@
-UnsupportedOperationException             Traceback (most recent call last)
-Cell In[261], line 106
-     85 # 8.6 Delta MERGE (UPDATE)
-     87 delta_tbl = DeltaTable.forName(spark, tgt_suppliers)
-     89 (
-     90     delta_tbl.alias("t")
-     91     .merge(df_update.alias("s"), "t.nha = s.nha")
-     92     .whenMatchedUpdate(set={
-     93         "suppcd_1900":"s.suppcd_1900",
-     94         "suppname_1900":"s.suppname_1900",
-     95         "suppcd_2000":"s.suppcd_2000",
-     96         "suppname_2000":"s.suppname_2000",
-     97         "suppcd_3120":"s.suppcd_3120",
-     98         "suppname_3120":"s.suppname_3120",
-     99         "suppcd_1050":"s.suppcd_1050",
-    100         "suppname_1050":"s.suppname_1050",
-    101         "suppcd_1060":"s.suppcd_1060",
-    102         "suppname_1060":"s.suppname_1060",
-    103         "suppcd_1090":"s.suppcd_1090",
-    104         "suppname_1090":"s.suppname_1090"
-    105     })
---> 106     .execute()
-    107 )
+# 8.5 Only update NHAs that were missing
+# FIX: Explicitly drop duplicates on 'nha' to prevent the merge error
+df_update = (
+    df_missing
+    .join(df_eord_flat, "nha")
+    .dropDuplicates(["nha"])  # <--- THIS IS THE CRITICAL FIX
+)
 
-File /usr/hdp/current/spark3-client/jars/delta-spark_2.12-3.2.1.20251125.5.jar/delta/tables.py:1065, in DeltaMergeBuilder.execute(self)
-   1058 @since(0.4)  # type: ignore[arg-type]
-   1059 def execute(self) -> None:
-   1060     """
-   1061     Execute the merge operation based on the built matched and not matched actions.
-   1062 
-   1063     See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
-   1064     """
--> 1065     self._jbuilder.execute()
+# 8.6 Delta MERGE (UPDATE)
+delta_tbl = DeltaTable.forName(spark, tgt_suppliers)
 
-File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
-   1316 command = proto.CALL_COMMAND_NAME +\
-   1317     self.command_header +\
-   1318     args_command +\
-   1319     proto.END_COMMAND_PART
-   1321 answer = self.gateway_client.send_command(command)
--> 1322 return_value = get_return_value(
-   1323     answer, self.gateway_client, self.target_id, self.name)
-   1325 for temp_arg in temp_args:
-   1326     if hasattr(temp_arg, "_detach"):
-
-File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
-    181 converted = convert_exception(e.java_exception)
-    182 if not isinstance(converted, UnknownException):
-    183     # Hide where the exception came from that shows a non-Pythonic
-    184     # JVM exception message.
---> 185     raise converted from None
-    186 else:
-    187     raise
-
-UnsupportedOperationException: [DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE] Cannot perform Merge as multiple source rows matched and attempted to modify the same
-target row in the Delta table in possibly conflicting ways. By SQL semantics of Merge,
-when multiple source rows match on the same target row, the result may be ambiguous
-as it is unclear which source row should be used to update or delete the matching
-target row. You can preprocess the source table to eliminate the possibility of
-multiple matches.
+(
+    delta_tbl.alias("t")
+    .merge(df_update.alias("s"), "t.nha = s.nha")
+    .whenMatchedUpdate(set={
+        "suppcd_1900":"s.suppcd_1900",
+        "suppname_1900":"s.suppname_1900",
+        "suppcd_2000":"s.suppcd_2000",
+        "suppname_2000":"s.suppname_2000",
+        "suppcd_3120":"s.suppcd_3120",
+        "suppname_3120":"s.suppname_3120",
+        "suppcd_1050":"s.suppcd_1050",
+        "suppname_1050":"s.suppname_1050",
+        "suppcd_1060":"s.suppcd_1060",
+        "suppname_1060":"s.suppname_1060",
+        "suppcd_1090":"s.suppcd_1090",
+        "suppname_1090":"s.suppname_1090"
+    })
+    .execute()
+)
