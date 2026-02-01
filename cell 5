@@ -65,3 +65,13 @@ SELECT
  last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption
 FROM final_dmd
 """)
+
+
+
+
+
+
+
+
+
+Mostly yes, but not 100% guaranteed faithful — your Step‑11 logic is now correct, however you still differ from SAP in at least (1) the MKPF↔MSEG join key (mblnr+mjahr vs SAP mblnr only) and (2) the way MAKT/language grain is handled/deduped, which can change results in edge cases..py)
