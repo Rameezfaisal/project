@@ -1,15 +1,20 @@
-# #### Step-3 -- Reading Source tables (Simplified & Optimized)
+# #### Step-3 -- Reading Source tables (Fixed Type Mismatch)
 
 from pyspark.sql import functions as F
 from datetime import date
 
-# Define the date cutoffs
+# 1. Define Date/Year Cutoffs
 today = F.current_date()
 five_years_ago = F.date_sub(today, 365*6)
-start_year = date.today().year - 6
+
+# CRITICAL FIX: Convert start_year to STRING.
+# SAP stores MJAHR as string. Comparing Int (2020) >= String ('2020') kills performance.
+# By making this a string, we enable Partition Pruning.
+start_year_str = str(date.today().year - 6)
+
+print(f"Filtering MSEG for MJAHR >= '{start_year_str}' (String Match)")
 
 # --- 1. Read MKPF (Header) ---
-# We read ECC and S4H separately, select only required cols, filter, then union.
 try:
     mkpf_ecc = spark.read.table(paths["ecc"]["mkpf"]) \
                     .select("mblnr", "mjahr", "bldat") \
@@ -24,7 +29,7 @@ try:
 except:
     mkpf_s4h = None
 
-# Safe Union
+# Safe Union MKPF
 if mkpf_ecc and mkpf_s4h:
     mkpf = mkpf_ecc.unionByName(mkpf_s4h)
 elif mkpf_ecc:
@@ -33,22 +38,22 @@ else:
     mkpf = mkpf_s4h
 
 # --- 2. Read MSEG (Item) ---
-# We read ECC and S4H separately, select only required cols, filter by Year, then union.
+# FIX: Filter applied using STRING variable (start_year_str)
 try:
     mseg_ecc = spark.read.table(paths["ecc"]["mseg"]) \
                     .select("mblnr", "mjahr", "zeile", "matnr", "menge", "shkzg", "bwart") \
-                    .filter(F.col("mjahr") >= start_year)
+                    .filter(F.col("mjahr") >= start_year_str) 
 except:
     mseg_ecc = None
 
 try:
     mseg_s4h = spark.read.table(paths["s4h"]["mseg"]) \
                     .select("mblnr", "mjahr", "zeile", "matnr", "menge", "shkzg", "bwart") \
-                    .filter(F.col("mjahr") >= start_year)
+                    .filter(F.col("mjahr") >= start_year_str)
 except:
     mseg_s4h = None
 
-# Safe Union
+# Safe Union MSEG
 if mseg_ecc and mseg_s4h:
     mseg = mseg_ecc.unionByName(mseg_s4h)
 elif mseg_ecc:
@@ -56,8 +61,7 @@ elif mseg_ecc:
 else:
     mseg = mseg_s4h
 
-# --- 3. Read Other Tables (Standard Union) ---
-# Keeping the original simple helper for the smaller tables
+# --- 3. Read Other Tables ---
 def simple_union(key):
     try: df1 = spark.read.table(paths["ecc"][key])
     except: df1 = None
@@ -80,7 +84,3 @@ nha = spark.table("lhs_glb.omat_test.rpt_omat_obpn_buy_nha_dtls") \
            .select("cmpprtno", "nha", "isprocessed") \
            .filter(F.col("isprocessed") == "N") \
            .distinct()
-
-
-
-
