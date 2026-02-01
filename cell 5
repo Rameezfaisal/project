@@ -1,10 +1,116 @@
-Your “UNION logic” filter is wrong (missing ORs).
-In final = base.filter(...) you intended (cmpprtno=nha) OR (any_metric>0) but your code has line continuations without | operators, so the second block is not OR’ed as SAP UNION condition; it won’t match SAP row inclusion. 
+# #### Step-5 (Corrected & Faithful) -- Manufacturing Consumption
+# Fixes:
+# 1. Added MAKTX to groupBy to prevent summing across languages (Inflating results).
+#    SAP groups by MAKTX, creating duplicate rows for the same MATNR if multiple descriptions exist.
+#    These duplicates are later removed by SELECT DISTINCT in the INSERT step.
+#    Grouping only by MATNR would sum them (e.g., 10+10=20 instead of DISTINCT(10)=10).
+# 2. Maintained strict 5-year global window (Widest required range).
+
+mfg_all = (
+    mseg.join(mkpf, ["mblnr", "mjahr"], "inner")
+        # 1. Scope Filter
+        .join(F.broadcast(nhalist), mseg.matnr == nhalist.nha) 
+        # 2. MAKT Filter (Inner join acts as filter for valid materials)
+        .join(makt, mseg.matnr == makt.matnr, "inner")
+        .filter(
+            (mseg.bwart.isin("261","262")) &
+            # 3. Global Time Window (Must cover the widest requirement: 5 Years)
+            (mkpf.bldat > F.date_sub(today, 365*5)) &
+            (mkpf.bldat < today) 
+        )
+        # CRITICAL FIX: Group by MAKTX to match SAP grain and prevent sum inflation
+        .groupBy(
+            nhalist.cmpprtno.alias("cmpprtno_cd"), 
+            mseg.matnr.alias("nha_cd"), 
+            makt.maktx  # Included to force SAP-like grain
+        )
+        .agg(
+            # 12 Month Logic
+            F.sum(
+                F.when((mkpf.bldat > F.date_sub(today, 365)) & (mseg.shkzg=="S"), -mseg.menge)
+                 .when((mkpf.bldat > F.date_sub(today, 365)), mseg.menge)
+                 .otherwise(0)
+            ).alias("mfg_12mnths_consumption"),
+            
+            # 3 Year Logic
+            F.sum(
+                F.when((mkpf.bldat > F.date_sub(today, 365*3)) & (mseg.shkzg=="S"), -mseg.menge)
+                 .when((mkpf.bldat > F.date_sub(today, 365*3)), mseg.menge)
+                 .otherwise(0)
+            ).alias("mfg_3yrs_consumption"),
+            
+            # 5 Year Logic (Base)
+            F.sum(
+                F.when(mseg.shkzg=="S", -mseg.menge).otherwise(mseg.menge)
+            ).alias("mfg_5yrs_consumption")
+        )
+)
 
 
-MAKT join is not SAP-faithful (missing spras='E' and can duplicate).
-SAP joins CV_MAKT but in the MFG consumption steps it groups by C.MAKTX and doesn’t filter SPRAS, so the join can multiply rows if multiple languages exist; your join is mseg.matnr == makt.matnr with no language filter and no distinct, which can change consumption sums compared to SAP depending on MAKT contents.
 
 
-MFG time window is now too strict vs SAP for 3Y/12M.
-You added a global filter mkpf.bldat > today-5y AND mkpf.bldat < today before aggregation. In SAP, only the 3Y/12M measures have those narrower windows, but the base query still includes records back 3Y/12M respectively; your global 5Y filter is ok for 5Y, but you also changed the lower bound behavior for 3Y/12M when data older than 5Y isn’t needed—this is fine; the bigger issue is you removed SAP’s D.BLDAT < CURRENT_DATE in each metric check but you did include < today globally, so that part is aligned.
+
+
+
+
+
+# #### Step-11 -- Final Insert (Faithful Logic)
+
+base = (
+    nhalist.alias("a")
+    # Note: Joining on 'nha' alone might multiply rows if mfg_all has multiple MAKTX entries.
+    # This is intended behavior to match SAP intermediate state before distinct.
+    .join(mfg_all.alias("b"), nhalist.nha == mfg_all.nha_cd, "left")
+    .join(demand_all.alias("c"), nhalist.nha == demand_all.nha_cd, "left")
+    .join(sprs_all.alias("d"), nhalist.nha == sprs_all.nha_cd, "left")
+    .join(lamqoh.alias("g"), nhalist.nha == lamqoh.nha_cd, "left")
+    .join(openpo.alias("h"), nhalist.nha == openpo.nha_cd, "left")
+    .select(
+        nhalist.cmpprtno.alias("cmpprtno"),
+        nhalist.nha.alias("nha"),
+        F.col("b.mfg_3yrs_consumption").cast("int"),
+        F.col("b.mfg_12mnths_consumption").cast("int"),
+        F.col("b.mfg_5yrs_consumption").cast("int"),
+        F.col("c.mfg_dmd").cast("int"),
+        F.col("c.sprs_dmd").cast("int"),
+        F.col("d.sprs_3yrs_consumption").cast("int"),
+        F.col("d.sprs_5yrs_consumption").cast("int"),
+        F.col("g.lamqoh").cast("int"),
+        F.col("g.restricted_all_stock").cast("int"),
+        F.col("h.open_po_qty").cast("int")
+    )
+)
+
+# Faithful Replication of SAP UNION Logic
+# Structure: (Branch 1) OR (Branch 2)
+# Branch 1: cmpprtno == nha
+# Branch 2: Any metric > 0
+# CRITICAL FIX: Explicit '|' operators added for every line.
+
+final = base.filter(
+    (F.col("cmpprtno") == F.col("nha")) | 
+    (
+        (F.coalesce(F.col("mfg_3yrs_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("mfg_dmd"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("sprs_dmd"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("sprs_3yrs_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("mfg_12mnths_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("open_po_qty"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("mfg_5yrs_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("sprs_5yrs_consumption"), F.lit(0)) > 0)
+    )
+).distinct() # CRITICAL: Added distinct() to collapse any MAKTX-induced duplicates
+
+final.createOrReplaceTempView("final_dmd")
+
+spark.sql(f"""
+INSERT INTO {tgt_dmd} 
+(cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
+ mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
+ last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption)
+SELECT 
+ cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
+ mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
+ last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption
+FROM final_dmd
+""")
