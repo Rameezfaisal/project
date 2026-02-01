@@ -1,123 +1,60 @@
-# #### Step-5 (Corrected & 100% Faithful) -- Manufacturing Consumption
-# Fixes:
-# 1. Join Key: Uses 'mblnr' ONLY (Removes 'mjahr'). Matches SAP exactly.
-#    Note: This allows cross-year matches (Cartesian product) if doc IDs recycle.
-# 2. MAKT Logic: No 'SPRAS' filter. Groups by 'maktx' to replicate SAP's 
-#    grain (summing per description language), preserving the exact aggregation behavior.
+UnsupportedOperationException             Traceback (most recent call last)
+Cell In[261], line 106
+     85 # 8.6 Delta MERGE (UPDATE)
+     87 delta_tbl = DeltaTable.forName(spark, tgt_suppliers)
+     89 (
+     90     delta_tbl.alias("t")
+     91     .merge(df_update.alias("s"), "t.nha = s.nha")
+     92     .whenMatchedUpdate(set={
+     93         "suppcd_1900":"s.suppcd_1900",
+     94         "suppname_1900":"s.suppname_1900",
+     95         "suppcd_2000":"s.suppcd_2000",
+     96         "suppname_2000":"s.suppname_2000",
+     97         "suppcd_3120":"s.suppcd_3120",
+     98         "suppname_3120":"s.suppname_3120",
+     99         "suppcd_1050":"s.suppcd_1050",
+    100         "suppname_1050":"s.suppname_1050",
+    101         "suppcd_1060":"s.suppcd_1060",
+    102         "suppname_1060":"s.suppname_1060",
+    103         "suppcd_1090":"s.suppcd_1090",
+    104         "suppname_1090":"s.suppname_1090"
+    105     })
+--> 106     .execute()
+    107 )
 
-mfg_all = (
-    mseg.join(mkpf, "mblnr", "inner") # <--- FAITHFUL: Join on MBLNR only
-        # 1. Scope Filter
-        .join(F.broadcast(nhalist), mseg.matnr == nhalist.nha) 
-        # 2. MAKT Join (Unfiltered, matches SAP)
-        .join(makt, mseg.matnr == makt.matnr, "inner")
-        .filter(
-            (mseg.bwart.isin("261","262")) &
-            # 3. Global Time Window (Matches SAP's implicit bounds for the data range)
-            (mkpf.bldat > F.date_sub(today, 365*5)) &
-            (mkpf.bldat < today) 
-        )
-        # 4. Group by MAKTX: Mirrors SAP's handling of multi-language rows
-        .groupBy(
-            nhalist.cmpprtno.alias("cmpprtno_cd"), 
-            mseg.matnr.alias("nha_cd"), 
-            makt.maktx 
-        )
-        .agg(
-            # 12 Month Logic
-            F.sum(
-                F.when((mkpf.bldat > F.date_sub(today, 365)) & (mseg.shkzg=="S"), -mseg.menge)
-                 .when((mkpf.bldat > F.date_sub(today, 365)), mseg.menge)
-                 .otherwise(0)
-            ).alias("mfg_12mnths_consumption"),
-            
-            # 3 Year Logic
-            F.sum(
-                F.when((mkpf.bldat > F.date_sub(today, 365*3)) & (mseg.shkzg=="S"), -mseg.menge)
-                 .when((mkpf.bldat > F.date_sub(today, 365*3)), mseg.menge)
-                 .otherwise(0)
-            ).alias("mfg_3yrs_consumption"),
-            
-            # 5 Year Logic
-            F.sum(
-                F.when(mseg.shkzg=="S", -mseg.menge).otherwise(mseg.menge)
-            ).alias("mfg_5yrs_consumption")
-        )
-        # 5. Distinct: Collapses the multi-language rows (Matches SAP Insert DISTINCT)
-        .drop("maktx")
-        .distinct()
-)
+File /usr/hdp/current/spark3-client/jars/delta-spark_2.12-3.2.1.20251125.5.jar/delta/tables.py:1065, in DeltaMergeBuilder.execute(self)
+   1058 @since(0.4)  # type: ignore[arg-type]
+   1059 def execute(self) -> None:
+   1060     """
+   1061     Execute the merge operation based on the built matched and not matched actions.
+   1062 
+   1063     See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
+   1064     """
+-> 1065     self._jbuilder.execute()
 
+File ~/cluster-env/trident_env/lib/python3.11/site-packages/py4j/java_gateway.py:1322, in JavaMember.__call__(self, *args)
+   1316 command = proto.CALL_COMMAND_NAME +\
+   1317     self.command_header +\
+   1318     args_command +\
+   1319     proto.END_COMMAND_PART
+   1321 answer = self.gateway_client.send_command(command)
+-> 1322 return_value = get_return_value(
+   1323     answer, self.gateway_client, self.target_id, self.name)
+   1325 for temp_arg in temp_args:
+   1326     if hasattr(temp_arg, "_detach"):
 
+File /opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py:185, in capture_sql_exception.<locals>.deco(*a, **kw)
+    181 converted = convert_exception(e.java_exception)
+    182 if not isinstance(converted, UnknownException):
+    183     # Hide where the exception came from that shows a non-Pythonic
+    184     # JVM exception message.
+--> 185     raise converted from None
+    186 else:
+    187     raise
 
-
-
-
-
-
-
-
-# #### Step-11 -- Final Insert (Faithful Logic)
-
-base = (
-    nhalist.alias("a")
-    .join(mfg_all.alias("b"), nhalist.nha == mfg_all.nha_cd, "left")
-    .join(demand_all.alias("c"), nhalist.nha == demand_all.nha_cd, "left")
-    .join(sprs_all.alias("d"), nhalist.nha == sprs_all.nha_cd, "left")
-    .join(lamqoh.alias("g"), nhalist.nha == lamqoh.nha_cd, "left")
-    .join(openpo.alias("h"), nhalist.nha == openpo.nha_cd, "left")
-    .select(
-        nhalist.cmpprtno.alias("cmpprtno"),
-        nhalist.nha.alias("nha"),
-        F.col("b.mfg_3yrs_consumption").cast("int"),
-        F.col("b.mfg_12mnths_consumption").cast("int"),
-        F.col("b.mfg_5yrs_consumption").cast("int"),
-        F.col("c.mfg_dmd").cast("int"),
-        F.col("c.sprs_dmd").cast("int"),
-        F.col("d.sprs_3yrs_consumption").cast("int"),
-        F.col("d.sprs_5yrs_consumption").cast("int"),
-        F.col("g.lamqoh").cast("int"),
-        F.col("g.restricted_all_stock").cast("int"),
-        F.col("h.open_po_qty").cast("int")
-    )
-)
-
-# --- INCLUSION LOGIC (UNION DISTINCT EQUIVALENT) ---
-
-# Branch 1: Self-Reference (CMPPRTNO = NHA)
-cond_self = (F.col("cmpprtno") == F.col("nha"))
-
-# Branch 2: Activity (Any metric > 0)
-# Note: Uses explicit '|' for logical OR between all metrics
-cond_activity = (
-    (F.coalesce(F.col("mfg_3yrs_consumption"), F.lit(0)) > 0) |
-    (F.coalesce(F.col("mfg_dmd"), F.lit(0)) > 0) |
-    (F.coalesce(F.col("sprs_dmd"), F.lit(0)) > 0) |
-    (F.coalesce(F.col("sprs_3yrs_consumption"), F.lit(0)) > 0) |
-    (F.coalesce(F.col("mfg_12mnths_consumption"), F.lit(0)) > 0) |
-    (F.coalesce(F.col("open_po_qty"), F.lit(0)) > 0) |
-    (F.coalesce(F.col("mfg_5yrs_consumption"), F.lit(0)) > 0) |
-    (F.coalesce(F.col("sprs_5yrs_consumption"), F.lit(0)) > 0)
-)
-
-# Logic: (Branch 1) OR (Branch 2) -> Matches SAP UNION DISTINCT
-final = (
-    base
-    .filter(cond_self | cond_activity) 
-    .distinct()
-    .withColumn("last_modified_on", F.current_date())
-)
-
-final.createOrReplaceTempView("final_dmd")
-
-spark.sql(f"""
-INSERT INTO {tgt_dmd} 
-(cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
- mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
- last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption)
-SELECT 
- cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
- mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
- last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption
-FROM final_dmd
-""")
+UnsupportedOperationException: [DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE] Cannot perform Merge as multiple source rows matched and attempted to modify the same
+target row in the Delta table in possibly conflicting ways. By SQL semantics of Merge,
+when multiple source rows match on the same target row, the result may be ambiguous
+as it is unclear which source row should be used to update or delete the matching
+target row. You can preprocess the source table to eliminate the possibility of
+multiple matches.
