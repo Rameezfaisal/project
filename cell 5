@@ -1,62 +1,3 @@
-# #### Step-5 (Corrected & Faithful) -- Manufacturing Consumption
-# Corrections:
-# 1. Inner Join MAKT: Acts as a filter (drops materials with no description).
-# 2. Aggregation: Groups by MAKTX to prevent summing across languages.
-# 3. DISTINCT: Drops MAKTX and deduplicates immediately (Matches SAP MFGCONS CTE).
-
-mfg_all = (
-    mseg.join(mkpf, ["mblnr", "mjahr"], "inner")
-        # 1. Scope Filter
-        .join(F.broadcast(nhalist), mseg.matnr == nhalist.nha) 
-        # 2. MAKT Join (Inner Join = Filter)
-        .join(makt, mseg.matnr == makt.matnr, "inner")
-        .filter(
-            (mseg.bwart.isin("261","262")) &
-            # 3. Global Time Window (Widest required range: 5 Years)
-            (mkpf.bldat > F.date_sub(today, 365*5)) &
-            (mkpf.bldat < today) 
-        )
-        .groupBy(
-            nhalist.cmpprtno.alias("cmpprtno_cd"), 
-            mseg.matnr.alias("nha_cd"), 
-            makt.maktx # Group by Description to isolate language-specific rows
-        )
-        .agg(
-            # 12 Month Logic (Conditional)
-            F.sum(
-                F.when((mkpf.bldat > F.date_sub(today, 365)) & (mseg.shkzg=="S"), -mseg.menge)
-                 .when((mkpf.bldat > F.date_sub(today, 365)), mseg.menge)
-                 .otherwise(0)
-            ).alias("mfg_12mnths_consumption"),
-            
-            # 3 Year Logic (Conditional)
-            F.sum(
-                F.when((mkpf.bldat > F.date_sub(today, 365*3)) & (mseg.shkzg=="S"), -mseg.menge)
-                 .when((mkpf.bldat > F.date_sub(today, 365*3)), mseg.menge)
-                 .otherwise(0)
-            ).alias("mfg_3yrs_consumption"),
-            
-            # 5 Year Logic (Base)
-            F.sum(
-                F.when(mseg.shkzg=="S", -mseg.menge).otherwise(mseg.menge)
-            ).alias("mfg_5yrs_consumption")
-        )
-        # CRITICAL FIX: Match SAP's "SELECT DISTINCT" behavior.
-        # We drop the description column and dedup the rows so we get 1 row per NHA.
-        .drop("maktx")
-        .distinct()
-)
-
-
-
-
-
-
-
-
-
-
-
 # #### Step-11 -- Final Insert (Faithful Logic)
 
 base = (
@@ -83,6 +24,7 @@ base = (
     )
 )
 
+
 # --- DEFINING THE INCLUSION LOGIC EXPLICITLY ---
 
 # Condition 1: CMPPRTNO equals NHA (The "Self-Reference" Branch)
@@ -102,7 +44,13 @@ cond_activity = (
 
 # Faithful Replication of SAP UNION DISTINCT:
 # (Rows from Branch 1) OR (Rows from Branch 2)
-final = base.filter(cond_self | cond_activity).distinct().withColumn("last_modified_on", F.current_date())
+final = (
+    base
+    .filter(cond_self | cond_activity)   # <- UNION DISTINCT equivalent
+    .distinct()
+    .withColumn("last_modified_on", F.current_date())
+)
+
 
 final.createOrReplaceTempView("final_dmd")
 
