@@ -1,57 +1,11 @@
-# ===== Step 1: Create NHALIST (Cached for reuse) =====
-# FIX APPLIED: Added F.trim() to remove leading spaces
-nhalist = (
-    nha
-    .select(
-        F.col("cmpprtno"), 
-        F.trim(F.col("nha")).alias("nha") # <--- CRITICAL FIX
-    )
-    .filter(F.col("isprocessed") == "N")
-    .distinct()
-    .cache()
-)
+print("--- 1. MKPF (bldat) ---")
+mkpf.select("bldat").printSchema()
+mkpf.select("bldat").show(5, truncate=False)
 
-print(f"NHALIST Count: {nhalist.count()}")
+print("\n--- 2. SPARES (actual_gi) ---")
+spares.select("actual_gi").printSchema()
+spares.select("actual_gi").show(5, truncate=False)
 
-
-
-
-
-
-
-
-
-# ... (Previous read logic) ...
-
-# Clean MSEG
-mseg = read_with_year_filter("mseg", "mjahr", start_year_5) \
-    .select("mblnr", "mjahr", "zeile", "matnr", "menge", "shkzg", "bwart") \
-    .withColumn("matnr", F.trim(F.col("matnr")))  # <--- FIX
-
-# Clean MAKT
-makt = read_union_fast("makt").select("matnr", "maktx") \
-    .withColumn("matnr", F.trim(F.col("matnr")))  # <--- FIX
-
-# Clean FORECAST (Demand)
-forecast = read_union_fast("zmmforecast") \
-    .withColumn("matnr", F.trim(F.col("matnr")))  # <--- FIX
-
-# Clean MARD (Stock)
-mard = read_union_fast("mard") \
-    .withColumn("matnr", F.trim(F.col("matnr")))  # <--- FIX
-
-# Clean PO
-po = read_union_fast("zpo_hstry") \
-    .withColumn("matnr", F.trim(F.col("matnr")))  # <--- FIX
-
-# ... (Rest of code)
-
-
-
-
-
-
-
-
-
-
+print("\n--- 3. PO (due_dt) ---")
+po.select("due_dt").printSchema()
+po.select("due_dt").show(5, truncate=False)
