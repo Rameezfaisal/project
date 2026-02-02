@@ -1,1 +1,27 @@
-AnalysisException: Column matnr#7419 are ambiguous. It's probably because you joined several Datasets together, and some of these Datasets are the same. This column points to one of the Datasets but Spark is unable to figure out which one. Please alias the Datasets with different names via `Dataset.as` before joining them, and specify the column using qualified name, e.g. `df.as("a").join(df.as("b"), $"a.id" > $"b.id")`. You can also set spark.sql.analyzer.failAmbiguousSelfJoin to false to disable this check.
+# Base join structure with explicit column references
+base = (
+    nhalist.alias("a")
+    .join(mfgcons.alias("b"), F.col("a.nha") == F.col("b.matnr"), "left")
+    .join(mfgdmd.alias("c"), F.col("a.nha") == F.col("c.matnr"), "left")
+    .join(sprsdmd.alias("d"), F.col("a.nha") == F.col("d.matnr"), "left")
+    .join(sprscons.alias("e"), F.col("a.nha") == F.col("e.material"), "left")
+    .join(mfg12mnthscons.alias("f"), F.col("a.nha") == F.col("f.matnr"), "left")
+    .join(lamqoh.alias("g"), F.col("a.nha") == F.col("g.matnr"), "left")
+    .join(openpoqty.alias("h"), F.col("a.nha") == F.col("h.matnr"), "left")
+    .join(mfg5yrscons.alias("i"), F.col("a.nha") == F.col("i.matnr"), "left")
+    .join(sprs5yrscons.alias("j"), F.col("a.nha") == F.col("j.material"), "left")
+    .select(
+        F.col("a.cmpprtno").alias("cmpprtno"),
+        F.col("a.nha").alias("nha"),
+        F.coalesce(F.col("b.mfg_3yrs_consumption"), F.lit(0)).cast("decimal(15,3)").alias("mfg_3yrs_consumption"),
+        F.coalesce(F.col("c.mfg_dmd"), F.lit(0)).cast("decimal(15,3)").alias("mfg_dmd"),
+        F.coalesce(F.col("d.sprs_dmd"), F.lit(0)).cast("decimal(15,3)").alias("sprs_dmd"),
+        F.coalesce(F.col("e.sprs_3yrs_consumption"), F.lit(0)).cast("decimal(15,3)").alias("sprs_3yrs_consumption"),
+        F.coalesce(F.col("f.mfg_12mnths_consumption"), F.lit(0)).cast("decimal(15,3)").alias("mfg_12mnths_consumption"),
+        F.coalesce(F.col("g.lamqoh"), F.lit(0)).cast("decimal(15,3)").alias("lamqoh"),
+        F.coalesce(F.col("g.restricted_all_stock"), F.lit(0)).cast("decimal(15,3)").alias("restricted_all_stock"),
+        F.coalesce(F.col("h.open_po_qty"), F.lit(0)).cast("decimal(15,3)").alias("open_po_qty"),
+        F.coalesce(F.col("i.mfg_5yrs_consumption"), F.lit(0)).cast("decimal(15,3)").alias("mfg_5yrs_consumption"),
+        F.coalesce(F.col("j.sprs_5yrs_consumption"), F.lit(0)).cast("decimal(15,3)").alias("sprs_5yrs_consumption")
+    )
+)
