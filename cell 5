@@ -1,83 +1,57 @@
-# Try this check in a new cell
-mseg.select("matnr").show(5)
-nhalist.select("nha").show(5)
-# If they look different (one has zeros, one doesn't), that's your bug.
+# ===== Step 1: Create NHALIST (Cached for reuse) =====
+# FIX APPLIED: Added F.trim() to remove leading spaces
+nhalist = (
+    nha
+    .select(
+        F.col("cmpprtno"), 
+        F.trim(F.col("nha")).alias("nha") # <--- CRITICAL FIX
+    )
+    .filter(F.col("isprocessed") == "N")
+    .distinct()
+    .cache()
+)
 
-
-+--------------+
-|         matnr|
-+--------------+
-|853-264501-004|
-|853-304177-001|
-|714-251520-101|
-|714-251520-101|
-|734-057609-175|
-+--------------+
-only showing top 5 rows
-
-+---------------+
-|            nha|
-+---------------+
-|       1COR-DEP|
-| 575-053822-361|
-| 853-312132-700|
-| 846-A57912-135|
-|1PL-01099-12-01|
-+---------------+
-only showing top 5 rows
+print(f"NHALIST Count: {nhalist.count()}")
 
 
 
 
 
 
-# Check max year in source
-spark.read.table(paths["ecc"]["mseg"]).agg(F.max("mjahr")).show()
-
-
-+----------+
-|max(mjahr)|
-+----------+
-|      2026|
-+----------+
 
 
 
+# ... (Previous read logic) ...
 
-# 1. Check Data Format (Zeros)
-print("--- MATNR FORMAT CHECK ---")
-mseg.select("matnr").limit(3).show()
-nhalist.select("nha").limit(3).show()
+# Clean MSEG
+mseg = read_with_year_filter("mseg", "mjahr", start_year_5) \
+    .select("mblnr", "mjahr", "zeile", "matnr", "menge", "shkzg", "bwart") \
+    .withColumn("matnr", F.trim(F.col("matnr")))  # <--- FIX
 
-# 2. Check Date Range
-print("--- DATA DATE RANGE CHECK ---")
-mseg.agg(F.min("mjahr"), F.max("mjahr")).show()
-print(f"Filter being applied: >= {start_year_5}")
+# Clean MAKT
+makt = read_union_fast("makt").select("matnr", "maktx") \
+    .withColumn("matnr", F.trim(F.col("matnr")))  # <--- FIX
+
+# Clean FORECAST (Demand)
+forecast = read_union_fast("zmmforecast") \
+    .withColumn("matnr", F.trim(F.col("matnr")))  # <--- FIX
+
+# Clean MARD (Stock)
+mard = read_union_fast("mard") \
+    .withColumn("matnr", F.trim(F.col("matnr")))  # <--- FIX
+
+# Clean PO
+po = read_union_fast("zpo_hstry") \
+    .withColumn("matnr", F.trim(F.col("matnr")))  # <--- FIX
+
+# ... (Rest of code)
 
 
 
---- MATNR FORMAT CHECK ---
-+--------------+
-|         matnr|
-+--------------+
-|853-264501-004|
-|853-304177-001|
-|714-251520-101|
-+--------------+
 
-+--------------+
-|           nha|
-+--------------+
-|      1COR-DEP|
-|575-053822-361|
-|853-312132-700|
-+--------------+
 
---- DATA DATE RANGE CHECK ---
-+----------+----------+
-|min(mjahr)|max(mjahr)|
-+----------+----------+
-|      2020|      2026|
-+----------+----------+
 
-Filter being applied: >= 2020
+
+
+
+
