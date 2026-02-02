@@ -1,11 +1,46 @@
-print("--- 1. MKPF (bldat) ---")
-mkpf.select("bldat").printSchema()
-mkpf.select("bldat").show(5, truncate=False)
+--- 1. MKPF (bldat) ---
+root
+ |-- bldat: string (nullable = true)
 
-print("\n--- 2. SPARES (actual_gi) ---")
-spares.select("actual_gi").printSchema()
-spares.select("actual_gi").show(5, truncate=False)
++--------+
+|bldat   |
++--------+
+|20210306|
+|20210308|
+|20210310|
+|20210313|
+|20210315|
++--------+
+only showing top 5 rows
 
-print("\n--- 3. PO (due_dt) ---")
-po.select("due_dt").printSchema()
-po.select("due_dt").show(5, truncate=False)
+
+--- 2. SPARES (actual_gi) ---
+root
+ |-- actual_gi: timestamp (nullable = true)
+
++-------------------+
+|actual_gi          |
++-------------------+
+|2023-11-10 00:00:00|
+|2023-02-23 00:00:00|
+|2022-05-13 00:00:00|
+|2022-06-02 00:00:00|
+|2022-06-13 00:00:00|
++-------------------+
+only showing top 5 rows
+
+
+--- 3. PO (due_dt) ---
+root
+ |-- due_dt: string (nullable = true)
+
++--------+
+|due_dt  |
++--------+
+|20251111|
+|20241118|
+|20241118|
+|20251013|
+|20251013|
++--------+
+only showing top 5 rows
