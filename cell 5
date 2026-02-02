@@ -4,23 +4,42 @@ nhalist.select("nha").show(5)
 # If they look different (one has zeros, one doesn't), that's your bug.
 
 
++--------------+
+|         matnr|
++--------------+
+|853-264501-004|
+|853-304177-001|
+|714-251520-101|
+|714-251520-101|
+|734-057609-175|
++--------------+
+only showing top 5 rows
+
++---------------+
+|            nha|
++---------------+
+|       1COR-DEP|
+| 575-053822-361|
+| 853-312132-700|
+| 846-A57912-135|
+|1PL-01099-12-01|
++---------------+
+only showing top 5 rows
 
 
 
 
-
-# From In[7]
-current_year = date.today().year
-start_year_5 = str(current_year - 6) 
-# ...
-df = df.filter(F.col(year_col) >= min_year)
 
 
 # Check max year in source
 spark.read.table(paths["ecc"]["mseg"]).agg(F.max("mjahr")).show()
 
 
-
++----------+
+|max(mjahr)|
++----------+
+|      2026|
++----------+
 
 
 
@@ -35,3 +54,30 @@ print("--- DATA DATE RANGE CHECK ---")
 mseg.agg(F.min("mjahr"), F.max("mjahr")).show()
 print(f"Filter being applied: >= {start_year_5}")
 
+
+
+--- MATNR FORMAT CHECK ---
++--------------+
+|         matnr|
++--------------+
+|853-264501-004|
+|853-304177-001|
+|714-251520-101|
++--------------+
+
++--------------+
+|           nha|
++--------------+
+|      1COR-DEP|
+|575-053822-361|
+|853-312132-700|
++--------------+
+
+--- DATA DATE RANGE CHECK ---
++----------+----------+
+|min(mjahr)|max(mjahr)|
++----------+----------+
+|      2020|      2026|
++----------+----------+
+
+Filter being applied: >= 2020
