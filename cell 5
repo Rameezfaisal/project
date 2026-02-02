@@ -1,89 +1,7 @@
-current_level = 1
-
-while current_level <= explode_level:
-
-    # Split parts into non-phantom and phantom
-    # Non-phantom parts (MATKL != 'X') are prioritized per SAP business rules
-    df_non_phantom = (
-        df_nhalist
-        .filter(
-            (F.col("level") == current_level) &
-            (F.col("exploded") == "N") &
-            (F.col("nhamatkl") != "X") &
-            (~F.col("nhamstae").isin("ob","os","op"))
-        )
-        .select(
-            F.col("cmpprtno").alias("cmpprtno"),
-            F.col("nha").alias("parent_nha")
-        )
-        .distinct()
-    )
-
-    df_phantom = (
-        df_nhalist
-        .filter(
-            (F.col("level") == current_level) &
-            (F.col("exploded") == "N") &
-            (F.col("nhamatkl") == "X") &
-            (~F.col("nhamstae").isin("ob","os","op"))
-        )
-        .select(
-            F.col("cmpprtno").alias("cmpprtno"),
-            F.col("nha").alias("parent_nha")
-        )
-        .distinct()
-    )
-
-    # Process non-phantom first, phantom only if no non-phantom exists
-    if df_non_phantom.count() > 0:
-        df_to_explode = df_non_phantom
-    elif df_phantom.count() > 0:
-        df_to_explode = df_phantom
-    else:
-        # No parts to explode at this level
-        break
-
-    # Get parent NHAs from BOM
-    df_children = (
-        df_to_explode.alias("p")
-        .join(df_bom.alias("b"), F.col("b.bomcpno") == F.col("p.parent_nha"), "inner")
-        .join(df_mara.alias("m"), F.col("b.prtno") == F.col("m.matnr"), "inner")
-        .filter(
-            (F.col("b.postp") == "L") &
-            (F.col("b.bomedat") <= F.current_date()) &
-            (F.col("b.bomidat") > F.current_date())
-        )
-        .select(
-            F.lit(0).alias("rowno"),
-            F.col("p.cmpprtno").alias("cmpprtno"),
-            F.col("b.prtno").alias("nha"),
-            F.lit(current_level + 1).alias("level"),
-            F.col("b.bomcpno").alias("childpn"),
-            F.col("b.bomitem").alias("bomitem"),
-            F.col("b.bomqpa").alias("bomqpa"),
-            F.lit(0).alias("cmpqpa"),
-            F.col("m.matkl").alias("nhamatkl"),
-            F.col("m.mstae").alias("nhamstae"),
-            F.lit("N").alias("exploded")
-        )
-    )
-
-    # Append children
-    df_nhalist = df_nhalist.unionByName(df_children)
-
-    # Mark current level as exploded
-    df_nhalist = (
-        df_nhalist
-        .withColumn(
-            "exploded",
-            F.when(
-                (F.col("level") == current_level) & (F.col("exploded") == "N"),
-                "Y"
-            ).otherwise(F.col("exploded"))
-        )
-    )
-
-    current_level = current_level + 1
+# Try this check in a new cell
+mseg.select("matnr").show(5)
+nhalist.select("nha").show(5)
+# If they look different (one has zeros, one doesn't), that's your bug.
 
 
 
@@ -91,59 +9,15 @@ while current_level <= explode_level:
 
 
 
+# From In[7]
+current_year = date.today().year
+start_year_5 = str(current_year - 6) 
+# ...
+df = df.filter(F.col(year_col) >= min_year)
 
 
-
-# Assign row numbers per level (SAP ROWN0)
-w = Window.partitionBy("level").orderBy("nha", "childpn")
-df_nhalist = df_nhalist.withColumn("rowno", F.row_number().over(w))
-
-# Level 1 CMPQPA = BOMQPA
-df_nhalist = df_nhalist.withColumn(
-    "cmpqpa",
-    F.when(F.col("level") == 1, F.col("bomqpa")).otherwise(F.col("cmpqpa"))
-)
-
-# Get max level safely
-row = df_nhalist.select(F.max("level").alias("maxlvl")).collect()[0]
-max_level = row["maxlvl"]
-
-# Only run propagation if levels exist
-if max_level is not None and max_level >= 2:
-
-    for lvl in range(2, max_level + 1):
-
-        # CRITICAL FIX: Aggregate parent CMPQPA values with SUM
-        # This handles cases where a child has multiple parents at the same level
-        # SAP Logic: SELECT X.BOMQPA * SUM(Y.CMPQPA) ... GROUP BY Y.NHA, X.BOMQPA
-        parent_agg = (
-            df_nhalist
-            .filter(F.col("level") == lvl - 1)
-            .groupBy("nha")  # Group by parent NHA
-            .agg(F.sum("cmpqpa").alias("parent_cmpqpa_sum"))  # SUM parent quantities
-        )
-
-        # Join aggregated parent data and calculate CMPQPA
-        df_nhalist = (
-            df_nhalist.alias("x")
-            .join(
-                parent_agg.alias("y"),
-                (F.col("x.childpn") == F.col("y.nha")) &
-                (F.col("x.level") == lvl),
-                "left"
-            )
-            .withColumn(
-                "cmpqpa",
-                F.when(
-                    F.col("x.level") == lvl,
-                    F.col("x.bomqpa") * F.coalesce(F.col("y.parent_cmpqpa_sum"), F.lit(0))
-                ).otherwise(F.col("x.cmpqpa"))
-            )
-            .select("x.*")
-        )
-
-# Refresh temp view
-df_nhalist.createOrReplaceTempView("nhalist")
+# Check max year in source
+spark.read.table(paths["ecc"]["mseg"]).agg(F.max("mjahr")).show()
 
 
 
@@ -151,48 +25,13 @@ df_nhalist.createOrReplaceTempView("nhalist")
 
 
 
+# 1. Check Data Format (Zeros)
+print("--- MATNR FORMAT CHECK ---")
+mseg.select("matnr").limit(3).show()
+nhalist.select("nha").limit(3).show()
 
-
-
-# ===================================================================
-# Step 8.5 - Data Quality Check: Detect Duplicate NHA Records
-# ===================================================================
-
-# Check for duplicate (cmpprtno, nha, level, childpn) combinations
-# This should NOT happen if CMPQPA calculation is correct
-
-duplicate_check = (
-    df_nhalist
-    .groupBy("cmpprtno", "nha", "level", "childpn")
-    .count()
-    .filter(F.col("count") > 1)
-)
-
-duplicate_count = duplicate_check.count()
-
-if duplicate_count > 0:
-    print(f"⚠️ WARNING: Found {duplicate_count} duplicate NHA records!")
-    print("This indicates a bug in CMPQPA calculation or BOM explosion logic.")
-    print("Showing first 20 duplicates:")
-    duplicate_check.orderBy(F.col("count").desc()).show(20, truncate=False)
-    
-    # Optional: Remove duplicates by keeping first record
-    # Uncomment if you want automatic deduplication (not recommended - fix root cause instead)
-    # df_nhalist = df_nhalist.dropDuplicates(["cmpprtno", "nha", "level", "childpn"])
-    # print(f"✓ Removed duplicates. Remaining records: {df_nhalist.count()}")
-else:
-    print("✓ Data Quality Check PASSED: No duplicate NHA records found.")
-
-# Check for null CMPQPA values (should not happen)
-null_cmpqpa = df_nhalist.filter(F.col("cmpqpa").isNull()).count()
-
-if null_cmpqpa > 0:
-    print(f"⚠️ WARNING: Found {null_cmpqpa} records with NULL CMPQPA!")
-    df_nhalist.filter(F.col("cmpqpa").isNull()).show(20, truncate=False)
-else:
-    print("✓ Data Quality Check PASSED: No NULL CMPQPA values found.")
-
-# Refresh temp view
-df_nhalist.createOrReplaceTempView("nhalist")
-
+# 2. Check Date Range
+print("--- DATA DATE RANGE CHECK ---")
+mseg.agg(F.min("mjahr"), F.max("mjahr")).show()
+print(f"Filter being applied: >= {start_year_5}")
 
