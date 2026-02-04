@@ -1,3 +1,43 @@
-AnalysisException: [DATATYPE_MISMATCH.CAST_WITH_FUNC_SUGGESTION] Cannot resolve "mfg_3yrs_consumption" due to data type mismatch: cannot cast "DECIMAL(15,3)" to "DATE".
-To convert values from "DECIMAL(15,3)" to "DATE", you can use the functions `DATE_FROM_UNIX_DATE` instead.;
-'AppendData RelationV2[cmpprtno#474646, lamqoh#474647, last_modified_on#474648, mfg_12mnths_consumption#474649, mfg_3yrs_consumption#474650, mfg_5yrs_consumption#474651, mfg_dmd#474652, nha#474653, open_po_qty#474654, restricted_all_stock#474655, sprs_3yrs_consumption#474656, sprs_5yrs_consumption#474657, sprs_dmd#474658] spark_catalog.chimcobldhq2atrjcpfn6qbcddfmer32bti78nr969p5uph5dhk6enr7dhh2apbecs.rpt_omat_dmd_consumption_dtls 
+The error indicates a column order mismatch between your DataFrame and the target table. The table expects columns in a different order. Here's the fix:
+# ===== Step 11: Insert into Target Table =====
+
+# IMPORTANT: Match the exact column order of the target table
+final_ordered = final.select(
+    "cmpprtno",
+    "nha",
+    "mfg_3yrs_consumption",
+    "mfg_dmd",
+    "sprs_dmd",
+    "sprs_3yrs_consumption",
+    "mfg_12mnths_consumption",
+    "lamqoh",
+    "restricted_all_stock",
+    "open_po_qty",
+    "last_modified_on",
+    "mfg_5yrs_consumption",
+    "sprs_5yrs_consumption"
+)
+
+# Option 1: Use SQL INSERT (explicit column mapping - SAFEST)
+final_ordered.createOrReplaceTempView("final_dmd")
+
+spark.sql(f"""
+INSERT INTO {tgt_dmd} 
+(cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
+ mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
+ last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption)
+SELECT 
+ cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
+ mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
+ last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption
+FROM final_dmd
+""")
+
+print(f"✅ Data inserted successfully")
+
+# Option 2: If you want to use DataFrame.write, match column order exactly
+# Get target table schema first
+target_schema = spark.table(tgt_dmd).schema
+# Then reorder your DataFrame to match
+# final_ordered.write.mode("append").format("delta").saveAsTable(tgt_dmd)
+Use Option 1 (SQL INSERT) - it's explicit about column mapping and safer. The error suggests the target table has columns in alphabetical order but you're providing them in a different order.
