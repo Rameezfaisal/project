@@ -1,3 +1,20 @@
+CREATE TABLE IF NOT EXISTS eng_test.omat_dmd_consumption_dtls (
+  cmpprtno                STRING,
+  lamqoh                  INT,
+  last_modified_on        DATE,
+  mfg_12mnths_consumption INT,
+  mfg_3yrs_consumption    INT,
+  mfg_5yrs_consumption    INT,
+  mfg_dmd                 INT,
+  nha                     STRING,
+  open_po_qty             INT,
+  restricted_all_stock    INT,
+  sprs_3yrs_consumption   INT,
+  sprs_5yrs_consumption   INT,
+  sprs_dmd                INT
+)
+USING DELTA;
+
 The error indicates a column order mismatch between your DataFrame and the target table. The table expects columns in a different order. Here's the fix:
 # ===== Step 11: Insert into Target Table =====
 
