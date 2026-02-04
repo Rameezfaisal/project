@@ -1,60 +1,75 @@
-CREATE TABLE IF NOT EXISTS eng_test.omat_dmd_consumption_dtls (
-  cmpprtno                STRING,
-  lamqoh                  INT,
-  last_modified_on        DATE,
-  mfg_12mnths_consumption INT,
-  mfg_3yrs_consumption    INT,
-  mfg_5yrs_consumption    INT,
-  mfg_dmd                 INT,
-  nha                     STRING,
-  open_po_qty             INT,
-  restricted_all_stock    INT,
-  sprs_3yrs_consumption   INT,
-  sprs_5yrs_consumption   INT,
-  sprs_dmd                INT
+Perfect! Now I can see the issue - the table columns are in alphabetical order and expects INT not DECIMAL(15,3). Here's the corrected final write:
+# ===== Step 11: Final JOIN and INSERT with CORRECT data types =====
+
+base = (
+    nhalist.alias("a")
+    .join(mfgcons.alias("b"), F.col("a.nha") == F.col("b.matnr"), "left")
+    .join(mfgdmd.alias("c"), F.col("a.nha") == F.col("c.matnr"), "left")
+    .join(sprsdmd.alias("d"), F.col("a.nha") == F.col("d.matnr"), "left")
+    .join(sprscons.alias("e"), F.col("a.nha") == F.col("e.material"), "left")
+    .join(mfg12mnthscons.alias("f"), F.col("a.nha") == F.col("f.matnr"), "left")
+    .join(lamqoh.alias("g"), F.col("a.nha") == F.col("g.matnr"), "left")
+    .join(openpoqty.alias("h"), F.col("a.nha") == F.col("h.matnr"), "left")
+    .join(mfg5yrscons.alias("i"), F.col("a.nha") == F.col("i.matnr"), "left")
+    .join(sprs5yrscons.alias("j"), F.col("a.nha") == F.col("j.material"), "left")
+    .select(
+        F.col("a.cmpprtno").alias("cmpprtno"),
+        F.col("a.nha").alias("nha"),
+        F.coalesce(F.col("b.mfg_3yrs_consumption"), F.lit(0)).cast("int").alias("mfg_3yrs_consumption"),
+        F.coalesce(F.col("c.mfg_dmd"), F.lit(0)).cast("int").alias("mfg_dmd"),
+        F.coalesce(F.col("d.sprs_dmd"), F.lit(0)).cast("int").alias("sprs_dmd"),
+        F.coalesce(F.col("e.sprs_3yrs_consumption"), F.lit(0)).cast("int").alias("sprs_3yrs_consumption"),
+        F.coalesce(F.col("f.mfg_12mnths_consumption"), F.lit(0)).cast("int").alias("mfg_12mnths_consumption"),
+        F.coalesce(F.col("g.lamqoh"), F.lit(0)).cast("int").alias("lamqoh"),
+        F.coalesce(F.col("g.restricted_all_stock"), F.lit(0)).cast("int").alias("restricted_all_stock"),
+        F.coalesce(F.col("h.open_po_qty"), F.lit(0)).cast("int").alias("open_po_qty"),
+        F.coalesce(F.col("i.mfg_5yrs_consumption"), F.lit(0)).cast("int").alias("mfg_5yrs_consumption"),
+        F.coalesce(F.col("j.sprs_5yrs_consumption"), F.lit(0)).cast("int").alias("sprs_5yrs_consumption")
+    )
 )
-USING DELTA;
 
-The error indicates a column order mismatch between your DataFrame and the target table. The table expects columns in a different order. Here's the fix:
-# ===== Step 11: Insert into Target Table =====
+# Apply UNION DISTINCT logic with single filter
+final = (
+    base
+    .filter(
+        # Branch 1: Self-reference OR Branch 2: Activity
+        (F.col("cmpprtno") == F.col("nha")) |
+        (F.col("mfg_3yrs_consumption") > 0) |
+        (F.col("mfg_dmd") > 0) |
+        (F.col("sprs_dmd") > 0) |
+        (F.col("sprs_3yrs_consumption") > 0) |
+        (F.col("mfg_12mnths_consumption") > 0) |
+        (F.col("open_po_qty") > 0) |
+        (F.col("mfg_5yrs_consumption") > 0) |
+        (F.col("sprs_5yrs_consumption") > 0)
+    )
+    .distinct()
+    .withColumn("last_modified_on", F.current_date())
+)
 
-# IMPORTANT: Match the exact column order of the target table
+# Reorder columns to match table DDL (ALPHABETICAL ORDER)
 final_ordered = final.select(
-    "cmpprtno",
-    "nha",
-    "mfg_3yrs_consumption",
-    "mfg_dmd",
-    "sprs_dmd",
-    "sprs_3yrs_consumption",
-    "mfg_12mnths_consumption",
-    "lamqoh",
-    "restricted_all_stock",
-    "open_po_qty",
-    "last_modified_on",
-    "mfg_5yrs_consumption",
-    "sprs_5yrs_consumption"
+    "cmpprtno",              # STRING
+    "lamqoh",                # INT
+    "last_modified_on",      # DATE
+    "mfg_12mnths_consumption", # INT
+    "mfg_3yrs_consumption",  # INT
+    "mfg_5yrs_consumption",  # INT
+    "mfg_dmd",               # INT
+    "nha",                   # STRING
+    "open_po_qty",           # INT
+    "restricted_all_stock",  # INT
+    "sprs_3yrs_consumption", # INT
+    "sprs_5yrs_consumption", # INT
+    "sprs_dmd"               # INT
 )
 
-# Option 1: Use SQL INSERT (explicit column mapping - SAFEST)
-final_ordered.createOrReplaceTempView("final_dmd")
+# Write using DataFrame API (fastest for large datasets)
+final_ordered.write.mode("append").saveAsTable(f"{tgt_dmd}")
 
-spark.sql(f"""
-INSERT INTO {tgt_dmd} 
-(cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
- mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
- last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption)
-SELECT 
- cmpprtno, nha, mfg_3yrs_consumption, mfg_dmd, sprs_dmd, sprs_3yrs_consumption,
- mfg_12mnths_consumption, lamqoh, restricted_all_stock, open_po_qty, 
- last_modified_on, mfg_5yrs_consumption, sprs_5yrs_consumption
-FROM final_dmd
-""")
-
-print(f"✅ Data inserted successfully")
-
-# Option 2: If you want to use DataFrame.write, match column order exactly
-# Get target table schema first
-target_schema = spark.table(tgt_dmd).schema
-# Then reorder your DataFrame to match
-# final_ordered.write.mode("append").format("delta").saveAsTable(tgt_dmd)
-Use Option 1 (SQL INSERT) - it's explicit about column mapping and safer. The error suggests the target table has columns in alphabetical order but you're providing them in a different order.
+print(f"✅ Data inserted successfully into {tgt_dmd}")
+Key changes:
+Changed all .cast("decimal(15,3)") to .cast("int") to match table schema
+Reordered columns to match alphabetical order in the DDL
+Used .saveAsTable() for better performance
+This should now work without schema mismatch errors!
