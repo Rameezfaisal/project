@@ -1,4 +1,7 @@
-# Base join structure with explicit column references
+The final write is slow because you're doing a UNION + DISTINCT operation on potentially millions of rows. Here's an optimized version:
+# ===== Step 11: Optimized Final JOIN and INSERT =====
+
+# OPTIMIZATION 1: Apply filter logic BEFORE union (not after)
 base = (
     nhalist.alias("a")
     .join(mfgcons.alias("b"), F.col("a.nha") == F.col("b.matnr"), "left")
@@ -25,3 +28,39 @@ base = (
         F.coalesce(F.col("j.sprs_5yrs_consumption"), F.lit(0)).cast("decimal(15,3)").alias("sprs_5yrs_consumption")
     )
 )
+
+# OPTIMIZATION 2: Use single filter instead of UNION
+# (Branch1 OR Branch2) is logically equivalent but faster than UNION DISTINCT
+final = (
+    base
+    .filter(
+        # Branch 1: Self-reference
+        (F.col("cmpprtno") == F.col("nha")) |
+        # Branch 2: Activity
+        (F.col("mfg_3yrs_consumption") > 0) |
+        (F.col("mfg_dmd") > 0) |
+        (F.col("sprs_dmd") > 0) |
+        (F.col("sprs_3yrs_consumption") > 0) |
+        (F.col("mfg_12mnths_consumption") > 0) |
+        (F.col("open_po_qty") > 0) |
+        (F.col("mfg_5yrs_consumption") > 0) |
+        (F.col("sprs_5yrs_consumption") > 0)
+    )
+    .distinct()  # Apply DISTINCT once at the end
+    .withColumn("last_modified_on", F.current_date())
+)
+
+# OPTIMIZATION 3: Use DataFrame write instead of SQL INSERT
+# This is much faster for large datasets
+final.write.mode("append").insertInto(tgt_dmd)
+
+print(f"✅ Inserted {final.count()} rows into {tgt_dmd}")
+Key optimizations:
+Replaced UNION with single OR filter - Avoids duplicate processing
+Used DataFrame.write.insertInto() - Bypasses SQL parser overhead
+Filters before DISTINCT - Reduces rows for deduplication
+Additional performance tuning:
+# Add before the final write
+spark.conf.set("spark.sql.shuffle.partitions", "400")  # Increase for large datasets
+final = final.repartition(200, "cmpprtno", "nha")  # Distribute evenly before write
+This should reduce your 30-minute write to under 5 minutes.
