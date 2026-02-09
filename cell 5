@@ -1,20 +1,10 @@
-I have a PySpark notebook migrated from an SAP HANA stored procedure. The notebook performs multiple transformations and writes one or more output tables. I want to generate comprehensive data engineering unit tests using SQL queries for this notebook.
+I have a PySpark notebook migrated from an SAP HANA stored procedure. The notebook performs multiple transformations and writes one or more output tables.
+I want to generate comprehensive data engineering unit tests using SQL queries for this notebook.
 Act as a Senior Data Engineer and analyze both the PySpark code and the SAP logic to derive meaningful test cases.
-1️⃣ PySpark Notebook Code
-(Paste the full notebook code here)
-2️⃣ Original SAP Procedure / Business Logic
-(Paste SAP SQL or describe the business transformation logic here)
-3️⃣ Input Tables + Schema
-Table: <input_table_1>
-Columns: <col1 datatype, col2 datatype, ...>
-Table: <input_table_2>
-Columns: <col1 datatype, col2 datatype, ...>
-4️⃣ Output Tables + Schema
-Table: <output_table_1>
-Columns: <col1 datatype, col2 datatype, ...>
-5️⃣ Load Type
-FULL LOAD or APPEND LOAD
-🎯 Task
+
+1. Original SAP Procedure / Business Logic is in the file i will provide
+
+🎯 Task:
 Generate SQL-based data validation test queries to validate the notebook logic.
 A. Input Data Validation
 Queries to check input tables are not empty
@@ -28,16 +18,18 @@ D. Data Quality Checks
 Queries to detect duplicate records based on business keys
 Queries to detect invalid values (negative numbers where not allowed, unexpected categories, etc.)
 E. Load Behavior Validation
+Merge or Upsert → query to ensure which data is updated
 FULL LOAD → query to ensure old data was replaced
 APPEND LOAD → query to ensure row count increased appropriately
 F. Business Rule Validation
 Write SQL queries validating business rules inferred from SAP logic
-G. Edge Case Testing
-Queries to detect missing keys
-Queries to detect null timestamps
-Queries to detect unexpected dimension/category values
-⚠️ Output Requirements
-Provide only SQL queries for each test case
-Each query must return zero rows when data is correct
-Add a short comment above each query explaining what it validates
-Do not include explanations or theory
+G. Edge Case Testing if required:
+Queries to detect missing keys,
+Queries to detect null timestamps,
+Queries to detect unexpected dimension/category values,
+Any other Queries if required.
+
+⚠️ Output Requirements:
+Provide only SQL queries for each test case,
+Each query must return zero rows when data is correct,
+Add a short comment above each query explaining what it validates.
