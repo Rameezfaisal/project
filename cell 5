@@ -121,3 +121,14 @@ mseg = read_with_year_filter("mseg", "mjahr", start_year_5) \
     .filter(F.col("bwart").isin("261", "262")) \  # ADD THIS - filter early!
     .select("mblnr", "mjahr", "zeile", "matnr", "menge", "shkzg", "bwart")
 These changes should reduce runtime from 40+ minutes to under 10 minutes.
+
+
+
+
+
+# Verify your In[7] has this for MSEG:
+mseg = read_with_year_filter("mseg", "mjahr", start_year_5) \
+    .filter(F.col("bwart").isin("261", "262")) \  # ADD THIS - filter early!
+    .select("mblnr", "mjahr", "zeile", "matnr", "menge", "shkzg", "bwart")
+
+
