@@ -1,35 +1,123 @@
-I have a PySpark notebook migrated from an SAP HANA stored procedure. The notebook performs multiple transformations and writes one or more output tables.
-I want to generate comprehensive data engineering unit tests using SQL queries for this notebook.
-Act as a Senior Data Engineer and analyze both the PySpark code and the SAP logic to derive meaningful test cases.
+If it's been running for 40 minutes, something is still wrong. Check the Spark UI immediately to diagnose:
+# EMERGENCY: Add this to see what's happening
+print(f"Final count before write: {final.count()}")  # This will tell you row count
+Likely culprits:
+The .distinct() is killing performance on millions of rows. Try this optimized version:
+# REPLACE your entire Step 11 with this optimized version:
 
-1. Original SAP Procedure / Business Logic is in the file i will provide
+base = (
+    nhalist.alias("a")
+    .join(mfgcons.alias("b"), F.col("a.nha") == F.col("b.matnr"), "left")
+    .join(mfgdmd.alias("c"), F.col("a.nha") == F.col("c.matnr"), "left")
+    .join(sprsdmd.alias("d"), F.col("a.nha") == F.col("d.matnr"), "left")
+    .join(sprscons.alias("e"), F.col("a.nha") == F.col("e.material"), "left")
+    .join(mfg12mnthscons.alias("f"), F.col("a.nha") == F.col("f.matnr"), "left")
+    .join(lamqoh.alias("g"), F.col("a.nha") == F.col("g.matnr"), "left")
+    .join(openpoqty.alias("h"), F.col("a.nha") == F.col("h.matnr"), "left")
+    .join(mfg5yrscons.alias("i"), F.col("a.nha") == F.col("i.matnr"), "left")
+    .join(sprs5yrscons.alias("j"), F.col("a.nha") == F.col("j.material"), "left")
+    .filter(
+        # Apply filter DURING join, not after
+        (F.col("a.cmpprtno") == F.col("a.nha")) |
+        (F.coalesce(F.col("b.mfg_3yrs_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("c.mfg_dmd"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("d.sprs_dmd"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("e.sprs_3yrs_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("f.mfg_12mnths_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("h.open_po_qty"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("i.mfg_5yrs_consumption"), F.lit(0)) > 0) |
+        (F.coalesce(F.col("j.sprs_5yrs_consumption"), F.lit(0)) > 0)
+    )
+    .select(
+        F.col("a.cmpprtno"),
+        F.col("a.nha"),
+        F.coalesce(F.col("b.mfg_3yrs_consumption"), F.lit(0)).cast("int").alias("mfg_3yrs_consumption"),
+        F.coalesce(F.col("c.mfg_dmd"), F.lit(0)).cast("int").alias("mfg_dmd"),
+        F.coalesce(F.col("d.sprs_dmd"), F.lit(0)).cast("int").alias("sprs_dmd"),
+        F.coalesce(F.col("e.sprs_3yrs_consumption"), F.lit(0)).cast("int").alias("sprs_3yrs_consumption"),
+        F.coalesce(F.col("f.mfg_12mnths_consumption"), F.lit(0)).cast("int").alias("mfg_12mnths_consumption"),
+        F.coalesce(F.col("g.lamqoh"), F.lit(0)).cast("int").alias("lamqoh"),
+        F.coalesce(F.col("g.restricted_all_stock"), F.lit(0)).cast("int").alias("restricted_all_stock"),
+        F.coalesce(F.col("h.open_po_qty"), F.lit(0)).cast("int").alias("open_po_qty"),
+        F.coalesce(F.col("i.mfg_5yrs_consumption"), F.lit(0)).cast("int").alias("mfg_5yrs_consumption"),
+        F.coalesce(F.col("j.sprs_5yrs_consumption"), F.lit(0)).cast("int").alias("sprs_5yrs_consumption"),
+        F.current_date().alias("last_modified_on")
+    )
+    .dropDuplicates(["cmpprtno", "nha"])  # FASTER than .distinct()
+)
 
-🎯 Task:
-Generate SQL-based data validation test queries to validate the notebook logic.
-A. Input Data Validation
-Queries to check input tables are not empty
-Queries to detect NULLs in critical columns
-B. Schema Validation
-Queries to validate required columns exist in output tables
-C. Transformation Logic Validation
-Derive SQL tests by comparing SAP logic with PySpark transformations
-Validate joins, filters, aggregations, calculations, and derived columns
-D. Data Quality Checks
-Queries to detect duplicate records based on business keys
-Queries to detect invalid values (negative numbers where not allowed, unexpected categories, etc.)
-E. Load Behavior Validation
-Merge or Upsert → query to ensure which data is updated
-FULL LOAD → query to ensure old data was replaced
-APPEND LOAD → query to ensure row count increased appropriately
-F. Business Rule Validation
-Write SQL queries validating business rules inferred from SAP logic
-G. Edge Case Testing if required:
-Queries to detect missing keys,
-Queries to detect null timestamps,
-Queries to detect unexpected dimension/category values,
-Any other Queries if required.
+# Reorder to match table schema
+final_ordered = base.select(
+    "cmpprtno", "lamqoh", "last_modified_on", "mfg_12mnths_consumption",
+    "mfg_3yrs_consumption", "mfg_5yrs_consumption", "mfg_dmd", "nha",
+    "open_po_qty", "restricted_all_stock", "sprs_3yrs_consumption",
+    "sprs_5yrs_consumption", "sprs_dmd"
+)
 
-⚠️ Output Requirements:
-Provide only SQL queries for each test case,
-Each query must return zero rows when data is correct,
-Add a short comment above each query explaining what it validates.
+# Write with optimization
+final_ordered.write.mode("append").option("maxRecordsPerFile", 100000).saveAsTable(tgt_dmd)
+Key changes:
+Filter BEFORE select (reduces rows early)
+Use .dropDuplicates(["cmpprtno", "nha"]) instead of .distinct() (much faster with keys)
+Added maxRecordsPerFile to prevent giant files
+If still slow, CANCEL and run this diagnostic:
+print(f"NHALIST: {nhalist.count()}")
+print(f"MFGCONS: {mfgcons.count()}")
+print(f"Base before filter: {base.count()}")  # This will show the problem
+
+
+
+
+
+
+
+
+
+
+
+
+YES! That's likely the main culprit. The zpo_hstry table is massive and you're reading ALL of it. Add filtering BEFORE the join:
+# In[15]: OPENPOQTY - Open Purchase Order Quantity (OPTIMIZED)
+
+# CRITICAL: Filter PO history table FIRST before joining
+po_filtered = (
+    po
+    .filter(
+        (~F.substring(F.col("due_dt"), -5, 5).isin("04-01", "12-31")) &
+        (F.col("status") != "INACT") &
+        (F.trim(F.col("matnr")) != "") &
+        (F.trim(F.col("loekz")) == "") &
+        (F.col("aussl") != "U3") &
+        (F.col("bsart") != "UB") &
+        (F.col("elikz") != "X")
+    )
+    .select("ebeln", "ebelp", "matnr", "menge", "wemng")  # Only needed columns
+)
+
+# Then join with filtered EKPO
+ekpo_filtered = ekpo.filter(~F.col("pstyp").isin("7", "9")).select("ebeln", "ebelp", "pstyp")
+
+openpoqty = (
+    po_filtered
+    .join(ekpo_filtered, ["ebeln", "ebelp"], "inner")
+    .join(F.broadcast(nhalist), po_filtered.matnr == nhalist.nha, "inner")
+    .groupBy(
+        nhalist.cmpprtno,
+        po_filtered.matnr
+    )
+    .agg(
+        F.sum(po_filtered.menge - po_filtered.wemng).alias("open_po_qty")
+    )
+)
+
+print(f"OPENPOQTY Count: {openpoqty.count()}")
+Key optimizations:
+Filter zpo_hstry BEFORE join - reduces billions of rows to millions
+Select only needed columns - reduces data size by 90%
+Filter EKPO before join - reduces join complexity
+Also optimize the other big tables (MSEG/MKPF) - make sure you're using the year filter:
+# Verify your In[7] has this for MSEG:
+mseg = read_with_year_filter("mseg", "mjahr", start_year_5) \
+    .filter(F.col("bwart").isin("261", "262")) \  # ADD THIS - filter early!
+    .select("mblnr", "mjahr", "zeile", "matnr", "menge", "shkzg", "bwart")
+These changes should reduce runtime from 40+ minutes to under 10 minutes.
